@@ -53,7 +53,7 @@ Prefer to explore first? The [SecuraCV Lab](https://kmay89.github.io/securaCV/ca
 
 Requires Home Assistant 2026.5.0 or newer, an MQTT broker Home Assistant and Frigate share, and Frigate 0.14 or newer with MQTT enabled. Three ways in, one product at the end — a **SecuraCV** device with the chain's state, one witness event entity per camera, a daily digest, notifications with proof attached, and a one-tap signed evidence export:
 
-1. **Home Assistant OS — the SecuraCV app.** Add [the SecuraCV app repository](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fkmay89%2FsecuraCV) (`https://github.com/kmay89/securaCV`), install **SecuraCV** from the App Store and open its Web UI: the wizard finds Mosquitto and Frigate (anything missing is a link into your own App Store — the Frigate app's repository is `https://github.com/blakeblackshear/frigate-hass-addons`), reads Frigate's cameras from its config, and has nothing for you to type. Its done screen's one button, **Install the integration and restart Home Assistant**, installs the integration the app carries; after the restart, press **Configure** on the *SecuraCV discovered* card. Nothing to type.
+1. **Home Assistant OS — the SecuraCV app.** Add [the SecuraCV app repository](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fkmay89%2FsecuraCV) (`https://github.com/kmay89/securaCV`), install **SecuraCV** from the App Store and open its Web UI: the wizard finds Mosquitto and Frigate (anything missing is a link into your own App Store — the Frigate app's repository is `https://github.com/blakeblackshear/frigate-hass-addons`), reads Frigate's cameras from its config, and has nothing for you to type. Its done screen's one button, **Install the integration and restart Home Assistant**, installs the integration the app carries; after the restart, press **Add** on the *SecuraCV app* card under Discovered. Nothing to type.
 2. **HACS first.** SecuraCV is a HACS **custom repository** (not in the default store yet): add [the integration via HACS](https://my.home-assistant.io/redirect/hacs_repository/?owner=kmay89&repository=securacv-homeassistant&category=integration), then **Add Integration → SecuraCV → Automatic**, which finds the app or a sidecar by itself.
 3. **Home Assistant Container + the Docker sidecar.** Run the sidecar beside Frigate (`docker compose up -d`, two lines to edit), then pair it from the discovered *SecuraCV sidecar* card with the 6-digit code `docker exec securacv pair` prints beside the kernel's key fingerprint.
 
@@ -97,7 +97,7 @@ display — joins a home the same way, because the steps live once in
    `SecuraCV-<type>-<four characters>` (`SecuraCV-sense-4dC2`), and prints
    that name, the key and a scannable `WIFI:` code on its serial console
    (`[SETUP] Setup network up: …`, `[SETUP] QR …`). A display shows the same
-   code on its glass; a Sense or Vision also opens a Bluetooth setup door for
+   code on its glass; a Sense, Vision or WAP also opens a Bluetooth setup door for
    30 minutes, so the companion app can hand it the network with one tap.
 2. **Join that network from your phone.** The setup page opens by itself
    (or at `http://192.168.4.1/`). It lists the networks it can see, strongest

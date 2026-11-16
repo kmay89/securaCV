@@ -44,11 +44,12 @@ final class AddCanaryFlowTests: XCTestCase {
         // (and iOS's Local Network alert) waits for its first consumer. Two
         // system alerts stacked on one tap was the first thing a newcomer met.
         let store = try source("Sources/SecuraCV/App/FleetStore.swift")
-        let start = try XCTUnwrap(store.range(of: "func setDiscoveryConsent(_ granted: Bool) {"))
+        let start = try XCTUnwrap(store.range(of: "func setDiscoveryConsent(_ granted: Bool, startBluetooth: Bool = true) {"))
         let after = store[start.upperBound...]
         let end = try XCTUnwrap(after.range(of: "\n    }\n"))
         let body = after[..<end.lowerBound]
-        XCTAssertTrue(body.contains("ble.startScan()"), "the tap starts the Bluetooth scan")
+        XCTAssertTrue(body.contains("if startBluetooth { ble.startScan() }"),
+                      "the tap starts the Bluetooth scan, unless the screen has no Bluetooth door")
         // The browse may only restart here when a consumer already asked
         // for it this launch — never unconditionally on the tap.
         XCTAssertTrue(body.contains("if localNetworkWanted { discovery.start() }"),
@@ -57,6 +58,35 @@ final class AddCanaryFlowTests: XCTestCase {
                        "no unconditional browse start in the consent tap")
         XCTAssertTrue(store.contains("func startLocalNetworkDiscoveryIfConsented()"),
                       "the browse has its own door, for its first consumer")
+    }
+
+    func testTheDisplayWalkthroughNeverRaisesTheBluetoothAlert() throws {
+        // A display has no Bluetooth door: its "Enable discovery to watch
+        // for it" records the consent without the scan, so no manager is
+        // built (BLEConsole.hasManager stays false) and only the Local
+        // Network alert follows the tap.
+        let walkthrough = try source("Sources/SecuraCV/Views/CanarySetupView.swift")
+        XCTAssertTrue(walkthrough.contains("store.setDiscoveryConsent(true, startBluetooth: family != .display)"))
+        let console = BLEConsole()
+        XCTAssertFalse(console.hasManager, "nothing on the display path builds a manager")
+    }
+
+    func testABeaconOnlyCanaryIsNotYetAFleet() {
+        // A brand-new Canary's own setup-door beacon (or a neighbor's
+        // through the wall) lists on the Fleet tab, but must not drop
+        // Today's first-run card or say "Your Canary is watching" — and so
+        // keeps the lone-Canary "in the room" offer gate.
+        var heard = Witness(id: "ble:SCV-K7MZ")
+        heard.seenViaBLE = true
+        XCTAssertFalse(FleetStore.countsAsFleet(heard), "heard only, never reached over a network")
+        XCTAssertEqual(NearbyCanaries.offerThreshold(candidateCount: 1, hasRealFleet: FleetStore.countsAsFleet(heard)),
+                       NearbyCanaries.inTheRoomDBM)
+        var reached = heard
+        reached.baseURL = URL(string: "http://canary-k7mz.local")
+        XCTAssertTrue(FleetStore.countsAsFleet(reached), "reached over the network: a fleet")
+        var demo = heard
+        demo.id = DemoFleet.idPrefix + "mailbox"
+        XCTAssertFalse(FleetStore.countsAsFleet(demo), "demo rows are never a real fleet")
     }
 
     func testTheConsentCopyPromisesOnePrompt() throws {
@@ -74,6 +104,11 @@ final class AddCanaryFlowTests: XCTestCase {
         let fleet = try source("Sources/SecuraCV/Views/FleetView.swift")
         XCTAssertTrue(fleet.contains("store.startLocalNetworkDiscoveryIfConsented()"),
                       "the Fleet tab with a real fleet is the other consumer")
+        // The nearby sheet's done card "watches this network": it must start
+        // the browse it watches with (no "provisioned" advert ever does).
+        let nearby = try source("Sources/SecuraCV/Views/Components/NearbyCanaryCard.swift")
+        XCTAssertTrue(nearby.contains("store.startLocalNetworkDiscoveryIfConsented()"),
+                      "the nearby card's join is a consumer of the browse")
     }
 
     func testTheBackgroundScanIsDeclaredAndStoppedOnReturn() throws {

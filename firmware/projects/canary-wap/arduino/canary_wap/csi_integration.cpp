@@ -39,6 +39,7 @@
 #include "api_auth.h"             // api_auth_check() — session cookie or bearer token (F346)
 #include "host_guard.h"           // the cookie gates' Host question (staged copy of firmware/common/network; F344)
 #include "http_body_reader.h"     // http_body::read_all() — a request body read whole or refused (F300)
+#include "provisioning_logic.h"   // pair_link_host_ok() — which Host a pair link may name
 
 #include <Arduino.h>
 #include <Preferences.h>          // NVS-backed settings store
@@ -1941,10 +1942,28 @@ bool session_issue(char* hex_out, size_t out_cap) {
   return true;
 }
 
+/* The authority a pair link names: the Host this request came in under,
+ * when provisioning_logic::pair_link_host_ok() takes it (a name or address
+ * of this device, in the redirect's alphabet), else none (false, out = "").
+ * Ask before the response starts: esp_http_server purges the request
+ * headers on the first send. */
+static bool pair_link_authority(httpd_req_t* req, char* out, size_t cap) {
+  if (!out || cap == 0) return false;
+  out[0] = '\0';
+  if (!req || httpd_req_get_hdr_value_str(req, "Host", out, cap) != ESP_OK ||
+      !provisioning_logic::pair_link_host_ok(out, canary::net::host_names_this_device(out))) {
+    out[0] = '\0';
+    return false;
+  }
+  return true;
+}
+
 /* Static so the asset lives in flash (PROGMEM-style on ESP32) and isn't
- * counted toward heap. Two %s slots: pair-token hex × 2 (one for the
- * <a href> and one for the on-screen URL the user can hand-type or
- * scan from a printed QR if their captive portal is uncooperative).
+ * counted toward heap. Two %s slots: the pair-token hex for the <a href>,
+ * then the paste-this fallback block (SENSE_PAIR_PASTE_TMPL, or nothing
+ * when the request's Host cannot be named): the on-screen URL the user can
+ * hand-type if their captive portal is uncooperative. It names the address
+ * this request came in under, over http, which is what a stock unit serves.
  *
  * Microcopy doctrine matches the headline dashboard's COPY object:
  * plain words, no jargon ("pair", "Bearer", "session" do not appear),
@@ -1977,13 +1996,19 @@ static const char SENSE_PAIR_LANDING_TMPL[] PROGMEM =
   "<h1>Welcome to your Canary</h1>"
   "<p>Open the dashboard to start sensing.</p>"
   "<a class=\"enter\" href=\"/?cv_pair=%s\">Open dashboard</a>"
-  "<p class=\"note\">If the button does not work, paste this on the same network:</p>"
-  "<div class=\"url\">http://192.168.4.1/?cv_pair=%s</div>"
+  "%s"
   "<p class=\"note\">This link is good for 10 minutes and works one time.</p>"
   "</body></html>";
 
+/* The fallback block: the request's Host, then the pair-token hex. */
+static const char SENSE_PAIR_PASTE_TMPL[] PROGMEM =
+  "<p class=\"note\">If the button does not work, paste this on the same network:</p>"
+  "<div class=\"url\">http://%s/?cv_pair=%s</div>";
+
 bool send_pair_landing(httpd_req_t* req) {
   if (!req) return false;
+  char host[96];
+  const bool have_host = pair_link_authority(req, host, sizeof(host));
   char pair_hex[PAIR_TOK_HEX_LEN + 1];
   if (!pair_token_issue(pair_hex, sizeof(pair_hex))) {
     /* All slots taken AND none expirable — should be vanishingly rare.
@@ -1997,11 +2022,20 @@ bool send_pair_landing(httpd_req_t* req) {
       "Too many people pairing right now. Please try again in a minute.</p>");
     return true;
   }
-  /* Two %s + the template glue. The template is ~1.3 KB, the two hex
-   * tokens add 128 bytes; 2 KB is comfortable. */
+  /* The fallback block: ~130 bytes of markup, a Host under 96 and the
+   * 64-character token. Left out when there is no Host to name, or it
+   * somehow does not fit: the button above it is relative and needs none. */
+  char paste[320];
+  paste[0] = '\0';
+  if (have_host) {
+    const int p = snprintf(paste, sizeof(paste), SENSE_PAIR_PASTE_TMPL, host, pair_hex);
+    if (p <= 0 || (size_t)p >= sizeof(paste)) paste[0] = '\0';
+  }
+  /* Two %s + the template glue. The template is ~1.2 KB, the token adds 64
+   * bytes and the fallback block under 320; 2 KB is comfortable. */
   char body[2048];
   const int n = snprintf(body, sizeof(body),
-                         SENSE_PAIR_LANDING_TMPL, pair_hex, pair_hex);
+                         SENSE_PAIR_LANDING_TMPL, pair_hex, paste);
   if (n <= 0 || (size_t)n >= sizeof(body)) return false;
   httpd_resp_set_type(req, "text/html");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
@@ -2419,17 +2453,26 @@ esp_err_t handle_pair_token(httpd_req_t* req) {
     httpd_resp_set_status(req, "503 Service Unavailable");
     return httpd_resp_send(req, "{\"ok\":false}", -1);
   }
-  /* 256 is comfortable for the current envelope (URL-encoded token is
-   * 64 chars and the surrounding JSON is ~110 chars). We still pass
-   * -1 (HTTPD_RESP_USE_STRLEN) so that future schema changes that
-   * stretch this payload past the buffer get safely truncated by
-   * snprintf and reflected by strlen — the alternative of using
-   * snprintf's return value directly would trip a stack read overflow
-   * on truncation. */
-  char buf[256];
-  snprintf(buf, sizeof(buf),
-    "{\"ok\":true,\"token\":\"%s\",\"expires_in_sec\":%lu,\"pair_url\":\"http://192.168.4.1/companion?token=%s\"}",
-    hex, (unsigned long)(PAIR_TTL_MS / 1000UL), hex);
+  /* pair_url names the address this request came in under (its Host, read
+   * before anything is sent); with no Host to name it is the path alone,
+   * which the caller resolves against the address it already used. The
+   * token is 64 hex characters, twice, the Host under 96 and the rest of
+   * the JSON ~90: 384 holds the longest, and an answer that did not fit is
+   * not sent cut. */
+  char host[96];
+  char origin[112];
+  origin[0] = '\0';
+  if (csi_integration::pair_link_authority(req, host, sizeof(host))) {
+    snprintf(origin, sizeof(origin), "http://%s", host);
+  }
+  char buf[384];
+  const int n = snprintf(buf, sizeof(buf),
+    "{\"ok\":true,\"token\":\"%s\",\"expires_in_sec\":%lu,\"pair_url\":\"%s/companion?token=%s\"}",
+    hex, (unsigned long)(PAIR_TTL_MS / 1000UL), origin, hex);
+  if (n <= 0 || (size_t)n >= sizeof(buf)) {
+    httpd_resp_set_status(req, "500 Internal Server Error");
+    return httpd_resp_send(req, "{\"ok\":false}", -1);
+  }
   httpd_resp_set_type(req, "application/json");
   httpd_resp_set_hdr(req, "Cache-Control", "no-store");
   return httpd_resp_send(req, buf, -1);

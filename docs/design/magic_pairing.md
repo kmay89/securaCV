@@ -65,7 +65,7 @@ whichever client connects first (§2.2).
 
 | Situation | Door | Why |
 |---|---|---|
-| No credentials stored (first boot, or after a factory reset or Forget Wi-Fi) on a unit not set standalone (a WAP's AP-only choice, which Forget Wi-Fi leaves set and the hold clears), within **30 minutes** of power-on (after Forget Wi-Fi, of the credentials vanishing; after a WAP's hold, of the restart on release) | **Open** (`Door::NoCredentials`) | A device nobody owns yet — or, after a reset or a Forget Wi-Fi, a cleared unit that still has an owner (on a WAP Forget Wi-Fi takes the API token in every mode, ledger F345): the hold keeps the witness identity on a Sense, a Vision and a WAP, a WAP's hold and Forget Wi-Fi keep its token too, and the door goes to whichever client connects first (§2.2). The window is `IMPROV_FIRST_BOOT_WINDOW_MS` (`Timing::first_boot_window_ms`, half an hour by default); a power cycle re-arms it, and so does the credentials vanishing (Forget Wi-Fi re-arms it at that moment; a WAP's hold zeroes the carried record and restarts on release, so its fresh window runs from the restart); compile-time `0` makes the device tap-only. A **software restart does not** re-arm it: the spent time rides in RTC memory across `ESP.restart()` and watchdog resets and is cleared only by a power-on, a brownout, a power glitch or a reset a host asserted from the USB / JTAG port — the Flasher's, so a re-flashed unit never inherits the old image's spent window (the WAP's first-boot wizard restarts the unit every 15 idle minutes, which would otherwise have re-opened the door forever). |
+| No credentials stored (first boot, or after a factory reset or Forget Wi-Fi) on a unit not set standalone (a WAP's AP-only choice, which Forget Wi-Fi leaves set and the hold clears), within **30 minutes** of power-on (after Forget Wi-Fi, of the credentials vanishing; after a WAP's hold, of the restart on release) | **Open** (`Door::NoCredentials`) | A device nobody owns yet — or, after a reset or a Forget Wi-Fi, a cleared unit that still has an owner (on a WAP Forget Wi-Fi takes the API token in every mode, ledger F345): the hold keeps the witness identity on a Sense, a Vision and a WAP, a WAP's hold and Forget Wi-Fi keep its token too, and the door goes to whichever client connects first (§2.2). The window is `IMPROV_FIRST_BOOT_WINDOW_MS` (`Timing::first_boot_window_ms`, half an hour by default); a power cycle re-arms it, and so does the credentials vanishing on a unit that had them (a Sense or Vision that never had credentials stays spent across the hold's restart, until a power cycle or a tap; Forget Wi-Fi re-arms it at that moment; a WAP's hold zeroes the carried record and restarts on release, so its fresh window runs from the restart); compile-time `0` makes the device tap-only. A **software restart does not** re-arm it: the spent time rides in RTC memory across `ESP.restart()` and watchdog resets and is cleared only by a power-on, a brownout, a power glitch or a reset a host asserted from the USB / JTAG port — the Flasher's, so a re-flashed unit never inherits the old image's spent window (the WAP's first-boot wizard restarts the unit every 15 idle minutes, which would otherwise have re-opened the door forever). |
 | No credentials stored on a WAP set standalone | **Shut** (`keyless_join_open()`, sweep F333) | A unit its owner keeps AP-only on purpose must never take a stranger's network; the camera's boot QR scan asks the same rule. |
 | No credentials stored, the window has run out | Shut | "A unit forgotten in a drawer is not claimable from the street for the rest of its life." A power cycle or a tap reopens it; a software restart does not. |
 | Credentials stored, the network is fine | Shut | A device that has an owner offers nothing. |
@@ -316,7 +316,10 @@ The byte vectors are pinned on both ends by
   **never while a Numeric Comparison is pending or an authenticated / bonded
   link is up**, and restored when the door shuts. The key such a pairing
   yields is unauthenticated, and the console, OTA, witness-export and bonded
-  provisioning characteristics (`READ_AUTHEN` / `WRITE_AUTHEN`) refuse it.
+  provisioning characteristics (`READ_AUTHEN` / `WRITE_AUTHEN`) refuse it
+  (the OTA characteristics carry `WRITE_AUTHEN` / `READ_AUTHEN` since
+  2.4.20; before it they were plain `WRITE` / `READ`, and any connected link
+  could write them).
   The door's profile keeps no bond; outside it, a Just Works pairing that
   bonds anyway has its bond deleted as it is reported and its link dropped
   by the pairing channel (`apply_auth_complete()`, F191, or
@@ -487,6 +490,17 @@ phone chose.
 WAP's own setup page still carries its Home Assistant step for now, so the
 phone pairs it through the receipt and the owner names the broker there. A
 HUB on the WAP is a follow-up, not a claim this page makes.
+
+**Residual.** The Bluetooth setup link is encrypted but not authenticated,
+so the phone cannot prove which device is on the other end. An active
+impostor in radio range when a Canary is added (one advertising the Improv
+door and the HUB characteristic under a lookalike name) can receive the
+household Wi-Fi password and, if the owner confirms the hub step, the
+broker login the Canaries share. The iPhone therefore asks before the
+broker login crosses, naming the device and offering Blink it, and Set up →
+Rotate broker login re-mints that login; the Canaries already given the old
+login stop reporting until each is given the new one. A per-device login is
+not implemented yet.
 
 ### 3.7 The HTTP grant order
 
@@ -709,8 +723,10 @@ landing session could reboot the WAP (`POST /api/reboot`, `POST
 seconds of guessing got about 37 guesses a minute if the unit was back on
 the LAN 45 s later, about 100 at 10 s, about 155 at 5 s (modeled in
 `test_auth_backoff.cpp`; the boot time is not measured). Both routes take
-the bearer alone now, as the flagship's reboot does; a session's firmware
-install restarts the unit only into a newer signed image. Not closed by it: ARP spoofing; httpd's LRU purge (a host that opens
+the bearer alone now, as the flagship's reboot does, and since 2.4.20 so do
+the firmware install and the update settings; the restart a session can
+still cause is an install sent from a broker it re-pointed the MQTT bridge
+at, and only into a newer signed image. Not closed by it: ARP spoofing; httpd's LRU purge (a host that opens
 enough connections closes the owner's); nine or more striking addresses (the
 overflow, above); and a cross-site `<img src=...?token=x>`, which holds the
 visiting browser's own address. A phone that still holds a pairing for a
@@ -976,7 +992,7 @@ card that names this device.
    Canary", `FirstRunCard`), and that tap raises only iOS's Bluetooth
    prompt: the mDNS browse, and the Local Network prompt with it, waits for
    its first real consumer — the walkthrough's "Watch it appear" row, the
-   Fleet tab with a real fleet, or a Canary heard announcing it just joined
+   Fleet tab with a real fleet, or the nearby card's done card after a join
    (`FleetStore.startLocalNetworkDiscoveryIfConsented`).
 1. **Hear it.** `BLEConsole` collects, per peripheral, the beacon (with its
    setup bit), the local name and the scan response's Improv UUID + service
@@ -1253,7 +1269,8 @@ inherits the session (§3.6).
 - [ ] A fresh unit (no Wi-Fi, no broker in NVS) set up from the iPhone's
       card, with the hub already set up on the phone: after the join the
       console prints `[IMPROV] hub hand-off stored: <host>:1883 with a
-      login`, the card says "It reports to your hub at <host>.", and the
+      login`, the card says "It took your hub's address (<host>); it shows
+      under your hub once it connects.", and the
       unit connects to that broker and appears in Home Assistant with no
       Flasher step; after a power cycle it still reports there.
 - [ ] The status byte: a READ of HUB on the provisioning link answers one
@@ -1329,6 +1346,9 @@ inherits the session (§3.6).
       up; it is restored when the door shuts.
 - [ ] With the Just Works key, the console, OTA, witness export and bonded
       provisioning characteristics refuse.
+- [ ] With a bonded Numeric Comparison link, the companion PWA's BLE OTA
+      writes are accepted; a second connected link's ABORT or DATA during a
+      session is ignored (2.4.20).
 - [ ] After the join: the CLAIM read works on the provisioning link (the
       whole ~300-byte value, blob continuations included); a read more than
       3 s after the first is empty; a read from another link is refused.

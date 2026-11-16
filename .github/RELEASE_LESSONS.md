@@ -13,6 +13,364 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-11-15 (n) — A commit made from a file list leaves out the file the list did not know
+
+- **Symptom:** the iOS commit referenced `RefuseRedirects.swift` and did not
+  contain it. It was caught before CI ran, by `git status` after the commit.
+- **Cause:** the commit was staged from the leg's owned-file list, and a file
+  the leg created was in no list.
+- **Fix:** the file committed in the next commit.
+- **Applies to:** any commit staged by path list. Before committing, read `git
+  status --short` for untracked files under the directories being staged, and
+  after committing check that what remains is only what was meant to remain.
+
+## 2026-11-15 (m) — The version bump moved six catalogs and the train regenerated three
+
+- **Symptom:** after firmware went to 2.4.20, `page logic tests (committed
+  artifacts)` stayed red through four pushes, each time on a different file:
+  first the emulator dist, then `sense.json`, `vision.json` and
+  `playground.json`, then `wap.json`, then `homeassistant.json`.
+- **Cause:** the release step ran the generators it knew read the dist
+  (`gen_flash.py`, `gen_senselab.py`) and the ones `bump_version.sh` names.
+  Four more read a version string directly (`gen_sense.py`, `gen_vision.py`,
+  `gen_playground.py` from `version.h`, `gen_wap.py` from the sketch), and
+  `gen_homeassistant.py` embeds `wap.json`'s retained payloads, so it is
+  downstream of `gen_wap.py`. Each failure named only the next stale file.
+- **Fix:** every catalog regenerated, in order: the dist rebuild, then
+  `gen_flash`, `gen_senselab`, `gen_sense`, `gen_vision`, `gen_playground`,
+  `gen_wap`, then `gen_homeassistant`, `gen_hub_image`, `gen_hub_seed`,
+  `gen_hub_provision_bundle`, `gen_start`, and `gen_csp` last.
+- **Applies to:** every firmware version bump. Run all of
+  `canary-local/tools/gen_*.py` after the dist lands, not the ones a grep for
+  `dist` finds, then run every file under `canary-local/tests/` once before
+  pushing: one local pass costs two minutes, and each red push cost a CI
+  round.
+
+## 2026-11-15 (l) — Short rules a parallel fix pass paid for (add-on, website), continued
+
+- **Symptom:** none of these reached a release. Each was caught by a reviewer
+  reading a leg's diff, not by a gate.
+- **Cause and fix, one per rule:**
+  - A Tauri command that writes a file must not take its destination from the
+    webview, even when the page got that path from a save dialog. A script
+    injected into the webview has the same invoke as the app's own code, and a
+    .json write lands in config files other tools execute. Raise the save
+    panel from Rust (blocking_save_file inside spawn_blocking) and compute any
+    automatic destination in Rust. Pin with a desktop_parity test that the
+    command signature has no path argument and app.js calls no dialog.save.
+  - Do not put a manifest-supplied size into Vec::with_capacity, and do not
+    read a download body without a bound. A pinned signature does not stop
+    whoever can edit the manifest from declaring 2^40. Cap the declared size
+    at the largest real artifact, and cut the transfer off once received bytes
+    pass min(declared, cap).
+  - Home Assistant's MQTT config flow on a Supervisor host opens as a MENU
+    (addon | broker), not a form. A hub plan that POSTs broker fields to it
+    can never succeed, because Mosquitto refuses an uncredentialed Core.
+    Answer {next_step_id: 'addon'} so HA fetches the add-on's discovery
+    credentials itself, and retry addon_connection_failed briefly when the
+    step runs right after a Mosquitto restart.
+- **Applies to:** any fix pass split across owners. A rule here is cheap to
+  check before the report is written and expensive after.
+
+## 2026-11-15 (k) — Short rules a parallel fix pass paid for (add-on, website)
+
+- **Symptom:** none of these reached a release. Each was caught by a reviewer
+  reading a leg's diff, not by a gate.
+- **Cause and fix, one per rule:**
+  - Switching a default off: list what read its output. The wizard's Frigate
+    config went detection-only (recording off) and "Only Frigate alerts" kept
+    being accepted on the same path. Frigate creates review items only for
+    cameras that record, and alerts mode subscribes to `<prefix>/reviews`
+    instead of `<prefix>/events`, so the log would have held heartbeats only
+    while the done screen promised a first sealed event. When a fix turns
+    something off, grep for every consumer of what it produced and pin the
+    combination through the save path (RTSP cameras + enable_reviews true),
+    not only the generated text.
+  - A leg that moves a pinned literal must own every test that pins it. The
+    add-on base moved 3.18 -> 3.22 in the Dockerfile;
+    privacy_witness_kernel/tests/test_addon_store.py pinned `3\.18` in two
+    regexes and was not on the leg's file list, so the leg's own verify_with
+    stayed red. Before fixing a file list, grep the tests for the literal
+    being moved and add the file that holds it.
+  - Name a control from the source that renders it, at the floor version.
+    "SecuraCV discovered -> Configure" named a card title and a button nothing
+    shows: the title is the integration's flow_title with the name its
+    discovery step sets ("SecuraCV app"), and the frontend's
+    ha-config-flow-card labels a discovered flow's button ui.common.add
+    ("Add"); "Configure" is the button of an entry that already exists. Fixing
+    the title and keeping the button left the click path half wrong.
+  - Claim what the test proves, and follow a value to its last consumer.
+    JSON-encoding the camera URL in run.sh fixed the config parse; the report
+    said the password "now works". The kernel then formats that URL into a
+    GStreamer launch string (src/ingest/rtsp.rs), where a backslash is an
+    escape and a space ends the value. The test string `pa"ss\word` survives
+    that parser only because its unbalanced quote switches unescaping off.
+    Write "the file parses and carries the exact URL" until the last consumer
+    is fixed too (it now is: the pipeline description is a constant and
+    `location` is set as a property).
+  - A privacy-policy sentence is checked against the code path, not the design
+    intent. privacy.html said iCloud alert wakes carry "no exact time" for a
+    year while AwayPush.publishWake wrote a record whose CloudKit creation
+    date is the alert time to within seconds (costed all along in
+    docs/design/cloudkit_backend.md §6.4). When a design doc names a residual,
+    grep the published policy for the sentence that denies it. Also: the
+    website's W16 guard (tests/legal-claims.test.mjs) bans any
+    "delete/erase/wipe/purge/expire … a day / 24 hours" phrase on every
+    surface, so a true retention sentence about iCloud litter says "clears …
+    older than a day".
+- **Applies to:** any fix pass split across owners. A rule here is cheap to
+  check before the report is written and expensive after.
+
+## 2026-11-15 (j) — a security fix that adds a required field to a public form went red in a test file outside the fixing leg's list
+
+- **What happened:** the customer's address form on the signed status page now
+  requires the order's email (the link alone was a write capability). The
+  leg's own tests passed; `backoffice/tests/commerce.test.mjs`, which posts
+  the same form and was on nobody's file list, went 400 where it expected 303,
+  and `npm test` was red until a reviewer ran the whole suite.
+- **Fix:** the two form bodies in that test post the email. The leg's
+  verification is the whole `npm test`, not the files it touched.
+- **Applies to:** any change to what a public endpoint requires. Before
+  reporting, grep every test for the route (`/address`, `/forms/…`), not only
+  the test files in the plan, and run the full suite; when a file that must
+  change is on no one's list, say so in the report with the exact hunk instead
+  of leaving the suite red.
+
+## 2026-11-15 (i) — the documented rollback had never been run against the schema guard: "deploy the previous tag, then restore" cannot start
+
+- **What happened:** four documents and `kit deploy`'s own failure branch
+  described going back from a backoffice release as the previous image first,
+  then `restore`. The backoffice refuses a database that carries migrations
+  its build does not know ("database schema is ahead of this build"), so after
+  a migrating release the previous build never starts: the automatic rollback
+  left production restarting, and the written procedure had no step that could
+  succeed.
+- **Fix:** `kit rollback <app>`: stop, restore the newest `pre-migrate-*.db`
+  with the build that is installed (it knows the schema), then deploy
+  `.tag.previous`; a plain deploy when no migration separates the builds.
+  `cmd_deploy` reads the container log for the guard's sentence and names the
+  command. `backoffice/tests/migrations.test.mjs` asserts every document names
+  restore before the previous build and runs `kit rollback` against a stubbed
+  docker.
+- **Applies to:** any rollback procedure for something with a forward-only
+  data guard. Write the order down only after running it against the guard,
+  and put the procedure in a command with a test, not in prose in four places.
+  A glossary line that says a tool "cannot lose data" has to be reread the day
+  a restore command is added to that tool.
+
+## 2026-11-15 (h) — `check_display_arduino_sync.sh` compares against the index, so it is red until the sketch is staged
+
+- **What happened:** A leg that may not run `git add` regenerated the display
+  Arduino sketch correctly and the guard still failed. The script runs
+  `setup.sh regen` and then `git diff` on the sketch directory, so any
+  uncommitted change to the PlatformIO tree reads as drift.
+- **Rule:** Run the guard after staging the sketch. Before that, prove the
+  regen another way: `setup.sh regen` twice gives the same hash over the
+  sketch, no untracked files, and each sketch file carries the same hunks as
+  its source.
+- **Also:** `canary-local/tools/gen_sense.py` and `gen_vision.py` take no
+  flags. `--check` is ignored and the file is rewritten; CI checks them with
+  `git diff --exit-code` afterward.
+- **Date learned:** 2026-11
+
+## 2026-11-15 (g) — the fuzz crate's stable build check needs `--cfg fuzzing`, and a plain `cargo build` there was never green
+
+- **What happened:** the plan's local check for two new fuzz targets was
+  `cargo build --manifest-path fuzz/Cargo.toml`. It fails on stable, and did
+  before the targets existed: `vault_envelope_decode` reaches `vault::format`,
+  which is public only under `#[cfg(fuzzing)]`, the gate cargo-fuzz sets. The
+  new HTTP targets use the same gate so that no shipped build exposes a parser
+  entry point.
+- **Fix:** none in code. `fuzz/README.md` states the stable compile-and-replay
+  check: `RUSTFLAGS="--cfg fuzzing" cargo build --manifest-path
+  fuzz/Cargo.toml`, then `fuzz/target/debug/<target> fuzz/seeds/<target>/*`.
+- **Applies to:** any verification step for `fuzz/` written without nightly. A
+  check that cannot pass on the base branch proves nothing about the change;
+  run it on the base first.
+
+## 2026-11-15 (f) — a fix that deletes a "stale" file was proved with one process, and the product starts two
+
+- **What happened:** the kernel's one-time plaintext-to-SQLCipher migration
+  learned to remove a leftover `<db>.encrypted` before exporting and to remove
+  its own partial target when the export failed (an interrupted migration used
+  to fail every later open). The tests opened the database once. The Home
+  Assistant app starts `witness_api` and `frigate_bridge` together and both
+  call `Kernel::open`: the second process took the first's in-progress export
+  for a stale one and deleted it, the first failed and its cleanup deleted the
+  second's. 120 of 120 two-process trials ended with both failed and the
+  database still plaintext; the old code, which removed nothing, converged
+  after one restart. A reviewer measured it; the unit tests were green
+  throughout.
+- **Fix:** the whole migration runs under an exclusive `flock(2)` lock on a
+  sibling `<db>-migrate-lock`, the header is checked again once the lock is
+  held (another open may have finished), and only then is anything removed.
+  The regression test opens one plaintext database from two threads behind a
+  barrier and needs both to succeed; it fails on the unlocked code every run.
+  The lock file is named like a SQLite sidecar because the app's AppArmor
+  profile already allows `<db>-*` with locking, and a new sibling file would
+  otherwise need a new rule.
+- **Applies to:** any change that removes, truncates or replaces a file it did
+  not just create. "Stale" and "in progress in another process" look the same
+  on disk; ask which processes of the shipped topology (the service files, the
+  compose file) can be in this function at the same moment, and prove the fix
+  with that many openers, not one. A new file beside the database is also a
+  new row in the app's AppArmor table.
+
+## 2026-11-15 (e) — Any `fw-v*` tag, or a dispatch from any branch, was signed with the fleet's release key (found by reading; G2-12)
+
+- **Symptom:** none reported; found by reading. Anyone who could push a tag
+  could push `fw-v2.4.20` at a commit on their own branch:
+  `firmware-release.yml` built it, signed every image and manifest with the
+  production OTA key and published it as `releases/latest`, with no review and
+  no second person.
+- **Cause:** `OTA_SIGNING_KEY_PEM` was a repository secret, which every
+  workflow file on every branch can read, and the workflow never asked whether
+  the commit was on `main`. The docs called tags "the only control surface";
+  nothing controlled the tags.
+- **Fix:** the job that signs has `environment: firmware-release` and `if:
+  github.event_name == 'push' || github.ref == 'refs/heads/main'`, and its
+  first step refuses a commit that is not on `main` (`git fetch --depth=200
+  origin main`, then `git merge-base --is-ancestor`; the checkout is depth 1,
+  so the fetch is required) before any step reads the key.
+  `flasher-release.yml` and `vision-model-release.yml` sign with the same key,
+  so their jobs are in the same environment, or they lose the key when it
+  moves. "Update everything" plans outside the environment and cannot see an
+  environment secret, so it also accepts the variable
+  `OTA_SIGNING_KEY_IN_ENVIRONMENT`.
+  `.github/scripts/test_firmware_signing_gate.py` holds every job that is
+  handed the key to the environment and runs the ancestry check in scratch
+  repositories.
+- **Not closed by it:** the workflow names the environment; required
+  reviewers, the secret's move into it and a tag ruleset on `fw-v*` are
+  repository settings an owner makes once (`docs/RELEASE_PROCESS.md`, Who can
+  sign). Until then the environment gates nothing and the repository-level
+  secret is still readable from any branch. With reviewers set, the chained
+  Vision Model Asset run needs its own approval inside the 20 minutes the
+  firmware run waits for it. `flasher-release.yml`'s `channel: dev` still
+  signs a branch's HEAD for the dev channel, after a reviewer approves it.
+- **Applies to:** every secret that signs something users install. A secret's
+  scope is its access control: a repository secret is readable by any branch's
+  workflow file, an environment secret only by a job the environment admits.
+  Put the key in an environment, name that environment in every job that uses
+  the key, check the commit before the key is read, and when a planner outside
+  the environment needs to know the key exists, tell it with a variable, never
+  by letting it read the key.
+
+## 2026-11-15 (d) — The add-on's `:0.9.0` was re-pushed from every main commit while its CHANGELOG called the changes Unreleased (G3-04)
+
+- **Symptom:** everyone who installed 0.9.0 before 2026-11-03 kept the image
+  whose Frigate-mode start the project calls broken and whose device key sat
+  in `/config`, with no update offered. A new install of "0.9.0" got different
+  bytes under the same version, so a report against 0.9.0 named no single
+  build.
+- **Cause:** `addon-image.yml` pushes `:<config.yaml version>` and `:latest`
+  on every push to `main`, and the Supervisor offers an update only when the
+  version string moves. Two fixes merged with entries under `## Unreleased`
+  and no bump: the tag moved and nothing told anyone.
+- **Fix:** the bump (0.9.1), and a guard so the next forgotten one is red.
+  Before the build, on pushes, the build leg counts the entries under `##
+  Unreleased` in `privacy_witness_kernel/CHANGELOG.md`; if there are any it
+  asks GHCR for this arch's `:<version>` the way `verify_published_image.sh`
+  does (anonymous pull token, manifest request naming all four media types).
+  200 is an `::error` naming `scripts/bump_version.sh`; 404 lets the first
+  build of a new version through; any other answer refuses rather than
+  guesses. No entries, no probe. `.github/scripts/test_addon_image_guard.py`
+  runs the step's own script against a stand-in curl.
+- **Not closed by it:** it reads the CHANGELOG and nothing else. A change with
+  no entry there (a kernel change under `src/` rebuilds the image too) still
+  moves the tag. A private package answers 404 to the anonymous probe and
+  passes; `verify-public` is red for that already. `docker-sidecar.yml` pushes
+  `:<version>` from `main` the same way and has no guard yet.
+- **Applies to:** every image or asset published under a version from a branch
+  push. If publish-on-push can re-point a version, one step has to ask both
+  questions together: is that version already out, and does the changelog say
+  there is more.
+
+## 2026-11-15 (c) — The plan called a stale Lab draft ready to publish: it knew the draft's tag name, never the commit it was built from (found by reading; G6-17)
+
+- **Symptom:** none reported; found by reading. `desktop-release.yml` builds
+  `app-v0.4.1` as a draft from commit A, a Lab fix lands at the same 0.4.1
+  (commit B), and the next press says "0.4.1 is already built as a draft ...
+  publish it". Publish the Lab would then ship A's bytes under the version
+  `main` calls 0.4.1. Only the press after that, seeing the tag, said "bump
+  first".
+- **Cause:** the drafts job listed tag names, and `release_plan.py` matched
+  `app-v<source version>` against that set. A draft has no git tag to diff
+  against, so nothing held it to the tree (the reason text said so).
+  tauri-action sets `target_commitish` only when it creates a draft; a rebuild
+  finds the draft by tag and replaces its assets, so the old commit stays on
+  it, and that is where GitHub cuts the tag on publish.
+- **Fix:** the drafts job emits `{tag, sha}`; `release_plan.py` takes bare
+  tags or objects, and a draft whose recorded commit differs from HEAD on the
+  target's watched paths plans RELEASE ("built from <sha> and this target
+  changed since"). A commit git cannot find reads as changed. Only a full
+  commit id counts: a hand-made draft's `target_commitish` is a branch name,
+  and the value goes on a `git diff` command line. `desktop-release.yml`'s
+  finalize ends with `gh release edit "$TAG" --draft --target "$GITHUB_SHA"`,
+  last, so a draft names a commit only once both platforms built from it.
+  `test_release_plan.py`: `StaleDrafts` (real git in a scratch repository) and
+  `TheWorkflowsCarryTheDraftsCommit`.
+- **Not closed by it:** a draft that records no commit is still reported as
+  waiting (the row says it was not compared). A rebuild that fails on one
+  platform leaves one new and one old build under the old commit; the next
+  press rebuilds again, but nothing stops a hand publish in between
+  (`lab-publish.yml` checks asset names, not builds).
+- **Applies to:** anything a plan treats as already built. Identity is the
+  commit, not the name: carry the commit with the artifact, compare it with
+  the tree, and make the workflow that refreshes an artifact in place also
+  refresh what the artifact says it was built from.
+
+## 2026-11-15 (b) — a fix turned a test red in a file no parallel leg owned
+
+- **Symptom:** With the first-contact signature check in place, `pytest
+  custom_components/securacv/tests/` went 1 failed: `test_config_flow_mqtt.py`
+  drives first contact with an unsigned `ANNOUNCE` fixture. The file was in no
+  leg's owned_files, so the engineer who caused the failure could not fix it
+  and the lane stayed red until the orchestrator applied a reported hunk.
+- **Cause:** The plan split ownership by the files a finding named (the
+  fix_files of the audit record), and the record listed only the tests it knew
+  drove the changed path. A second test file exercised the same step with its
+  own fixture.
+- **Fix:** The hunk (sign the fixture with a fixed Ed25519 key through
+  `announce_canonical_bytes`) was reported verbatim with a patch file proven
+  on a scratch copy, and landed before the mirror carry.
+- **Applies to:** any parallel run with disjoint file lists. Before splitting,
+  grep the test tree for every caller of the function or step a fix changes
+  (`async_step_mqtt`, `parse_announce`, a fixture name) and give those files
+  to the same leg; or give a leg its whole test directory. A leg that cannot
+  touch a red test reports the exact hunk and the order it must land in
+  relative to any carry.
+
+## 2026-11-15 — a security fix's docstring claimed what the fix intended, and a probe showed two of its sentences were false
+
+- **Symptom:** The first-contact announce fix (G5-02) shipped to review with a
+  docstring and a changelog line saying an announce signed under the
+  publisher's own key "still aborts on `announce_key_mismatch` at pairing", a
+  module docstring saying a rogue broker client "cannot plant a SecuraCV
+  sidecar card that points at its own host", and a THREAT_MODEL sentence
+  saying the card's fingerprint "cannot be the genuine kernel's over another
+  host". A reviewer's two probes disproved all three: a host that answers
+  /api/pair under the key it announced is paired and pinned; the genuine
+  kernel's own announce naming a host it has since left is offered before a
+  pin exists.
+- **Cause:** The sentences were copied from the finding's corrected_fix, which
+  described the relay case, and generalized. The tests proved what the fix
+  refuses; nothing proved what the copy said it refuses. The same pass wrote
+  "the sidecar announces again each time it connects" into an abort text
+  without reading the bridge, which signs one announce per start and
+  re-publishes the same bytes on every ConnAck.
+- **Fix:** Wording only. The copy now says what the check buys (a card shows a
+  key's fingerprint only over an announce that key signed), what it does not
+  (the owner's comparison with what `pair` printed is what stops a card under
+  another key; a replay is still offered before a pin, which is why the form
+  shows the address), and when a newer announce exists (each start).
+- **Applies to:** every sentence of the form "X cannot ..." or "... is caught
+  by Y" in a docstring, a changelog bullet or the threat model. Write the
+  probe that would falsify it and run it before the sentence ships; a claim
+  about another component (the bridge, the kernel) is read from that
+  component's code, not from the test's docstring. AGENTS.md rule 4 covers
+  comments and changelog text, not only page copy.
+
 ## 2026-11-11 — The SBOM workflow's own tools floated: cdxgen unpinned, cargo-cyclonedx rebuilt from latest every week (found by reading; sweep CI26)
 
 - **Symptom:** none reported; it was found by reading. Every release

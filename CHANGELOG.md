@@ -1,6 +1,858 @@
 # Changelog
 
 ## [Unreleased]
+
+## [2.4.20] - 2026-11-15
+
+> **Before you update.** Built by CI. The canary-wap, Sense, Vision, Sentinel and display changes, and every Bluetooth change, are not yet booted on our bench.
+> Home Assistant diagnostics downloaded from integration 0.9.0 or earlier carry every verified event's type, zone label and ten-minute window: if you attached one to an issue or sent it to anyone, delete that copy. From 0.9.1 the field is a count.
+> The Home Assistant app's wizard writes a detection-only Frigate config from 0.9.1, and it never rewrites a config it already wrote: if 0.9.0's wizard wrote yours, Frigate is still recording motion video. Turn recording off in Frigate's config yourself if you do not want that footage, and delete what is stored.
+> canary-wap: installing a firmware update or changing the update settings from the dashboard now takes the API token (paste it from your recovery kit, or use BOOT Tap Once). Bluetooth firmware updates need a bonded (Numeric Comparison) pairing.
+> Sense, Vision, Sentinel and displays: after you change the Wi-Fi password, a unit that has joined before re-opens setup about ten minutes after its restart, not within a minute. The factory-reset hold, and a BOOT tap where the board has one, still open setup at once.
+> Linux, Flasher 0.12.6 and Lab 0.4.2: the serial port goes to the logged-in (seated) user through `uaccess`. Over SSH, a remote desktop or without systemd-logind, join the `dialout` group once. A rule you pasted from an earlier INSTALL.md: paste it again.
+> Backoffice operators: a rule in `ADMIN_ALLOW_CIDRS` that is not `loopback`, `private`, an address or a v4 or v6 CIDR now stops the server at boot and names the rule.
+> Maintainers: Firmware Release signs only from `main`, and only a `fw-v*` tag on a commit on `main`. Move the signing key into the `firmware-release` environment's `OTA_SIGNING_KEY_PEM` secret and set the repository variable `OTA_SIGNING_KEY_IN_ENVIRONMENT` to `true`.
+
+### release: the 2.4.20 train (kernel, integration and add-on 0.9.1, Flasher 0.12.6, Lab 0.4.2, iOS 0.9.1, Witness Wall 0.3.2)
+
+- **What to do after updating.** On a canary-wap, the dashboard's Install
+  and update settings ask for the API token; Home Assistant's Install and
+  auto-update switches over MQTT are unchanged. On the iPhone, adding a
+  Sense or Vision from the nearby card now stops after the Wi-Fi join and
+  asks before handing it the hub's broker login: tap "Hand it over" only for
+  the Canary in front of you. If your hub's Witness Wall shows only the
+  hub's own tile, set the app's `fleet_rollcall` option to `full` (sidecar:
+  `SECURACV_FLEET_ROLLCALL=1`; host kernel: `api.fleet_rollcall: full`) and
+  keep MQTT publishing on. If you keep a Frigate zone allowlist or
+  automations keyed on zone ids, a zone or camera named with letters outside
+  ASCII (`Küche`) is now sealed under `zone:k_che`: add the new id. A
+  detection module that tunes its own priority, affinity or limits inside
+  `detect()` must stop: those calls now answer `EPERM` in the sandbox. Point
+  `busybar_surface`'s `token_path` at a viewer token (`witness_api
+  mint-viewer-token --label "busy bar"`). Rotate a camera password whose
+  logs were shared: 0.9.1 stops writing it, and old logs still hold it.
+- **What is in it.** This audit's fixes, below, by surface (122 findings
+  raised, 111 confirmed by independent verification;
+  `docs/security/REMEDIATION-2026-11.md` keeps the account and what still
+  stands), and everything that was waiting under Unreleased, after them.
+- **The Home Assistant app's fixes reach installs.** The fix for 0.9.0's
+  start failure (its Frigate lists, declared as lists in wave 21, below) and
+  one more landed after 0.9.0 was published, under the same version, and the
+  Supervisor offers an update only when the version moves. 0.9.1 is that
+  move, and `addon-image.yml` now refuses to re-push a published version
+  with changelog entries waiting (release tooling, below).
+- **Flasher 0.12.6 and Lab 0.4.2** carry the 2.4.20 catalog. The browser
+  flasher picks it up when the release redeploys the site.
+
+### Firmware 2.4.20, canary-wap: a firmware install takes the API token, a scan no longer blinds a joined unit, and Bluetooth OTA asks for a bonded link
+
+- **The firmware install and the update settings take the API token
+  (G2-10).** `POST /api/ota/install` and `POST /api/ota/config` used to take
+  the landing session, which the dashboard mints for any host on the LAN, so
+  any host there could start an install or re-point the update server. Both
+  now take the bearer alone, as the reboot routes do (F361). The dashboard
+  raises its sign-in for them, and the update-settings switches return to
+  what the device holds. `GET /api/ota/status` and `POST /api/ota/check`
+  stay on the session. `check_route_security.py` expects the bearer on both
+  routes. The restart a session can still cause is an install sent from a
+  broker it re-pointed the MQTT bridge at, and only into a newer signed
+  image.
+- **A Wi-Fi scan no longer blinds a joined unit (G2-05).** An
+  unauthenticated `GET /api/wifi/scan?force=1` (or the dashboard's Scan
+  again) left a joined WAP's state machine in IDLE, where no link loss was
+  seen, no saved network rotated to and no management AP re-raised until a
+  reboot. A sweep now leaves a held link's CONNECTED state alone, and a
+  sweep that did take the state hands it back from the live link
+  (`provisioning_logic::scan_takes_link_state` / `state_after_scan`; pinned
+  in `test_provisioning_logic`).
+- **Bluetooth OTA asks for a bonded link and stays with the link that
+  started it (G2-02).** The OTA control and data characteristics now carry
+  `WRITE_ENC|WRITE_AUTHEN` and the status characteristic
+  `READ_ENC|READ_AUTHEN`, as `ble_provision`'s do, so an unpaired link or
+  one paired Just Works through the setup door is refused. While a session
+  is in flight, its DATA and its control writes are taken only from the
+  connection, by handle and address, whose BEGIN opened it (pinned in
+  `test_ble_ota_policy`). Not yet run on a device.
+- **Pair links name the address you reached the unit at (G2-07).** The
+  landing page's paste-this fallback and `GET /api/pair/token`'s `pair_url`
+  printed `http://192.168.4.1` after setup. They now use the request's Host
+  when it can name the device and is in the redirect's alphabet; otherwise
+  the fallback is left out and `pair_url` is a relative path
+  (`provisioning_logic::pair_link_host_ok`, pinned in
+  `test_provisioning_logic`).
+- **A TLS certificate that could not be stored is no longer served or pinned
+  (G2-08).** `init_tls_cert()` now frees an unpersisted certificate and
+  answers false, so that boot runs HTTP only. The pairing QR and the receipt
+  (including a BOOT-tap or bearer receipt during setup) hand out a pin only
+  through `tls_after_setup()` (pinned in `test_wap_first_boot_nvs`). No
+  stock image can reach this today (F15).
+- **The Home Assistant release summary is cut on a character boundary
+  (G2-14).** A multibyte character split at byte 160 made the retained
+  `update/state` invalid UTF-8, and Home Assistant dropped it. The cut now
+  drops the split character whole.
+- **One installer at a time on the inactive slot (G2-15).** The USB
+  drop-zone refuses a dropped update while the pull engine is busy or a
+  Bluetooth session is in flight, and writes the reason to `RESULT.TXT`. The
+  pull engine defers while a USB update drop-zone is open
+  (`evidence_drive::update_install_allowed`, pinned in
+  `test_evidence_drive_logic`).
+
+### Firmware 2.4.20, Sense, Vision, Sentinel and displays: a power cut is not a first boot, a new image waits for Wi-Fi before it is judged, and a display keeps the zone the phone chose
+
+- **Display: a zone sent by the iPhone is a zone name, not a rule (G1-13).**
+  The first-boot portal's `/join` stored its `tz` field as the POSIX TZ rule
+  whenever it was printable. The page's picker sends a rule; the iPhone
+  sends its IANA name (`Europe/Berlin`), which newlib cannot parse, so a
+  display set up from the iPhone ran on UTC with the zone marked as chosen
+  by a human, and the auto-learner never corrected it. The join now resolves
+  the field through the fleet's one table (`tz_rule::resolve`): a valid rule
+  is kept, a known IANA name is mapped to its rule, anything else keeps the
+  compiled seed and leaves the learner armed. `tz_set_manual` refuses a rule
+  that fails `tz_rule::posix_valid`, so `POST /api/tz` answers 400 for one
+  instead of storing it. A display an earlier build left holding a name gets
+  that name's rule at boot when the table knows it (`tz_boot_string`); an
+  unknown name is dropped, so the seed applies and the learner stays armed.
+  Pinned in `firmware/tests_host/test_tz_rule.cpp` (`display_join_field`).
+- **A power cut is not a first boot (G3-01).** "Ever online" lived in RAM,
+  so a Sense, Vision, Sentinel or display restarted by the same blackout as
+  its router, or by its own five-minute outage reboot, read the router's
+  boot as a credential problem: three `NotFound` attempts in, the headless
+  boards raised their `SecuraCV-<type>-XXXX` setup network and the display
+  dropped its dashboard into the setup wizard. Each saved network now
+  carries a persisted joined bit (`wifi_store::FLAG_JOINED`, in the byte the
+  ring blob always had, so the format is unchanged), set by a join and by
+  nothing else, and the setup rule is handed this power cycle's flag or the
+  ring's (`wifi_supervisor.cpp`; the display through
+  `canary::cfg::wifi_saved_any_joined()`). The outage reboot still judges by
+  the RAM flag alone, so "at most one reboot per association" holds. A
+  seeded pair that never joined still opens setup three attempts in, and ten
+  minutes offline still re-raises setup, wiping nothing. The bit is written
+  at the first join on 2.4.20, so the new behavior starts there. Pinned in
+  `test_wifi_store.cpp` (the bit is set only by a join and survives the
+  blob) and `test_wifi_join_policy.cpp` (a reboot with a joined ring never
+  opens setup; both supervisors' wiring).
+- **The OTA boot probe waits for a healthy gate (G3-02).** On the Sense,
+  Sentinel, Vision and display the required "Wi-Fi associated" probe ran in
+  `setup()`, right after the one bounded boot join (30 s), so a single
+  missed association on a new image's first boot rolled a good image back,
+  and with auto-update on, the next daily check installed it again.
+  `ota_boot_validate()` now runs from `loop()`, once: on the first pass with
+  the station link up, or 90 s after the first pass at the latest. An image
+  that cannot join still fails the probe when the gate closes, about 90
+  seconds later than before. The 60 s confirm dwell is unchanged. Pinned in
+  `firmware/projects/canary-display/tests_host/test_ota_mgr_cut.cpp`, which
+  cuts each product's own function out of its `ota_mgr.cpp` and drives it;
+  `docs/OTA.md` section 2 says when the probe runs.
+- **A refused manifest is reported as refused (G2-11).** A manifest the
+  device parsed and refused (a missing or bad signature, another product, a
+  format downgrade, an over-long field) was fetched twice more and then
+  reported as "Could not reach the update server". The fetch now returns at
+  the first refusal and leaves the parser's reason in place, so every
+  surface shows the sentence for what was refused; only transport and
+  HTTP-status failures are retried and reported as unreachable. Pinned in
+  `firmware/common/ota/test_ota_logic.cpp` (the refusal sentences are not
+  the network sentence); the fetch loop itself is device-only.
+- **The release summary is cut between characters (G2-14).** The summary
+  published to Home Assistant's update entity was cut at a byte count, so a
+  multibyte character on the boundary left half a UTF-8 sequence and Home
+  Assistant refused the whole retained payload for that release. On the
+  display, Sense, Sentinel and Vision the copy now stops before a character
+  that would not fit whole. Pinned in `test_ota_mgr_cut.cpp` (two-, three-
+  and four-byte characters across every offset of the boundary, on all four
+  products' own function).
+- **The Bluetooth door's boot line names why it is shut (G2-04).** A Sense
+  or Vision that never had credentials and whose first-boot window had run
+  out logged "door shut: tap-only build" after a factory-reset hold. The
+  line now says the window was spent before the reset and that a power cycle
+  or a BOOT tap re-arms it; "tap-only build" is printed only for a build
+  with no window. No behavior change.
+- **Sense: the NimBLE floor is stated where it is needed (G2-03).**
+  `canary-sense.ini` pins `h2zero/NimBLE-Arduino@^2.4.0` (was `^2.3.8`):
+  `improv_ble.cpp` reads `NimBLEServer::start()` as `bool`, which 2.3.x
+  returned as `void`, so a cached 2.3.x did not compile.
+  `canary-display.ini` keeps its own pins.
+
+### Kernel 0.9.1: power loss is witnessed past retention, receipt chains append in one transaction, and the camera login stays out of the log and out of the pipeline text
+
+- **An unclean stop is sealed even after the daemon outlived its retention
+  window (G6-07).** Boot decided "the last run died" from the newest
+  lifecycle record alone. A daemon that runs longer than retention (seven
+  days by default) prunes its own `start` record, so after that every power
+  cut, crash or kill went unwitnessed: no `PowerLoss` record.
+  `Kernel::previous_run_ended_uncleanly()` now also answers yes when no
+  lifecycle record is live and the log holds a checkpoint (retention is the
+  only thing that deletes a sealed row and writes its checkpoint in the same
+  transaction; a clean stop always leaves `shutdown_clean` live). `witnessd`
+  and `frigate_bridge` use it. A log with no checkpoint and no lifecycle
+  record is still read as a first boot, and `docs/failure_semantics.md` says
+  so. Pinned by
+  `unclean_shutdown_detected_after_retention_pruned_the_start_row`.
+- **Export and break-glass receipt chains cannot be forked by a second
+  writer (G6-08).** The head read, the signature and the insert were three
+  separate statements, so an operator's `court_export` beside the API's
+  bundle could both extend the same head, and every later verify (and
+  `witnessd`'s boot check) failed closed on the fork. Each append now runs
+  inside one write transaction (`BEGIN IMMEDIATE`, or a savepoint inside a
+  caller's transaction), and the bundle builders use the entry that append
+  returned. A second exporter waits, up to the 5 s busy timeout. Pinned by
+  `concurrent_exports_cannot_fork_the_export_receipt_chain` and
+  `concurrent_writers_cannot_fork_the_break_glass_receipt_chain`.
+- **`GET /api/sealed-log` serves an anchor its first entry links to
+  (G6-09).** The checkpoint and the entries were read in separate autocommit
+  statements; a retention commit between them served the old anchor over the
+  new tail, which a walker reports as a broken chain. The reads now share
+  one read transaction. Pinned by
+  `sealed_log_document_reads_its_anchor_and_entries_in_one_snapshot`.
+- **Opening the database reads 16 bytes to check for a plaintext header, not
+  the whole file (G6-11).** `is_unencrypted_db` ran on every connection open
+  and read the entire sealed log into memory. Pinned by
+  `unencrypted_db_check_reads_the_header_only`.
+- **An interrupted plaintext-to-SQLCipher migration no longer fails every
+  later open, and two processes cannot break each other's migration
+  (G6-12).** A migration cut off before its rename left `<db>.encrypted`
+  behind and each later open exported into the leftover and failed until
+  someone deleted it by hand. The migration now removes a stale target first
+  and removes its own partial target when the export fails. Because more
+  than one process opens the same database at start-up (the API and the
+  Frigate bridge start together), the whole migration runs under an
+  exclusive `flock(2)` lock on the sibling `<db>-migrate-lock` (an empty
+  file, mode 0600, left in place): an open that waited for the lock looks at
+  the header again and, finding the database already encrypted, opens it
+  normally; if the migrating process is killed, the waiter takes over.
+  Inside the Home Assistant app's AppArmor profile this migration is still
+  not possible (no rule for `<db>.encrypted`; unchanged). Pinned by
+  `sqlcipher_migration_recovers_from_an_interrupted_one`,
+  `sqlcipher_migration_that_fails_leaves_no_partial_target` and
+  `sqlcipher_migration_is_serialized_across_concurrent_opens` (two openers
+  behind a barrier; both succeed).
+- **`ApiConfig::default()` serves the `self` roll-call, as documented
+  (G6-05).** The struct default still said `full` while
+  `FleetRollcall::default()`, the config file and the docs said `self`.
+  `witnessd` and `witness_api` already resolved to `self`; an embedder
+  constructing `ApiConfig::default()` now gets it too. Pinned by
+  `default_config_serves_the_self_roll_call`.
+- **The boot-time chain verdict reaches the Event API (G6-13).** `witnessd`
+  verified the log at boot and threw the report away, so
+  `/api/identity.last_verify` was `null` and the `/api/fleet` self row had
+  no `chain` until a client POSTed `/verify`. `ApiServer::with_last_verify`
+  now seeds the API with the boot report; a hub that boots into safe mode
+  says `degraded` from the first request. `witness_api` on its own still
+  reports `null` until a verify is requested. Pinned by
+  `boot_verify_report_reaches_identity_and_the_fleet_self_row`.
+- **A camera URL's credentials never reach a log line (G6-01).** Every RTSP
+  connect and reconnect logged the URL as configured, password included
+  (`rtsp://admin:secret@...`), into journald, `docker logs` and the app log,
+  and `RtspStats.url` carried it into the periodic summary. Both now carry
+  `rtsp://***@host/...` (`ingest::redact_url_userinfo`). Credentials already
+  written to old logs are still there. Pinned by
+  `url_userinfo_is_redacted_for_logging`,
+  `url_without_userinfo_is_unchanged` and
+  `rtsp_stats_never_carry_the_url_credentials`.
+- **The camera URL is set as a property, never parsed as pipeline text
+  (G3-08, kernel half).** The GStreamer source built its launch description
+  by formatting the camera URL into it, so a space, a backslash or a `!` in
+  the URL (a password holding one, say) was read as pipeline syntax. The
+  description is now a constant that names the source, and the URL is set on
+  that element's `location` property after parsing. A unit test pins that
+  the description carries no camera text; the `rtsp-gstreamer` clippy lane
+  in `rust.yml` compiles the property path.
+- **A Frigate zone or camera with a non-ASCII name is sealed instead of
+  refused (G6-02).** `sanitize_zone_name` kept Unicode letters, so `Küche`
+  became `zone:küche`, the kernel's ASCII allowlist refused every event from
+  it, and the log filled with `GapMissingData` records. Every character
+  outside ASCII `[a-z0-9_-]` now becomes `_` (`zone:k_che`); ids that were
+  already accepted do not move. The mapping is lossy, as `camera_slug` is.
+  Pinned by
+  `sanitize_yields_zone_ids_the_kernel_accepts_for_non_ascii_names`.
+- **`busybar_surface` follows the rotating token (G6-03).** It read the
+  capability token file once at start; the token rotates every ten minutes,
+  so the rear timeline broke after the first rotation and each minute's
+  refresh then counted against the API's lockout. The surface keeps the path
+  and re-reads it for every refresh; an unreadable or empty file skips that
+  refresh with a warning and makes no request.
+  `busybar_surface.example.toml` now recommends a viewer token (`witness_api
+  mint-viewer-token`), which is honored on `GET /api/sealed-log` only.
+  Pinned by `a_rewritten_token_file_is_presented_with_its_new_contents` and
+  `an_unreadable_or_empty_token_file_skips_the_refresh_without_a_request`.
+- **The detector sandbox can no longer change the daemon's limits or
+  scheduling (G6-04).** The child runs as the daemon's uid, and the denylist
+  left `prlimit64` open: `prlimit64(getppid(), RLIMIT_CPU, ...)` from a
+  detection module ended `witnessd` by proxy. `prlimit64`, `setpriority`,
+  `sched_setscheduler`, `sched_setparam`, `sched_setaffinity`,
+  `sched_setattr` and `ioprio_set` are denied, and `setrlimit` where the
+  architecture has it (which also makes `getrlimit` fail there under glibc).
+  The sandbox remains a denylist that must be audited. Pinned by
+  `sandbox_blocks_changing_the_parents_limits_and_scheduling`.
+- **The two hand-written HTTP request readers have fuzz targets (G6-25).**
+  The Event API's `read_request` and the webhook adapter's
+  `handle_connection` parse network bytes before any credential is checked
+  and had no harness. `api_read_request` asserts the reader's body bounds;
+  `webhook_request` asserts what gets forwarded (nothing at all under HMAC
+  without a valid MAC). Entry points exist only under `--cfg fuzzing`; seeds
+  are in `fuzz/seeds/<target>/`; `fuzz.yml` runs on changes to both source
+  files. `docs/security/PENTEST_SCOPE.md` names the break-glass server's
+  separate request reader as still without a harness.
+- **The encrypted database is built on SQLite 3.54.1 (RUSTSEC-2026-0502).**
+  `cargo audit` was red for `sqlcipher-src` 419.0.6, which carries SQLite
+  3.53.4: opened beside a `-wal` file of a different page size, it can
+  return stale page-cache memory. `libsqlite3-sys` 0.39.x pinned that source
+  exactly, so the fix is `rusqlite` 0.41 to 0.43 (`libsqlite3-sys` 0.40.0,
+  `sqlcipher-src` 420.0.0: SQLCipher 4.20.0 on SQLite 3.54.1). No kernel
+  source changed; the kernel's tests, `cargo clippy` and the
+  `--no-default-features` tests pass on the new build, and `cargo audit` no
+  longer reports the advisory. `SECURITY.md` Group 5 says who was exposed. A
+  binary built from 0.9.0 or earlier still carries the old SQLCipher: update
+  it.
+
+### Home Assistant integration 0.9.1: diagnostics carry counts, first contact needs a self-signed announce, and a status word is not a liveness verdict
+
+- **Diagnostics no longer carry the verified-event index (G5-01).** The
+  download built its chain-verification block with `asdict`, so
+  `covered_seqs` reached the file whole: every verified entry's event type,
+  owner-named zone label and ten-minute bucket, up to 100,000 rows, in the
+  file meant to be attached to an issue. The block is now built from a named
+  allowlist of scalar fields (`CHAIN_VERIFICATION_FIELDS`); `covered` and
+  `covered_seqs` are reported as counts and the chain head hash stays out.
+  Pinned by `test_the_chain_walk_indexes_reach_the_dump_as_counts_only` (no
+  `zone:` string survives) and
+  `test_every_chain_walk_field_is_named_or_withheld` (a field the dataclass
+  gains fails until it is named or withheld), with the real-HA mirror in
+  `tests/ha/test_diagnostics.py`.
+- **A first-contact sidecar announcement must be signed by the key it names
+  (G5-02).** Before a key was pinned, the discovered card and Automatic's
+  listener took any announcement, so a broker client could show the genuine
+  kernel's fingerprint over its own host and relay the pairing code. An
+  announcement with no signature, a signature by another key, or contents
+  altered after signing now aborts `announce_signature_invalid` and nothing
+  of it is kept. What this buys, exactly: a card shows a key's fingerprint
+  only over an announcement that key signed, so a broker client cannot pair
+  the genuine kernel's fingerprint with a host that kernel never announced.
+  A card under a key of the client's own shows that key's fingerprint, which
+  the person compares with what `pair` printed (the pair step's
+  `announce_key_mismatch` check additionally catches a host that relays the
+  genuine kernel's answer). A captured announcement naming a host the
+  sidecar has since left is still offered before a pin exists, which is why
+  the pairing form shows the address the code is sent to. Pinned by
+  `test_a_first_contact_announce_must_be_signed_by_the_key_it_names`,
+  `test_an_announce_signed_under_its_own_key_shows_that_keys_fingerprint`
+  and
+  `test_listen_for_announce_ignores_an_announce_not_signed_by_the_key_it_names`,
+  mirrored in `tests/ha/test_config_flow.py`.
+- **A Canary on the flagship firmware no longer reads offline thirty seconds
+  after it connects (G5-09).** Its periodic status names its witness state
+  (`"state":"NOFIX"`), not its liveness, and any word outside the online
+  vocabulary was read as offline: the device, every entity on it and the
+  voice brief went unavailable until the next reconnect. The verdict is now
+  three-valued (`voice.status_verdict` / `json_status_online`: an online
+  word is True, an offline word is False, neither is None); a None verdict
+  moves nothing, so liveness stays on the availability last will, and the
+  voice brief follows the merged verdict the entities follow. An automation
+  that keyed on those entities going unavailable every thirty seconds stops
+  firing. Pinned by `test_the_verdict_is_three_valued`,
+  `test_a_flagship_stays_online_through_its_periodic_status`,
+  `test_the_online_sensor_ignores_a_status_that_names_no_liveness`,
+  `test_the_flagships_status_never_moves_its_liveness`, and the real-HA
+  mirror in `tests/ha/test_entities.py`.
+- **A replayed signed announcement no longer moves a paired entry (G5-04).**
+  `announced_bucket_start` was parsed and never checked, so an announcement
+  the kernel once signed for a host it has since left, replayed by whatever
+  answers there now, moved the entry's URL (and the paired token with it) or
+  silenced the feed with an old prefix. The entry now stores the bucket of
+  the newest announcement it accepted (`kernel_last_announce_bucket_start`):
+  one signed by the pin is applied only when its bucket is later; the same
+  bucket is accepted only when it changes nothing (the bridge's own
+  re-publish); an older or unstamped one aborts with the new
+  `announce_stale` reason and changes nothing. The comparison is against the
+  stored value, never the clock. An entry with no bucket stored yet (paired
+  before 0.9.1, or set up without an announcement) takes the first
+  announcement its pin signed as its baseline. A sidecar restarted twice
+  inside one ten-minute window with a different host or prefix is not
+  followed the second time: restart it in a later window, or use
+  Reconfigure. Pinned by
+  `test_a_replayed_announce_older_than_the_last_accepted_moves_nothing`,
+  `test_the_kernels_own_republish_of_the_accepted_announce_changes_nothing`,
+  `test_a_newer_announce_moves_the_entry_and_becomes_the_last_accepted` and
+  `test_a_newer_announce_that_changes_nothing_is_remembered_without_a_reload`,
+  with the real-HA mirror.
+- **The app's discovery confirm screen names where the token goes (G5-05).**
+  The screen said only that the SecuraCV app had announced its kernel. It
+  now shows the app's name and the kernel URL the token is presented to,
+  with the plain-http warning when that URL is another host. Pinned by
+  `test_the_hassio_confirm_screen_names_the_address_the_token_goes_to`.
+- **The spoken privacy answer names the one thing it keeps (G5-06).**
+  "Nothing I hear is stored" was said without the exception: the words of a
+  "keep an eye on the ..." request are the watch's label, stored on the hub
+  until the watch ends. The answer and `docs/voice_control.md` now say so.
+  Pinned by `test_speak_privacy_names_the_one_thing_it_keeps`.
+- **A payload nested past the interpreter's limit is junk, not a traceback
+  (G5-07).** 64 KiB of `[` fits the payload cap and raised `RecursionError`
+  out of every MQTT callback, the announce listener and the kernel API
+  reader. `parse_mqtt_json`, `parse_announce`, `_async_read_json` and the
+  status reader now treat it like any other unreadable payload. Pinned by
+  `test_parse_mqtt_json_takes_nesting_past_the_interpreters_limit_as_junk`,
+  `test_no_handler_raises_on_nesting_past_the_interpreters_limit`,
+  `test_parse_announce_takes_nesting_past_the_interpreters_limit_as_no_announce`
+  and `test_a_body_nested_past_the_interpreters_limit_is_a_response_error`.
+- **Reconfigure of a paired sidecar can move the MQTT prefix (G5-08).** The
+  form offered the URL and a pairing code only, while its text said the
+  prefix could be changed. Re-pairing (Reconfigure and Re-authenticate) now
+  carries a Witness MQTT prefix field, prefilled with the entry's, and the
+  description says what each kind of entry can change; a paired sidecar is
+  still re-paired with a fresh code on every change. Pinned by
+  `test_reconfigure_of_a_paired_entry_moves_the_url_and_prefix_on_the_same_kernel`
+  and its real-HA mirror.
+- **The "can't reach the witness kernel" Repairs issue clears after a reload
+  (G5-10).** Only the coordinator that raised the issue cleared it, so a
+  reload, a reauth, a reconfigure or the key fix flow left it open until
+  Home Assistant restarted. Every successful backstop now clears it. Pinned
+  by `test_a_reloaded_entry_clears_the_unreachable_issue_it_did_not_raise`.
+- **Health, SD Wear and GPS attributes carry only numbers the core can store
+  (G5-11).** A broker integer past 64 bits in `uptime`, the `sd` object, the
+  GPS object or an egress counter made the entity's state unserializable:
+  the recorder dropped its attributes and every websocket subscription on it
+  errored. Those values are now read through bounded readers, the Health
+  sensor's `sd` attribute carries only its known keys (`mounted`,
+  `replace_recommended`, `usage_pct`, `writes`, `errors`, `lifetime_kb`,
+  `wear_pct`), and a value that cannot be carried is left out or None;
+  `uptime_seconds` and the GPS `satellites` and `hdop` are None, not 0, when
+  the device sent none. Check templates that compare these to 0. Pinned by
+  `test_health_attribute_bounds.py` (new), the added cases in
+  `test_health_metrics.py`, and
+  `test_health_sd_wear_and_gps_write_only_numbers_the_core_can_carry` in
+  `tests/ha/test_entities.py`.
+- **The adapter-stats poll reads under the 4 MiB cap (G5-12).** It called
+  `resp.json()` on whatever answered at the configured URL. It now uses the
+  capped reader every kernel answer uses, and an oversized or unreadable
+  body fails that poll. Pinned by
+  `test_the_adapter_stats_poll_refuses_a_declared_length_over_the_cap`,
+  `test_the_adapter_stats_poll_stops_reading_a_body_that_never_ends` and
+  `test_the_adapter_stats_poll_reads_what_it_read_before`.
+- **Copy names the cards Home Assistant renders (G3-11).** The kernel form
+  and the dashboard's empty state pointed at a "SecuraCV discovered" card
+  that does not exist; they now say "the SecuraCV sidecar card" and "the
+  SecuraCV app card ... under Discovered". Pinned by
+  `test_no_copy_names_a_card_that_is_never_rendered`.
+
+### Home Assistant app (add-on) 0.9.1: the wizard's Frigate config is detection-only, and the base image is supported
+
+- **The Frigate config the wizard writes is detection-only (G3-03).** When
+  no Frigate config was found, the wizard wrote one that gave every camera
+  the `record` role, set `record.enabled: true` and kept motion video for as
+  many days as you chose for sealed events (up to a year). It now writes the
+  `detect` role alone and `record.enabled: false`, with a comment pointing
+  at Frigate's record docs; the wizard's retention is the witness log's and
+  is no longer passed to that file. Snapshots are not set, so they stay at
+  Frigate's default (off). The camera screen and DOCS.md say so. The wizard
+  never overwrites an existing Frigate config, so one an earlier version
+  wrote still records. Pinned by
+  `test_write_frigate_config_is_detection_only` and a save-path test that
+  picks one year and finds no `record` role, no `retain` block and no 365 in
+  the written file.
+- **"Only Frigate alerts" is not offered where it cannot seal (G3-03).**
+  Alerts mode listens to Frigate's review items instead of its events, and
+  Frigate creates review items only for cameras that record. With the
+  detection-only config above that choice would have left a log of
+  heartbeats while the done screen promised a first sealed event. On the
+  path where the wizard writes Frigate's config the choice is disabled with
+  the reason, the page never sends it, and the server stores "every tracked
+  object" and says why on the done screen. The choice, DOCS.md and the
+  option list now say it needs recording on in Frigate. Pinned by three
+  save-path tests (RTSP cameras with `enable_reviews: true`, with and
+  without a file written, and the Frigate-owned path where the choice is
+  kept) and four page tests.
+- **Base image moved off an unsupported Alpine (G3-07).** The runtime bases
+  and both build stages were on Alpine 3.18, out of security support since
+  May 2025. They are on 3.22 (GStreamer 1.26, SQLite 3.49, Python 3.12, jq
+  1.8.2, bashio 0.19.0), whose security support ends 2027-05-01; the date is
+  written beside the pin. Tag and digest are literal on all four `FROM`
+  lines (no `ARG` carries either), so a dependency updater can move them.
+  `run.sh` reads the hostname through `bashio::app.hostname`. Pinned by
+  `tests/test_base_image_pins.py`: one release across all bases, not older
+  than 3.22, digest on every line, and the workflow's Python and jq equal to
+  what the Dockerfile says the release ships.
+- **A quote or a backslash in a standalone camera URL no longer breaks the
+  kernel's config file (G3-08).** `run.sh` pasted the URL between quotes, so
+  such a password made `witness_config.json` invalid JSON and the kernel
+  exited on a parse error at every start. The URL is now JSON-encoded by jq;
+  the file parses and carries the exact URL, and the kernel sets it as a
+  property rather than pipeline text (kernel, above). Pinned in
+  `tests/test_config_render.sh` with `pa"ss\word` rendered through the
+  script's own encoding line (the file parses, `rtsp.url` round-trips byte
+  for byte).
+- **The done screen and the docs name the card and the button Home Assistant
+  shows (G3-11).** They sent you to a "SecuraCV discovered" card and its
+  "Configure" button; no card has that title and a discovered card's button
+  reads "Add". They now say: the *SecuraCV app* card under Discovered, press
+  Add. Pinned in `tests/test_wizard_setup_flow.test.js` (both done-screen
+  paths) and `tests/test_serve_wizard_setup.py` (the title is derived from
+  the integration's `flow_title` and discovery step).
+
+### Flasher 0.12.6 and the browser flasher: the page no longer chooses where files are written, the hub image is owner-only, and both flashers name what they refuse
+
+- **Saving a file is decided by a person, not the page (G4-01).**
+  `save_text_file` (the health report) and `backup_flash` no longer take a
+  path from the webview. Rust now raises the OS save panel itself, writes
+  only where the panel answers, and refuses a link, folder or device already
+  sitting at that name. The automatic safety copy (`dest: "auto"`) works out
+  the app's own backups folder in Rust, and `auto_backup_path` is no longer
+  a command. Pinned by the `lib.rs` `webview_boundary_tests` and a
+  `desktop_parity` test: no path argument, no JS save dialog.
+- **The hub's raw staging image is owner-only (G4-02).** It carries the
+  Wi-Fi passphrase, the account hash and the SSH key, and is now created
+  0600 in the app's private cache, never in world-readable `/tmp`. A file
+  already at that name is refused rather than written through (hub-io xz
+  test).
+- **A release manifest can no longer declare a size that takes the app down
+  (G4-03).** A size larger than any Canary's flash (32 MiB; the Vision model
+  is capped at 16 MiB) is refused before anything is reserved or downloaded,
+  with the limit named in the error. A download that runs past its declared
+  size is cut off (engine and `lib.rs` tests).
+- **On Linux, a hub card write checks that this account may write the disk
+  (G4-04)** when you pick it and again before the download. Before, it found
+  out only after the multi-GB download and decompress.
+- **Hub self-setup that finishes with only the optional MQTT step left shows
+  as done (G4-06),** with one thing left for you: no retry button and no
+  resume loop. It sends the finished notification and chime (`hub.rs`
+  `headless_report` test).
+- **Declining "Create the hub account?" is asked once, not twelve times
+  (G4-07).** First-boot watch ticks no longer overlap, so onboarding and
+  self-setup cannot run twice (G4-08).
+- **Closing the window while espflash is erasing or writing a board asks
+  first (G4-10),** in the Lab's words: "A flash is still writing to the
+  board. … Quit anyway?" (`launch_guard` `any_live` test).
+- **The Open button on a Your fleet row is shown only for a LAN address
+  (G4-13)** (RFC 1918, 100.64/10, loopback, link-local,
+  `.local`/`.lan`/`.internal`/`.home.arpa` or a single-label name), so an
+  mDNS announcement can no longer send your browser to an internet host. A
+  `desktop_parity` test holds the check to the Rust gate's own accept and
+  refuse lists.
+- **Restoring a backup runs the same chip-placement check as every other
+  write at 0x0 (G4-18),** so a classic ESP32 backup is refused on an S3
+  instead of leaving it unable to start; the browser flasher refuses it too
+  (`core.bootloaderPlacement`), in the same words as the Advanced local-file
+  picker.
+- **No safety copy is said out loud (G4-19).** When the board does not
+  report its flash size, the Flasher's install log says no safety copy could
+  be taken, and the browser flasher's connect, install and done cards say
+  it.
+- **Typed settings that do not fit are caught before the install (G4-16).**
+  The browser flasher's confirm card checks that Wi-Fi, the broker block
+  (with its CA), the dials and the API token fit the one NVS settings page,
+  and says so in the form with every field still filled. Before, it flashed
+  the board with none of them and claimed the network had been left blank
+  (`flash.test.js` case using the WAP with a 3000-byte CA). A bake that
+  still fails is reported on the install and done cards with its reason. The
+  Flasher names the engine's refusal "Your settings don't fit on the board",
+  with the fix.
+- **The Wi-Fi help and the setup-door note say the iPhone app is TestFlight
+  by invite today (G4-17)** and name the fallback, on both flashers.
+- **Linux packages, Flasher and Lab: the udev rule no longer makes Canary
+  and CH343 serial ports world-writable (G4-05).** `MODE="0666"` is gone.
+  Access goes to the seated user through `uaccess`; SSH and remote-desktop
+  sessions use the documented `dialout` group. The rule file is
+  byte-identical in both apps and in both INSTALL.md heredocs
+  (`desktop_parity`).
+
+### Lab 0.4.2 and the hub tools: a running flash is not lost to a route change or a quit, the status strip stops interrupting, and the hub plan finishes MQTT through the app's own discovery
+
+- **A bench busy flashing is not left by accident (G4-09).** The bench posts
+  a same-origin busy word to the shell (`flash-native.js` to `lab-shell.js`,
+  which checks the origin and that the message comes from the bench frame on
+  screen). A route change, Next/Back and Reload ask first ("A flash is still
+  running on this bench. Leave anyway? The write finishes, but the receipt
+  and boot log are lost."), and the bench bar's reload button is disabled.
+  Pinned in `lab_app.test.js`.
+- **Quitting while espflash runs asks first (G4-10).** Window close where
+  the app really quits, Cmd-Q, the tray's Quit and an updater restart ask
+  "Quit while flashing?", and Quit ends the write first
+  (`Sidecars::any_running`). The updater does not offer a restart while a
+  flash runs (`routine_check` journals "update offered later — a flash is
+  running"), and Settings' Install says why.
+- **The status strip stops interrupting (G4-11).** It was a live region
+  rebuilt on every poll. The chips now update in place, `aria-live` is gone
+  from the footer, and one hidden `role=status` line speaks only when the
+  fleet, USB or hub summary changes. The Home, Your fleet and the sidebar
+  badge skip redraws while focus is inside them. Pinned in
+  `lab_app.test.js`.
+- **Only a local address is opened or saved (G4-12, G4-13).** `hostIsLocal`,
+  a JS twin of `lib.rs` `host_is_local`, gates a fleet row's Open link and
+  the hub address save, which now refuses a public name or address and says
+  so instead of "Saved". Announced device facts are length-capped, and the
+  remembered-device map holds at most 64. The tests pin both copies to
+  `lib.rs`'s accept and refuse lists.
+- **The webview's capability is narrowed (G4-15).**
+  `capabilities/default.json` drops `core:default` for `core:event:default`
+  (plus `opener:default`), so no tray, menu, window or webview permission
+  reaches page script. `lab_bundle.test.js` asserts no `core:default`,
+  `core:tray*` or `core:menu*`.
+- **Hub tools: the connect-mqtt step goes through the Mosquitto app's
+  discovery (G3-05).** It answers Home Assistant's MQTT menu with `addon`,
+  so Home Assistant signs in with the app's discovery credentials.
+  `addon_connection_failed` after the mqtt-login restart is retried up to 4
+  times, 5 s apart, before the step is reported for finishing by hand. The
+  broker form is kept only as the non-menu fallback and no longer sends the
+  `discovery` key the schema rejects.
+- **Hub tools: a failed Frigate config copy leaves no truncated file
+  (G3-09).** The curated config is copied to `config.yml.tmp` and renamed
+  into place, and a failed copy removes the temp file, so the next run
+  cannot adopt a truncated config as the owner's own. A test injects a
+  partial write.
+- **`hub_image.json` describes what ships (G3-10).** The narrated bundle in
+  `CONFIG/securacv/`, run by the Flasher's first-boot companion, with
+  zero-touch still planned; dashboards, automations and blueprints are
+  listed as shipped for the owner to add. `hub_seed.json`, `hub_image.json`
+  and `hub_provision_bundle.json` are regenerated.
+- **`full_stack_setup.md` names what is on screen (G3-15):** the "Put the
+  self-setup bundle and maintenance key on the card" checkbox under the
+  Self-setup panel, the standing banner's Finish hub setup button, and the
+  SecuraCV app (store slug still `privacy_witness_kernel`), and it says the
+  MQTT connection goes through the app's discovery.
+
+### iOS 0.9.1: first sight pins the key the receipt named, no client follows a redirect, and the nearby sheet asks before the broker login crosses
+
+- **First sight pins the key the pairing receipt named (G1-09).** The first
+  poll of a paired Canary pinned whatever key its address served, so a host
+  answering that name at first sight could get its own key pinned and its
+  chain badged Verified. The app now keeps the pairing receipt's `pubkey_fp`
+  and pins a served key only when it derives that fingerprint. Otherwise
+  nothing is pinned, and the row reads "Its key does not match its pairing
+  receipt" with a failed badge. A pairing saved before this version, or
+  synced from another device, still pins on first sight. Pinned by
+  `DeviceAPITests`.
+- **A Canary synced to a second device says it is not paired there
+  (G1-10).** It has no token there, and Verify called its chain "Unsigned".
+  Such a row now reads "Not yet paired on this device", Verify answers
+  "Paired on another device — add its recovery kit here", and the detail
+  screen offers its recovery kit.
+- **No device or hub client follows a redirect (G1-11).** A 302 could carry
+  the bearer token or a Wi-Fi password body off the network. Every device
+  and hub session now refuses redirects: `DeviceAPI` plain and pinned,
+  `HubAPI`, `LivenessProbe`, `SetupPortalClient`, and the firmware, glass
+  and nightlight settings clients. Pinned by `DeviceAPITests`.
+- **Fleet Wi-Fi never rides the Bluetooth lane (G1-08).** The "bonded,
+  encrypted" lane trusted a console id the peripheral claimed for itself,
+  and it was preferred over the LAN. An online unpinned Canary rides plain
+  http behind its disclosure, and a dark one is named unreachable; the new
+  password is never sent over Bluetooth. Pinned by `FleetWiFiRolloutTests`.
+- **The nearby sheet asks before the hub's broker login crosses (G1-07).** A
+  Sense or Vision used to receive the hub's shared broker login over the
+  unauthenticated Bluetooth link without any question. The sheet now asks
+  first, naming the device (with Blink it), and "Not now" keeps the login on
+  the phone. Set up gains "Rotate broker login": the phone forgets the login
+  and the hub walkthrough mints a new one; every Canary holding the old
+  login stops reporting to the hub until it is given the new one. Pinned by
+  `HubOnboardingTests`.
+- **Nearby setup says what happened (G1-01 to G1-06).** The done card starts
+  the network browse it watches, and a paired WAP counts as seen; a dropped
+  Bluetooth link says Pair comes next; picking another network clears the
+  remembered password, and an open network is joined with none; "Stored"
+  reads "It took your hub's address (<host>); it shows under your hub once
+  it connects."; a hub status that never left 0 is no answer; a failed
+  Bluetooth connect says "move closer". Pinned by
+  `NearbyCanaryCardLogicTests` and `AddCanaryFlowTests`.
+- **The hub walkthrough outlives its screen (G1-14, G1-16).** The first-boot
+  watch, the typed account and the "Your hub is ready" notice live on an
+  app-lifetime runner, so closing the screen keeps them and a relaunch
+  resumes the watch with its original clock. Opening "Set up a hub" no
+  longer starts the browse, and the Bonjour browse runs only with discovery
+  consent. Pinned by `HubOnboardingTests`.
+- **One permission prompt at a time (G1-15),** and **a Canary heard only
+  over Bluetooth is not a fleet (G1-17):** the display walkthrough's
+  discovery step raises only the Local Network alert, and Today's hero
+  counts only paired or network-reached rows.
+- **A tapped `.svlt` is refused on its size before it is read (G1-12),** and
+  a recovery kit over 64 KB likewise. Pinned by `UnsealFlowTests`.
+
+### Witness Wall (tvOS) 0.3.2: the Wall says why a hub shows only itself, and a paired hub that serves no log is named
+
+- **A paired hub that stops serving a sealed log is named (G1-19).** It used
+  to slip back to the calm "Your fleet reported in through …" banner. A new
+  standing, `VerificationStanding.pairedNoLog`, applies when the Wall is
+  paired, the hub has not refused the token, and no sealed log came back.
+  After three such cycles in a row the Wall shows "Paired, but your hub
+  served no sealed record this cycle", and the footer reads "paired · no
+  sealed record served" in the trouble color. An unpaired Wall still says
+  nothing in this case. Pinned by `WallPairingTests`.
+- **The Wall names the roll-call switch (G1-18).** When the roll-call is the
+  kernel's row alone, a footnote under the headline reads "Your hub lists
+  only itself. Turn on its full roll-call (fleet_rollcall: full) and keep
+  MQTT publishing on to see your Canaries here." `DISCOVERY.md`, `README.md`
+  and `RUN_ON_APPLE_TV.md` name the switch in each form and say why it is
+  off by default: the route takes no token. Pinned by
+  `WallRollcallFootnoteTests`.
+
+### Backoffice: the status link is a write capability, the allowlist reads IPv6, and rollback restores before it rolls back
+
+- **The customer's signed status link no longer hands a write to readers
+  (G5-13).** The order page printed the link for every role, `GET
+  /api/orders/:number/status-url` returned it to any session and to
+  read-only API tokens, and the link alone changed the address of an
+  unshipped order under the actor "customer". Now the order page shows the
+  link, and the API returns it, only to `owner` and `ops` (a read-only token
+  gets 403), and the public address form asks for the email the order was
+  placed with and compares it before anything is written; the status page
+  never prints that email. Pinned by `tests/users.test.mjs` and
+  `tests/server.test.mjs`; `tests/commerce.test.mjs` now posts the email.
+- **A bad field on a website form answers with the reason instead of a 404
+  (G5-14).** The error handler redirected every HTML POST to its Referer's
+  path. The redirect is now taken only for a signed-in person whose Referer
+  is this server's own host; a public form is answered where it was posted,
+  with the message. Pinned by `tests/server.test.mjs`.
+- **`ADMIN_ALLOW_CIDRS` takes IPv6, and a rule that does not parse stops the
+  boot (G5-16).** A v6 CIDR matched nothing, and an allowlist that matches
+  nobody is a 404 on every admin path, the login page included, with no
+  message. The matcher now reads v4 and v6 addresses and CIDRs (a v4-mapped
+  client still matches its v4 rule), and a rule that is none of `loopback`,
+  `private`, an address or a CIDR is refused at start, by name. Pinned by
+  `tests/guard.test.mjs`.
+- **`/api/users` and `/api/health` carry the hardening headers (G5-17)**
+  through the shared `json()`. Pinned by a `tests/guard.test.mjs` walk of
+  every GET route with an owner session.
+- **A line break in a mail address or header is refused (G5-18).**
+  `noCRLF()` refuses one in From, To, the Message-ID and every header name
+  and value where a mail is queued and again where it is built; the SMTP
+  envelope refuses an address with whitespace, a control character or a
+  bracket; a subject's line break is folded to a space; a campaign test send
+  requires one valid address. A queued row that fails this check is marked
+  failed at once and the rest of the queue is sent. Pinned by
+  `tests/mail.test.mjs`.
+- **SECURITY.md says which secrets live in the database, and Settings no
+  longer prints the push topic (G5-19).** `app:secret`, `notify:ntfy_url`
+  and `notify:ntfy_token` live there, so a copy of `backoffice.db` is a
+  credential. The topic field is empty with "set — blank keeps it", a
+  checkbox removes the saved topic and its token, and the Health row prints
+  the topic masked. Pinned by `tests/listing.test.mjs`.
+- **The waitlist thanks page names the product (G5-22).** It printed the
+  posted id. It now prints the catalog name, or the name of a
+  `waitlist.products` row in `store.json` (today `displays-kit`, "Watch
+  Station & Canary Dash"), kept apart from the products so one is never
+  listed, priced or sold. Pinned by `tests/server.test.mjs`.
+- **Rolling back a release that migrated the database works, as one command
+  (G5-15).** The previous build refuses a migrated file, so the documented
+  order never started. `kit rollback backoffice` stops the app, restores the
+  newest pre-migrate copy (or the backup you name), and only then deploys
+  the previous tag; when no migration separates the two builds it is a plain
+  deploy. A refused deploy names the command, and the owner's manual no
+  longer says no kit command can lose data: orders, tickets and mail written
+  after the copy are not in it (the replaced file is kept beside the
+  database). Pinned by `tests/migrations.test.mjs`.
+
+### Website: the Store page's waitlist enrolls for the displays it promises, and the privacy policy says what iCloud stamps
+
+- **The Store page's waitlist posts `displays-kit` (G5-22).** It enrolled
+  visitors under the Watchful House bundle while promising word on the Watch
+  Station and Dash. The new waitlist-only sku ("Watch Station & Canary
+  Dash") lives in `store.json`'s top-level `waitlist.products` block,
+  outside `groups`, so nothing in it is priced, packed or sold. The home
+  page's form keeps `wap-kit` and its label now says so. Pinned by
+  `tests/forms.test.mjs`. Earlier Store-page sign-ups stay under
+  `watchful-house`.
+- **The privacy policy's iCloud section is true (G5-24).** It said
+  away-from-home alert wakes carry "no exact time". It now says iCloud
+  stamps each wake, and each household escalation, with the moment it was
+  written (about when the alert happened, or went unanswered), what invitees
+  can see, and the one-day clearing.
+
+### Release tooling: a forgotten version bump fails the add-on image, Firmware Release signs only from main, and a stale Lab draft is rebuilt
+
+- **A forgotten add-on bump is a red build, not a silent re-point (G3-04).**
+  Every push to `main` re-pushed `:<version>` for whatever `config.yaml`
+  named, and the Supervisor offers an update only when that string moves, so
+  two fixes landed under 0.9.0 and were offered to nobody who already ran
+  it. `addon-image.yml` now stops before the build, on pushes, when the
+  app's CHANGELOG has entries under `## Unreleased` and that arch's
+  `:<version>` is already on GHCR, and names `scripts/bump_version.sh`. Held
+  by `.github/scripts/test_addon_image_guard.py`, which runs the step's own
+  script.
+- **Firmware Release signs only a commit on `main`, and every job handed the
+  key runs in the `firmware-release` environment (G2-12).** Any `fw-v*` tag
+  push, or a dispatch from any branch, was built and signed with the fleet's
+  release key. A dispatch now runs only from `main`, and a tag on a commit
+  `main` does not contain (within its last 200 commits) is refused before
+  the key is read. The three jobs that sign (firmware, flasher factory
+  images, the Vision model) run in one environment, so an owner can put
+  required reviewers in front of the key and store it there; those settings
+  are the owner's and no file proves them. The other two signers are held to
+  the environment only: a Flasher Factory Images `channel: dev` run and a
+  hand-dispatched Vision Model Asset run still sign from a branch, and the
+  checks are the workflow file's own, at the commit being released. "Update
+  everything" learns the key is in the environment from the
+  `OTA_SIGNING_KEY_IN_ENVIRONMENT` variable. Held by
+  `.github/scripts/test_firmware_signing_gate.py`, with real git.
+- **A Lab draft built before the Lab last changed is rebuilt, not offered
+  for publishing (G6-17).** The button passes each draft's commit, the plan
+  compares it with the tree, and `desktop-release.yml` records the commit
+  after a rebuild. A draft that records no commit is still reported as
+  waiting, and the row says it was not compared. Held by `StaleDrafts` in
+  `test_release_plan.py`.
+- **A fork's pull request can no longer start the staging deploy or the
+  macOS self-heal (G6-19).** `workflow_run: branches: [main]` matches the
+  triggering run's branch name, and a fork's branch can be called `main`.
+  Both jobs now require the triggering run to be a push, and the CI policy
+  checker refuses a `workflow_run` workflow that trusts the filter
+  (`test_ci_policy_workflow_run.py`).
+- **`SECURITY.md` says which versions get security fixes (G6-21).** One row
+  per train: the newest release only, no backports, and how a fix reaches
+  each surface. Its Group 5 now records that the SQLite WAL bug is also
+  filed against `sqlcipher-src` (RUSTSEC-2026-0502) and that kernel 0.9.1
+  fixes it with the `rusqlite` 0.43 bump, after which `cargo audit` no
+  longer reports it.
+- **Dependabot watches all four Dockerfiles (G6-22),** and **cargo-deny
+  ignores exactly what cargo-audit ignores (G6-24),** held equal by
+  `scripts/check_advisory_ignores.py` in `audit.yml`. `deny.toml` no longer
+  says the two gates never disagree.
+- **Flasher and Lab releases carry their third-party license notices
+  (G6-26).** Each release attaches `THIRD_PARTY_LICENSES.html` beside the
+  installers: every crate's license text for the targets that ship, then
+  each bundled program's license file at the pinned version. `NOTICE` names
+  the bundled programs. A crate under a license `deny.toml` does not allow
+  fails the release, and a build-only run. Held by
+  `scripts/tests/test_third_party_notices.py`.
+- **The add-on's tests run on what the new base ships (G3-07).**
+  `pwk-wizard-tests.yml` moves to Python 3.12 and the pinned jq 1.8.2
+  release binary (sha256 from the release's own `sha256sum.txt`);
+  `tests/test_base_image_pins.py` fails if the Dockerfile and these pins
+  move apart.
+- **The store-page link check lays out the HACS mirror's `SECURITY.md` when
+  it has one (G6-27).**
+
+### Docs: the fault model, the setup guides and the security account say what the code does
+
+- **`docs/FAULT_MODEL.md`'s retention section matches
+  `docs/failure_semantics.md` (G6-10):** the prefix prune behind the signed
+  checkpoint, the monotonic age floor, wall-clock aging for an earlier
+  process's rows and one skipped pass after a clock skew; its power-loss
+  rule now covers a `start` record retention pruned (G6-07), and §2.5 says
+  the setup hole after a power cut is closed (G3-01).
+- **The getting-started guide names the build that listens (G3-12) and
+  counts the event kinds from `spec/witness_dictionary.json` (G3-13),** the
+  FAQ dates the Flasher feature to its first published build (G3-16), and
+  the README credits the one-tap Bluetooth door to Sense, Vision and the WAP
+  (G3-17).
+- **Every Home Assistant guide names the *SecuraCV app* card under
+  Discovered and its Add button (G3-11),** and the setup guide says the
+  hub's own MQTT connection goes through the Mosquitto app's discovery
+  (G3-05), that the sidecar card needs a self-signed announcement and a move
+  needs a newer one (G5-02, G5-04), what Reconfigure moves (G5-08), and that
+  the Witness Wall's roll-call needs `fleet_rollcall: full` (G1-18).
+  `docs/frigate_integration.md` names the detection-only config, what alerts
+  mode needs and the new zone ids.
+- **The security and protocol docs follow the code:** the threat model's
+  Systemic row names the signing environment (G2-12), scenario 11 the replay
+  rule (G5-04), the DNS-rebinding row and the reboot paragraph the
+  bearer-only install (G2-10), and a new row the iPhone's Bluetooth hand-off
+  (G1-07); `docs/ble_protocol.md` and `docs/design/magic_pairing.md` state
+  the OTA characteristics' properties (G2-02), the door's re-arm on a unit
+  that never had credentials (G2-04) and the hand-off residual (G1-07);
+  `docs/csi_developer_api.md` the `pair_url` host (G2-07); `docs/OTA.md` and
+  `docs/firmware_ota.md` where the signing key is kept; `docs/logging.md`
+  and `spec/event_contract.md` the `PowerLoss` rule (G6-07).
+- **`docs/security/ENTERPRISE_CUSTODY.md` and `REMEDIATION-2026-11.md`
+  record what shipped (G6-23)** (digest pins, the toolchain sha256 checks,
+  the add-on wizard's ingress-address gate, the seed under `/data`), and the
+  sandbox's admitted-candidate channel is stated at its width (G6-06).
+
+
 ### Honest names: what the Canaries, their pages and Home Assistant show comes from the build and the board, never one literal every build shares, and Home Assistant shows a battery nobody read as unknown (F398, HA60; device-details §1.4, PR 6, #1971)
 
 - **The flagship names its board, or no board.** The mDNS TXT `model` was

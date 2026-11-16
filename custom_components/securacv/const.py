@@ -46,6 +46,14 @@ CONF_KERNEL_PREVIOUS_KEYS = "kernel_previous_verifying_keys"
 # When the current pin was taken, as a 10-minute bucket start (coarse time,
 # like every other "at" the integration keeps).
 CONF_KERNEL_KEY_PINNED_BUCKET_START = "kernel_key_pinned_bucket_start"
+# The `announced_bucket_start` of the newest signed announce the entry has
+# accepted (the one it was paired from, or a later one signed by the pin).
+# Once one is stored, an announce signed by the pin is applied only when it
+# is newer: a replay of a retained announce an earlier host published is
+# refused on this, never on wall-clock time. An entry that has stored none
+# (paired before this key existed, or set up without an announce) takes
+# the first announce its pin signed and stores that one's.
+CONF_KERNEL_LAST_ANNOUNCE_BUCKET_START = "kernel_last_announce_bucket_start"
 # The paired token's id (8 hex), so async_remove_entry can revoke exactly its
 # own token with DELETE /api/pair/<id>.
 CONF_KERNEL_TOKEN_ID = "kernel_token_id"

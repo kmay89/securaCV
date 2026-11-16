@@ -66,19 +66,40 @@ export const boundary = (obj, fields) => (obj && typeof obj === 'object' && !Arr
 export const boundaryEach = (list, fields) => Array.isArray(list) ? list.map(x => boundary(x, fields)) : list;
 export const BOUNDARY_HEADERS = (fields) => ({ 'X-Untrusted-Fields': fields.join(','), 'X-Boundary-Notice': BOUNDARY_NOTICE });
 
-// "loopback", "private", an address, or a v4 CIDR; an unknown rule matches nothing.
+// The allowlist (ADMIN_ALLOW_CIDRS): "loopback", "private", an address, or a v4 or v6 CIDR, comma-separated.
+// A rule that is none of those is refused when the list is read, by name: here it would match nothing, and an
+// allowlist that matches nobody is a 404 on every admin path, the login page included.
 const v4 = (s) => { const p = s.split('.').map(Number); return p.length === 4 && p.every(n => Number.isInteger(n) && n >= 0 && n <= 255) ? ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0 : null; };
+// An address as its family and its number. A v4-mapped v6 address (::ffff:a.b.c.d, however it is spelled) is the
+// v4 address it carries, so a v4 rule matches a v4 client that arrives on a dual-stack socket.
+const addrOf = (s) => {
+  const fam = isIP(s); if (fam === 4) return { fam: 4, n: BigInt(v4(s)) };
+  const x = fam === 6 ? expand6(s) : null; if (!x) return null;
+  const n = BigInt('0x' + x.replace(/:/g, ''));
+  return n >> 32n === 0xffffn ? { fam: 4, n: n & 0xffffffffn } : { fam: 6, n };
+};
+const WIDTH = { 4: 32, 6: 128 };
+// One rule, read once: { kind } for a named range, { fam, n, bits } for an address or a CIDR, null for neither.
+export function parseCidrRule(rule) {
+  if (rule === 'loopback' || rule === 'private') return { kind: rule };
+  const m = /^([0-9a-f:.]+)(?:\/(\d{1,3}))?$/i.exec(rule); if (!m) return null;
+  const a = addrOf(m[1]); if (!a) return null;
+  let bits = m[2] == null ? WIDTH[isIP(m[1])] : Number(m[2]); if (bits > WIDTH[isIP(m[1])]) return null;
+  // a CIDR written over a v4-mapped base counts its bits from the v4 address; one wider than the mapping is not a v4 range
+  if (isIP(m[1]) === 6 && a.fam === 4) { if (bits < 96) return null; bits -= 96; }
+  return { fam: a.fam, n: a.n, bits };
+}
 export function cidrMatcher(rules) {
   const list = String(rules || '').split(',').map(r => r.trim()).filter(Boolean);
   if (!list.length) return null;
+  const parsed = list.map(parseCidrRule); const bad = list.filter((_, i) => !parsed[i]);
+  if (bad.length) throw new Error(`ADMIN_ALLOW_CIDRS: ${bad.map(r => JSON.stringify(r)).join(', ')} ${bad.length === 1 ? 'is' : 'are'} not "loopback", "private", an address, or a v4 or v6 CIDR (203.0.113.0/24, 2001:db8:1200::/56) — a rule that matches nothing would hide the admin from everyone, so the server does not start with it`);
   return (ipIn) => {
-    const ip = String(ipIn || '').replace(/^::ffff:/i, ''); const n = v4(ip);
-    for (const rule of list) {
-      if (rule === 'loopback' && (ip === '127.0.0.1' || ip === '::1' || ip.startsWith('127.'))) return true;
-      if (rule === 'private' && n != null && (ip.startsWith('10.') || ip.startsWith('192.168.') || /^172\.(1[6-9]|2\d|3[01])\./.test(ip))) return true;
-      if (rule === ip) return true;
-      const cidr = /^(\d+\.\d+\.\d+\.\d+)\/(\d+)$/.exec(rule);
-      if (cidr && n != null) { const base = v4(cidr[1]); const bits = +cidr[2]; const mask = bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0; if (base != null && (n & mask) === (base & mask)) return true; }
+    const a = addrOf(String(ipIn || '').trim()); if (!a) return false;
+    for (const r of parsed) {
+      if (r.kind === 'loopback') { if (a.fam === 4 ? a.n >> 24n === 127n : a.n === 1n) return true; continue; }
+      if (r.kind === 'private') { if (a.fam === 4 && (a.n >> 24n === 10n || a.n >> 16n === 0xc0a8n || a.n >> 20n === 0xac1n)) return true; continue; }
+      if (r.fam === a.fam) { const shift = BigInt(WIDTH[r.fam] - r.bits); if (a.n >> shift === r.n >> shift) return true; }
     }
     return false;
   };

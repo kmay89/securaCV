@@ -140,5 +140,7 @@ ${!r.sent_at && q.customers.length ? `<form method="post" action="/devices/recal
     const o = editItems(db, Number(c.params.id), items, { catalog: await app.catalog().catch(() => null), actor: 'web' }); back(c, `/orders/${o.id}`, `items on ${o.number} changed`);
   });
   router.post('/orders/track', async (c) => { if (!trackingConfigured(cfg)) throw new HttpError(400, 'set USPS_CLIENT_ID and USPS_CLIENT_SECRET first (Settings explains)'); const r = await pollTracking(db, cfg, { fetchImpl: app.fetchImpl || timedFetch, minAgeH: 0 }); backTo(c, '/ship', `checked ${r.checked} parcel${r.checked === 1 ? '' : 's'}: ${r.delivered} delivered, ${r.alerts} alert${r.alerts === 1 ? '' : 's'}`); });
+  // The link this returns lets its holder change the order's address until it ships, so it is a write capability:
+  // can() refuses it to support and viewer, and the pipeline refuses it to a read-only token (auth.mjs, WRITE_CAPABILITY).
   router.get('/api/orders/:number/status-url', (c) => { const o = db.get('SELECT * FROM orders WHERE number = ?', c.params.number); if (!o) throw new HttpError(404, 'no such order'); json(c.res, { url: `${cfg.baseUrl}/o/${o.number}/${orderToken(cfg.secret, o.number)}` }); });
 }

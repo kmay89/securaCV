@@ -179,7 +179,9 @@ struct FleetWiFiSheet: View {
     /// password ride takes before anything is sent.
     private func laneNote(_ c: FleetWiFiRollout.Candidate) -> String? {
         switch c.path {
-        case .ble: return "Bluetooth — bonded, encrypted"
+        // Unreachable today (Candidate.path never picks it): the phone
+        // cannot check which device is on the other end of this lane.
+        case .ble: return "Bluetooth — encrypted link to a device this phone cannot verify"
         case .http: return "Secure connection — pinned to its certificate"
         case .httpCleartext: return FleetWiFiRollout.cleartextNote
         case .handsOn, .unreachable: return nil
@@ -201,11 +203,11 @@ struct FleetWiFiSheet: View {
             } header: {
                 Text("Gets the update")
             } footer: {
-                // Shown only when the plan holds a Bluetooth lane, which no
-                // WAP fills today (ledger A65), so no row offers it.
+                // Shown only when the plan holds a Bluetooth lane, which
+                // Candidate.path never picks today, so no row offers it.
                 if plan.followers.contains(where: { $0.path == .ble }) {
                     Text("A Canary on the Bluetooth lane takes the new password "
-                       + "over its bonded link — stand within a room or two of it.")
+                       + "over an encrypted Bluetooth link — stand within a room or two of it.")
                 }
             }
         } else if !plan.handsOn.isEmpty || !plan.unreachable.isEmpty {

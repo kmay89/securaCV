@@ -3363,3 +3363,67 @@ test("flasher glue: the safety copy maps first, and the first-contact erase fall
   // An erase the user asked for stays the whole-chip erase.
   assert.match(src, /eraseKind: forcedErase && !askedFullErase \? "first-contact" : null/);
 });
+
+// ── the 2026-11 audit: settings fit, restore placement, a copy that can't run ─
+// G4-16: every field passing its own check does not mean they fit one NVS
+// page together. A 3000-byte broker CA beside maxed Wi-Fi, broker login,
+// device id and the minted API token (a blob-scheme board: the WAP) used to
+// pass the form, fail the bake mid-install, and finish as if the network had
+// been left blank on purpose.
+test("settingsSeedProblem: maxed fields and a 3000-byte CA are refused on the confirm card, with the reason", async () => {
+  const c = await core();
+  const product = catalog.products.find((p) => p.id === "securacv-canary-wap");
+  assert.ok(product && product.wifi_nvs === "blob", "the WAP left the catalog or its Wi-Fi scheme changed");
+  const body = "A".repeat(3000 - "-----BEGIN CERTIFICATE-----\n\n-----END CERTIFICATE-----".length);
+  const ca = `-----BEGIN CERTIFICATE-----\n${body}\n-----END CERTIFICATE-----`;
+  assert.strictEqual(new TextEncoder().encode(ca).length, 3000);
+  const wifi = { ssid: "S".repeat(32), pass: "p".repeat(63) };
+  const mqtt = { deviceId: "d".repeat(32), mqttHost: "h".repeat(63), mqttPort: 8883,
+    mqttUser: "u".repeat(32), mqttPass: "w".repeat(64), mqttTls: 1, mqttCa: ca };
+  // Each piece passes by itself…
+  assert.doesNotThrow(() => c.mqttProvisioningToNvs(mqtt));
+  assert.doesNotThrow(() => c.buildNvsWifiImage(wifi.ssid, wifi.pass, 0x5000));
+  // …together they do not fit, and the install's own seed says so.
+  assert.ok(c.wantsApiToken(product, wifi), "a blob board baking Wi-Fi mints a token");
+  const apiToken = c.mintApiToken(new Uint8Array(96).fill(7));
+  const { seed } = c.installSettingsSeed({ catalog, product, wifi, mqtt, autoUpdate: true, apiToken });
+  assert.throws(() => c.buildNvsSeedImage(seed, 4096), /exceeds one page/);
+  const problem = c.settingsSeedProblem({ catalog, product, wifi, mqtt, autoUpdate: true });
+  assert.match(problem, /exceeds one page/);
+  const text = c.settingsProblemText(problem);
+  assert.ok(text.startsWith(c.SETTINGS_TOO_BIG), "the confirm card's words are the shared sentence");
+  // A settings set that fits is not refused.
+  assert.strictEqual(c.settingsSeedProblem({ catalog, product, wifi: { ssid: "home", pass: "password1" },
+    mqtt: { mqttHost: "hub.local", mqttPort: 1883 }, autoUpdate: false }), null);
+});
+
+// G4-18: a backup taken from a classic ESP32 (bootloader at 0x1000) passed the
+// restore's size check as "a smaller file" and went onto an S3, which then
+// did not start. The restore now runs the same placement guard.
+test("restore: a classic-ESP32 backup on an S3 passes the size check and is refused by placement", async () => {
+  const { validateBackupFile, bootloaderPlacement } = await core();
+  const classic = new Uint8Array(4 * 1024 * 1024).fill(0xff);
+  classic[0x1000] = 0xe9; classic[0x100c] = 0; classic[0x100d] = 0; // an ESP32 bootloader
+  classic[0x8000] = 0xaa; classic[0x8001] = 0x50;
+  const s3Flash = 8 * 1024 * 1024;
+  const fit = validateBackupFile(classic.length, s3Flash, "canary-ddeeff-backup.bin");
+  assert.strictEqual(fit.ok, true, "the size check alone lets it through (the old dead end)");
+  const placed = bootloaderPlacement(classic, "ESP32-S3");
+  assert.strictEqual(placed.ok, false);
+  assert.match(placed.reason, /Nothing was written/);
+  assert.ok(bootloaderPlacement(classic, "ESP32").ok, "on its own chip the backup restores");
+});
+
+// G4-19: a chip that did not report its flash size skipped the promised
+// automatic copy in silence.
+test("backupSkipReason: a due copy with no flash size is said, every other case is quiet", async () => {
+  const { backupSkipReason, BACKUP_SKIP_NO_SIZE } = await core();
+  assert.match(BACKUP_SKIP_NO_SIZE, /did not report its flash size, so no safety copy could be taken/);
+  const due = { isBackup: false, skipBackup: false, haveBackup: false };
+  assert.strictEqual(backupSkipReason({ ...due, flashBytes: null }), BACKUP_SKIP_NO_SIZE);
+  assert.strictEqual(backupSkipReason({ ...due, flashBytes: 0 }), BACKUP_SKIP_NO_SIZE);
+  assert.strictEqual(backupSkipReason({ ...due, flashBytes: 8 << 20 }), null, "the copy runs");
+  for (const why of ["isBackup", "skipBackup", "haveBackup"]) {
+    assert.strictEqual(backupSkipReason({ ...due, [why]: true, flashBytes: null }), null, `${why}: no copy was due`);
+  }
+});

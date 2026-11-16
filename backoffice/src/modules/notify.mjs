@@ -11,8 +11,16 @@ export const ntfyUrlFor = (db, cfg) => (cfg.demo || cfg.env === 'staging') ? '' 
 export const ntfyTokenFor = (db, cfg) => cfg.ntfyToken || db.setting('notify:ntfy_token') || '';
 export const newOrderOn = (db, cfg) => cfg.notifyNewOrder === true ? true : cfg.notifyNewOrder === false ? false : (db.setting('notify:new_order') ?? '1') !== '0';
 export const pushConfigured = (db, cfg) => /^https:\/\//.test(ntfyUrlFor(db, cfg));
+// The topic as a page may print it: its scheme and host, and the end of its name — the last four characters, never
+// more than a third of it. The name is the secret (whoever knows it reads every push and can send one).
+export function maskTopic(url) {
+  const m = /^(https?:\/\/[^/]+)\/(.*)$/.exec(String(url || '')); if (!m) return '';
+  const keep = Math.min(4, Math.floor(m[2].length / 3));
+  return `${m[1]}/…${keep ? m[2].slice(-keep) : ''}`;
+}
+// ntfy_url: null leaves the saved topic as it is, '' removes it (and the token saved for it), a URL replaces it.
 export function savePhone(db, { ntfy_url = null, ntfy_token = null, new_order = null } = {}, { actor = 'web' } = {}) {
-  if (ntfy_url != null) { const u = String(ntfy_url).trim(); if (u && !/^https:\/\/[a-z0-9.-]+(:\d+)?\/[A-Za-z0-9_.-]+$/i.test(u)) throw new Error('the topic is an https URL like https://ntfy.sh/your-topic'); db.setSetting('notify:ntfy_url', u); }
+  if (ntfy_url != null) { const u = String(ntfy_url).trim(); if (u && !/^https:\/\/[a-z0-9.-]+(:\d+)?\/[A-Za-z0-9_.-]+$/i.test(u)) throw new Error('the topic is an https URL like https://ntfy.sh/your-topic'); db.setSetting('notify:ntfy_url', u); if (!u) db.setSetting('notify:ntfy_token', ''); }
   if (ntfy_token != null && String(ntfy_token).trim() !== '') db.setSetting('notify:ntfy_token', String(ntfy_token).trim());
   if (new_order != null) db.setSetting('notify:new_order', new_order ? '1' : '0');
   db.audit(actor, 'notify.settings', 'settings', 'phone', { topic: !!ntfyUrlFor(db, cfg0), new_order: (db.setting('notify:new_order') ?? '1') !== '0' });

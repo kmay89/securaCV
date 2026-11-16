@@ -4,8 +4,10 @@
 // syncs is the paired-device list (`PairedDevice` records: name, type, base
 // URL, pairing date, pinned TLS fingerprint); it lives in the USER's own
 // iCloud, SecuraCV has no server in the loop and cannot read any of it
-// (Invariant IV, local ownership, realized as infrastructure). This is how a
-// second iPhone or an iPad "just has your fleet." Alert rules, quiet hours
+// (Invariant IV, local ownership, realized as infrastructure). A second
+// iPhone or an iPad gets the LIST: each device adds the pairing token once
+// (the Canary's recovery kit), and until then the row reads "Not yet paired
+// on this device" (Witness.tokenMissing). Alert rules, quiet hours
 // and the alert ledger do NOT sync — they stay in each device's own
 // defaults — and the away wakes are a separate path (AwayPush). Secrets never
 // come here — only Keychain holds tokens and pinned keys, device-bound.
@@ -66,9 +68,11 @@ final class CloudSync {
             record["baseURL"] = ref.baseURL?.absoluteString as CTKValue?
             record["pairedAt"] = ref.pairedAt as CTKValue
             // The TLS pin travels with the URL it belongs to: a second
-            // iPhone that "just has your fleet" must be able to dial an
-            // https Canary and check it, or it would refuse the device
-            // until re-paired. Public data, like the URL.
+            // iPhone that adds the Canary's token (its recovery kit) must
+            // be able to dial an https Canary and check it. Public data,
+            // like the URL. (The receipt's `pubkey_fp` does not ride here
+            // yet: a new PairedDevice field needs the production schema
+            // promoted first, ios/scripts/cloudkit_schema.sh.)
             record["tlsCertFP"] = ref.tlsCertFingerprint as CTKValue?
             db.save(record) { _, _ in /* best-effort; local mirror is source */ }
         }

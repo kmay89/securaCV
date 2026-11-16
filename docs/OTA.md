@@ -16,7 +16,8 @@ and every manifest a second signature over its own fields, both under ONE
 release key whose public half is compiled in (`ota_release_key.h`, key id
 `532429078dc47c04`). An all-zero public key fails closed. The private key is
 never in the repository: the CI release workflow reads it from the
-`OTA_SIGNING_KEY_PEM` secret, a human keeps it on the ceremony machine, and
+`OTA_SIGNING_KEY_PEM` secret of the `firmware-release` environment, in a
+job that signs only a commit on `main`, a human keeps it on the ceremony machine, and
 `tools/sign-firmware` **refuses** a key path inside any source checkout
 before it will sign. There is no unsigned path on a release build: the
 dev-only `POST /api/ota` on `firmware/canary` is compiled out of `release`
@@ -46,7 +47,8 @@ engine confirms it (`esp_ota_mark_app_valid_cancel_rollback`) only when:
 1. every **required probe** the board registered passes
    (`securacv_ota_register_selftest` + `securacv_ota_boot_self_test`) — the
    fleet rule is "Wi-Fi associated"; `firmware/canary` adds its diagnostics
-   score; and
+   score. The probe is judged at a bounded healthy gate, not on the boot
+   join alone ("When the probe runs", below); and
 2. the board has reported itself healthy for the **confirm dwell**
    (`securacv_ota_health_tick(now, healthy)`, 60 s on every tree that runs
    the engine) — a crash loop, a watchdog reset, a power cut or a wedged
@@ -61,27 +63,49 @@ installed from its own page:
 |---|---|---|
 | `firmware/canary` (flagship) | the station link is up (the probes themselves run at its healthy gate, 30 s into `loop()`) | a deliberate restart (Home Assistant or HTTP reboot, serial `x`) once the probes passed — the code chose to stop, so it is not a crash inside the dwell |
 | canary-wap | the station link is up when it is set to join home Wi-Fi; otherwise (standalone "Use without home WiFi", home Wi-Fi turned off, or none saved) its own access point is up — it can install over Bluetooth with no station network at all | — |
-| canary-display (every flavor) | Wi-Fi is up; the broker is not required | — |
-| canary-vision, canary-sense, canary-sentinel | Wi-Fi is up; the broker is not required | — |
+| canary-display (every flavor) | Wi-Fi is up; the broker is not required (the probe runs from `loop()` at its healthy gate, below) | — |
+| canary-vision, canary-sense, canary-sentinel | Wi-Fi is up; the broker is not required (the probe runs from `loop()` at its healthy gate, below) | — |
+
+**When the probe runs.** On the display, Vision, Sense and Sentinel the
+required probe is "the station link is up", and `ota_boot_validate()` runs
+it once, from `loop()`, at a bounded healthy gate: the first pass with the
+link up, or 90 s after the first pass at the latest. Until 2.4.20 it ran in
+`setup()`, right after the one bounded boot join (30 s), so a single missed
+association on a new image's first boot — a congested band, an auth
+timeout, a router that was itself restarting — failed the probe and
+reverted a good image, and with auto-update on the next daily check
+installed it again. Inside the gate `loop()`'s retry backoff gets several
+more associations in. An image that cannot join at all still fails the
+probe when the gate closes, and reverts then. Until the probe has run the
+image is `PENDING_VERIFY`, so a restart inside the gate reverts it by the
+bootloader's own rule, exactly as a restart inside the dwell does. On the
+display the setup wizard is blocking: if it opens inside the gate (a join
+that keeps failing for a reason setup can fix, on a unit whose saved
+network has never joined), the probe is judged on the first pass after it
+returns. The gate is host-tested against each product's own
+`ota_boot_validate()` (`firmware/projects/canary-display/tests_host/test_ota_mgr_cut.cpp`).
 
 Until the image is confirmed, the update is not over: the one-shot install
 marker the engine wrote when the boot partition flipped stays where it is
 (`securacv_ota_take_pending_version()` returns false while the running image
 is `PENDING_VERIFY`). Each tree records the outcome from one function, called
-at boot after the probes and again on the pass the health tick confirms: the
+at boot and again on the pass the health tick confirms: the
 confirming pass records "applied"; a revert inside the dwell boots the old
 image, which finds the marker and records the rollback. Engines before 2.4.17
 consumed the marker on the new image's first boot, so a revert inside the
 dwell went unrecorded while the record said "applied".
 
-The order of the two calls cannot change the answer. Every board runs the
-probe (`securacv_ota_boot_self_test`) before `securacv_ota_init`, because the
-probes must run before the network comes up — so at probe time the dwell is
-not known yet. The probe therefore never confirms on its own: it arms a pure
-dwell state machine (`securacv_ota_dwell_*`, host-tested in
-`test_ota_logic.cpp` in both call orders), `init()` resolves it once the
-dwell is known (a dwell → the ticks decide; none → confirm now), and the
-ticks confirm after the dwell has held. The otadata partition is read only
+The order of the two calls cannot change the answer. The canary-wap runs the
+probe (`securacv_ota_boot_self_test`) before `securacv_ota_init`, so at
+probe time the dwell is not known yet; the flagship, and since 2.4.20 the
+display, Vision, Sense and Sentinel, run it from `loop()`, after `init()`.
+With a dwell set — every tree that runs the engine sets one — the probe
+never confirms on its own: it arms a pure dwell state machine
+(`securacv_ota_dwell_*`, host-tested in `test_ota_logic.cpp` in both call
+orders). When the probe came first, `init()` resolves it once the dwell is
+known (a dwell → the ticks decide; none → confirm now); when `init()` came
+first, the dwell starts at the probe. Either way the ticks confirm after
+the dwell has held. The otadata partition is read only
 while a dwell is armed. A build that can install an image but runs no
 engine (the flagship's `secure` envs) says so with
 `securacv_ota_confirm_now()` and confirms at the probe as it always did; the
@@ -89,7 +113,8 @@ flagship's deliberate-restart path calls the same function once the probes
 passed.
 
 A failed required probe calls `esp_ota_mark_app_invalid_rollback_and_reboot`
-on the spot. The anti-rollback floor in NVS rises **only after** confirmation,
+on the spot — the spot being the healthy gate where the probe runs, not the
+boot join. The anti-rollback floor in NVS rises **only after** confirmation,
 so a rolled-back version can be offered again.
 
 What this is not: bench-verified. The rollback path is compile-checked and

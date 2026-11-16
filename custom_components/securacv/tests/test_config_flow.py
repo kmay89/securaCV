@@ -58,6 +58,7 @@ from ..const import (
     CONF_CLAIM_NONCE,
     CONF_ENABLE_MQTT,
     CONF_KERNEL_DEVICE_ID,
+    CONF_KERNEL_LAST_ANNOUNCE_BUCKET_START,
     CONF_KERNEL_TOKEN_ID,
     CONF_KERNEL_VERIFYING_KEY,
     CONF_MQTT_PREFIX,
@@ -291,7 +292,7 @@ def test_mqtt_discovery_aborts_when_a_kernel_entry_covers_the_prefix():
 
 def test_announce_shows_the_fingerprint_then_the_pair_form():
     flow = make_flow()
-    result = drive(flow.async_step_mqtt(announce_info(announce_payload())))
+    result = drive(flow.async_step_mqtt(announce_info(signed_announce())))
 
     assert result["type"] == "form" and result["step_id"] == "announce_confirm"
     assert flow.confirm_only is True
@@ -319,6 +320,7 @@ def test_announce_without_a_host_prefills_the_broker_host():
     flow = make_flow(hass=hass)
     payload = announce_payload()
     del payload["api"]["host"]
+    payload["sig"] = PRIV.sign(announce_canonical_bytes(payload)).hex()
     drive(flow.async_step_mqtt(announce_info(payload)))
     assert flow.context["title_placeholders"] == {"name": f"sidecar {DEVICE_ID}"}
     result = drive(flow.async_step_announce_confirm({}))
@@ -328,7 +330,7 @@ def test_announce_without_a_host_prefills_the_broker_host():
 def test_pairing_creates_the_both_entry(monkeypatch):
     calls = fake_pair(monkeypatch, PAIRED)
     flow = make_flow()
-    drive(flow.async_step_mqtt(announce_info(announce_payload())))
+    drive(flow.async_step_mqtt(announce_info(signed_announce())))
     drive(flow.async_step_announce_confirm({}))
 
     result = drive(flow.async_step_pair({CONF_URL: "http://192.168.1.20:8799/",
@@ -347,6 +349,8 @@ def test_pairing_creates_the_both_entry(monkeypatch):
     assert data[CONF_SETUP_MODE] == SETUP_MODE_BOTH
     assert len(data[CONF_CLAIM_NONCE]) == 16 and int(data[CONF_CLAIM_NONCE], 16) >= 0
     assert CONF_TOKEN_FILE not in data
+    # The announce it was paired from: a later one must be newer to move it.
+    assert data[CONF_KERNEL_LAST_ANNOUNCE_BUCKET_START] == 1760140800
 
 
 def test_pairing_errors_keep_the_person_on_the_form(monkeypatch):
@@ -359,7 +363,7 @@ def test_pairing_errors_keep_the_person_on_the_form(monkeypatch):
     ):
         fake_pair(monkeypatch, outcome)
         flow = make_flow()
-        drive(flow.async_step_mqtt(announce_info(announce_payload())))
+        drive(flow.async_step_mqtt(announce_info(signed_announce())))
         result = drive(flow.async_step_pair({CONF_URL: "http://192.168.1.20:8799",
                                              CONF_PAIRING_CODE: "483921"}))
         assert result["type"] == "form" and result["step_id"] == "pair"
@@ -371,7 +375,7 @@ def test_pairing_errors_keep_the_person_on_the_form(monkeypatch):
 def test_a_malformed_code_never_reaches_the_kernel(monkeypatch):
     calls = fake_pair(monkeypatch, PAIRED)
     flow = make_flow()
-    drive(flow.async_step_mqtt(announce_info(announce_payload())))
+    drive(flow.async_step_mqtt(announce_info(signed_announce())))
     for bad in ("12345", "1234567", "48392a", ""):
         result = drive(flow.async_step_pair({CONF_URL: "http://192.168.1.20:8799",
                                              CONF_PAIRING_CODE: bad}))
@@ -397,7 +401,7 @@ def test_a_pair_response_whose_key_disagrees_with_the_announce_aborts(monkeypatc
 
     monkeypatch.setattr(config_flow, "SecuraCVApi", _Api)
     flow = make_flow()
-    drive(flow.async_step_mqtt(announce_info(announce_payload())))
+    drive(flow.async_step_mqtt(announce_info(signed_announce())))
     result = drive(flow.async_step_pair({CONF_URL: "http://192.168.1.20:8799",
                                          CONF_PAIRING_CODE: "483921"}))
     assert result["type"] == "abort" and result["reason"] == "announce_key_mismatch"
@@ -417,7 +421,7 @@ def test_pairing_promotes_an_mqtt_only_entry_instead_of_a_second_one(monkeypatch
         unique_id="mqtt_securacv",
     )
     flow = make_flow(entries=[existing])
-    drive(flow.async_step_mqtt(announce_info(announce_payload())))
+    drive(flow.async_step_mqtt(announce_info(signed_announce())))
     result = drive(flow.async_step_pair({CONF_URL: "http://192.168.1.20:8799",
                                          CONF_PAIRING_CODE: "483921"}))
     assert result["type"] == "abort" and result["reason"] == "already_configured"
@@ -427,6 +431,57 @@ def test_pairing_promotes_an_mqtt_only_entry_instead_of_a_second_one(monkeypatch
     assert existing.data[CONF_SETUP_MODE] == SETUP_MODE_BOTH
     assert existing.data[CONF_CLAIM_NONCE] == "feedfacefeedface", "a published claim keeps its nonce"
     assert flow.hass.config_entries.reloads == ["entry-1"]
+
+
+def test_a_first_contact_announce_must_be_signed_by_the_key_it_names():
+    """No entry, no pin: the only check there is. An announce anyone on the
+    broker can publish carried the genuine kernel's key (so the card showed
+    the fingerprint `pair` prints) over the publisher's own host, and the
+    code typed next went to that host. Unsigned, signed by another key, or
+    altered after signing: no card, and nothing of it is kept."""
+    other = Ed25519PrivateKey.from_private_bytes(b"\x09" * 32)
+    moved = signed_announce()
+    moved["api"]["host"] = "192.168.1.66"
+    for hostile in (
+        announce_payload(api={"scheme": "http", "bind": "all", "port": 8799, "host": "192.168.1.66"}),
+        signed_announce(priv=other),
+        moved,
+        {**announce_payload(), "sig": "00" * 64},
+    ):
+        flow = make_flow()
+        result = drive(flow.async_step_mqtt(announce_info(hostile)))
+        assert result["type"] == "abort" and result["reason"] == "announce_signature_invalid", hostile
+        assert flow._announce is None
+        result = drive(flow.async_step_announce_confirm({}))
+        assert result["type"] == "abort" and result["reason"] == "invalid_discovery_info"
+        assert flow.hass.config_entries.updates == []
+
+
+def test_an_announce_signed_under_its_own_key_shows_that_keys_fingerprint(monkeypatch):
+    """What is left to a broker client: an announce under a key of its own.
+    The card then shows that key's fingerprint, not the one `pair` prints
+    on the real kernel, and a code redeemed on the real kernel aborts on
+    the disagreement."""
+    theirs = Ed25519PrivateKey.from_private_bytes(b"\x08" * 32)
+    fake_pair(monkeypatch, PAIRED)
+
+    class _Api:
+        def __init__(self, url, token, session, token_file=None):
+            pass
+
+        async def async_revoke_paired_token(self, token_id):
+            return None
+
+    monkeypatch.setattr(config_flow, "SecuraCVApi", _Api)
+    flow = make_flow()
+    result = drive(flow.async_step_mqtt(announce_info(
+        signed_announce(priv=theirs, verifying_key=OTHER_KEY))))
+    assert result["type"] == "form" and result["step_id"] == "announce_confirm"
+    assert result["description_placeholders"]["fingerprint"] == kernel_key_fingerprint(OTHER_KEY)
+    assert kernel_key_fingerprint(OTHER_KEY) != kernel_key_fingerprint(KEY)
+    result = drive(flow.async_step_pair({CONF_URL: "http://192.168.1.20:8799",
+                                         CONF_PAIRING_CODE: "483921"}))
+    assert result["type"] == "abort" and result["reason"] == "announce_key_mismatch"
 
 
 def test_an_announce_for_a_pinned_kernel_must_carry_its_signature():
@@ -463,6 +518,106 @@ def test_a_signed_announce_updates_the_entry_and_reloads_it():
     assert existing.data[CONF_MQTT_TOPIC_PREFIX] == "pwk"
     assert flow._test_reloads == ["entry-1"]
     assert issues(flow.hass) == {}
+    # An entry from before the bucket was kept takes the first signed
+    # announce as its baseline.
+    assert existing.data[CONF_KERNEL_LAST_ANNOUNCE_BUCKET_START] == 1760140800
+
+
+def _pinned_entry(url="http://192.168.1.30:8799", prefix="witness", last=None):
+    data = {CONF_URL: url, CONF_KERNEL_VERIFYING_KEY: KEY, CONF_ENABLE_MQTT: True,
+            CONF_MQTT_PREFIX: DEFAULT_MQTT_PREFIX, CONF_MQTT_TOPIC_PREFIX: prefix,
+            CONF_SETUP_MODE: SETUP_MODE_BOTH}
+    if last is not None:
+        data[CONF_KERNEL_LAST_ANNOUNCE_BUCKET_START] = last
+    return make_entry(data, unique_id=UNIQUE_ID)
+
+
+def _nothing_moved(flow, existing, before):
+    assert existing.data == before
+    assert flow._test_reloads == [] and flow.hass.config_entries.reloads == []
+    assert flow.hass.config_entries.updates == []
+
+
+def test_a_replayed_announce_older_than_the_last_accepted_moves_nothing():
+    """The sidecar announced host .20 (bucket 1760140800), later moved to
+    .30 and said so (bucket 1760227200). The first announce is signed by the
+    pin for good, and any broker client could have kept it: replayed by
+    whatever answers at .20 now, it took the entry, and the paired token
+    sent on the next backstop, back there. The signature says the kernel
+    once said this, not that it says it now."""
+    existing = _pinned_entry(last=1760227200)
+    before = dict(existing.data)
+    for replay in (
+        signed_announce(),                                   # the old host
+        signed_announce(mqtt_topic_prefix="old"),            # an old prefix: the feed goes silent
+        signed_announce(announced_bucket_start=1760227199),  # one second short of the last
+    ):
+        flow = make_flow(entries=[existing])
+        result = drive(flow.async_step_mqtt(announce_info(replay)))
+        assert result["type"] == "abort" and result["reason"] == "announce_stale", replay
+        _nothing_moved(flow, existing, before)
+    # No bucket at all is never newer.
+    unstamped = announce_payload()
+    del unstamped["announced_bucket_start"]
+    unstamped["sig"] = PRIV.sign(announce_canonical_bytes(unstamped)).hex()
+    flow = make_flow(entries=[existing])
+    result = drive(flow.async_step_mqtt(announce_info(unstamped)))
+    assert result["type"] == "abort" and result["reason"] == "announce_stale"
+    _nothing_moved(flow, existing, before)
+    # The same bucket with other contents is not the re-publish either.
+    flow = make_flow(entries=[existing])
+    result = drive(flow.async_step_mqtt(announce_info(signed_announce(announced_bucket_start=1760227200))))
+    assert result["type"] == "abort" and result["reason"] == "announce_stale"
+    _nothing_moved(flow, existing, before)
+
+
+def test_the_kernels_own_republish_of_the_accepted_announce_changes_nothing():
+    """The bridge republishes the retained announce on every reconnect: the
+    same bytes, the same bucket. Accepted, and nothing to do."""
+    existing = _pinned_entry(url="http://192.168.1.20:8799", last=1760140800)
+    before = dict(existing.data)
+    flow = make_flow(entries=[existing])
+    result = drive(flow.async_step_mqtt(announce_info(signed_announce())))
+    assert result["type"] == "abort" and result["reason"] == "already_configured"
+    _nothing_moved(flow, existing, before)
+
+
+def test_a_newer_announce_moves_the_entry_and_becomes_the_last_accepted():
+    existing = _pinned_entry(last=1760140800)
+    flow = make_flow(entries=[existing])
+    newer = signed_announce(announced_bucket_start=1760141400, mqtt_topic_prefix="pwk")
+    result = drive(flow.async_step_mqtt(announce_info(newer)))
+    assert result["type"] == "abort" and result["reason"] == "already_configured"
+    assert existing.data[CONF_URL] == "http://192.168.1.20:8799"
+    assert existing.data[CONF_MQTT_TOPIC_PREFIX] == "pwk"
+    assert existing.data[CONF_KERNEL_LAST_ANNOUNCE_BUCKET_START] == 1760141400
+    assert flow._test_reloads == ["entry-1"]
+    # And the one it replaced is now a replay.
+    flow = make_flow(entries=[existing])
+    result = drive(flow.async_step_mqtt(announce_info(signed_announce())))
+    assert result["reason"] == "announce_stale"
+    assert existing.data[CONF_URL] == "http://192.168.1.20:8799"
+    assert existing.data[CONF_MQTT_TOPIC_PREFIX] == "pwk"
+
+
+def test_a_newer_announce_that_changes_nothing_is_remembered_without_a_reload():
+    """A reconnect in a later bucket: the same host and prefix, a newer
+    stamp. The stamp is kept (so an older announce is a replay from then
+    on) and the entry is not reloaded for it."""
+    existing = _pinned_entry(url="http://192.168.1.20:8799", last=1760140800)
+    flow = make_flow(entries=[existing])
+    result = drive(flow.async_step_mqtt(announce_info(signed_announce(announced_bucket_start=1760141400))))
+    assert result["type"] == "abort" and result["reason"] == "already_configured"
+    assert existing.data[CONF_KERNEL_LAST_ANNOUNCE_BUCKET_START] == 1760141400
+    assert existing.data[CONF_URL] == "http://192.168.1.20:8799"
+    assert flow._test_reloads == [] and flow.hass.config_entries.reloads == []
+    # A stored value that is not a bucket start counts as none stored.
+    for junk in (True, "1760140800", -1, 1.5):
+        existing = _pinned_entry(url="http://192.168.1.20:8799", last=junk)
+        flow = make_flow(entries=[existing])
+        result = drive(flow.async_step_mqtt(announce_info(signed_announce())))
+        assert result["reason"] == "already_configured", junk
+        assert existing.data[CONF_KERNEL_LAST_ANNOUNCE_BUCKET_START] == 1760140800, junk
 
 
 def test_a_signed_announce_with_another_key_raises_the_repairs_issue():
@@ -527,7 +682,7 @@ def test_the_token_file_announce_path_probes_and_pins(monkeypatch):
     token-file form, which probes /api/identity and pins what it serves."""
     probes = fake_probe(monkeypatch, PROBE)
     flow = make_flow()
-    drive(flow.async_step_mqtt(announce_info(announce_payload(pairing="token_file"))))
+    drive(flow.async_step_mqtt(announce_info(signed_announce(pairing="token_file"))))
     result = drive(flow.async_step_announce_confirm({}))
     assert result["type"] == "form" and result["step_id"] == "token_file"
     assert schema_defaults(result)[CONF_URL] == "http://192.168.1.20:8799"
@@ -540,12 +695,13 @@ def test_the_token_file_announce_path_probes_and_pins(monkeypatch):
     assert result["data"][CONF_AUTH_MODE] == AUTH_MODE_TOKEN_FILE
     assert result["data"][CONF_KERNEL_VERIFYING_KEY] == KEY
     assert result["data"][CONF_MQTT_TOPIC_PREFIX] == "witness"
+    assert result["data"][CONF_KERNEL_LAST_ANNOUNCE_BUCKET_START] == 1760140800
 
 
 def test_the_token_file_announce_path_refuses_a_disagreeing_identity(monkeypatch):
     fake_probe(monkeypatch, KernelProbe(DEVICE_ID, OTHER_KEY, "2.4.16"))
     flow = make_flow()
-    drive(flow.async_step_mqtt(announce_info(announce_payload(pairing="token_file"))))
+    drive(flow.async_step_mqtt(announce_info(signed_announce(pairing="token_file"))))
     drive(flow.async_step_announce_confirm({}))
     result = drive(flow.async_step_token_file({CONF_URL: "http://192.168.1.20:8799",
                                                CONF_TOKEN_FILE: "/config/api_token"}))
@@ -642,8 +798,8 @@ def test_auto_mode_finds_a_sidecar_announce(monkeypatch):
         device_id=DEVICE_ID, kernel_version="2.4.16", verifying_key=KEY, api_scheme="http",
         api_bind="all", api_port=8799, api_host="192.168.1.20", pairing="required",
         mqtt_topic_prefix="witness", discovery_prefix="homeassistant",
-        availability_topic="witness/status", announced_bucket_start=1760140800, sig=None,
-        raw=announce_payload(),
+        availability_topic="witness/status", announced_bucket_start=1760140800, sig=signed_announce()["sig"],
+        raw=signed_announce(),
     )
 
     async def _listen(self):
@@ -722,7 +878,7 @@ def test_listen_for_announce_returns_the_retained_announce_and_unsubscribes(monk
 
     async def _subscribe(hass, topic, callback, **kwargs):
         callback(SimpleNamespace(topic=f"witness/{DEVICE_ID}/announce",
-                                 payload=json.dumps(announce_payload()).encode()))
+                                 payload=json.dumps(signed_announce()).encode()))
         return lambda: released.append(topic)
 
     monkeypatch.setattr(mqtt, "async_subscribe", _subscribe)
@@ -730,6 +886,36 @@ def test_listen_for_announce_returns_the_retained_announce_and_unsubscribes(monk
     announce = run(flow._async_listen_for_announce())
     assert announce is not None and announce.device_id == DEVICE_ID
     assert released == ["witness/+/announce"]
+
+
+def test_listen_for_announce_ignores_an_announce_not_signed_by_the_key_it_names(monkeypatch):
+    """Automatic's listener is first contact too: an announce with no valid
+    signature by the key it names is not an offer, and one that is still
+    arrives behind it."""
+    other = Ed25519PrivateKey.from_private_bytes(b"\x09" * 32)
+    hostile = [
+        announce_payload(api={"scheme": "http", "bind": "all", "port": 8799, "host": "192.168.1.66"}),
+        signed_announce(priv=other, api={"scheme": "http", "bind": "all", "port": 8799, "host": "192.168.1.66"}),
+    ]
+    released: list[str] = []
+    mqtt = config_flow.mqtt
+
+    def _subscriber(payloads):
+        async def _subscribe(hass, topic, callback, **kwargs):
+            for payload in payloads:
+                callback(SimpleNamespace(topic=f"witness/{DEVICE_ID}/announce",
+                                         payload=json.dumps(payload).encode()))
+            return lambda: released.append(topic)
+
+        return _subscribe
+
+    monkeypatch.setattr(config_flow, "ANNOUNCE_LISTEN_SECONDS", 0.05)
+    monkeypatch.setattr(mqtt, "async_subscribe", _subscriber(hostile))
+    assert run(make_flow()._async_listen_for_announce()) is None
+    monkeypatch.setattr(mqtt, "async_subscribe", _subscriber([*hostile, signed_announce()]))
+    announce = run(make_flow()._async_listen_for_announce())
+    assert announce is not None and announce.api_host == "192.168.1.20" and announce.sig is not None
+    assert released == ["witness/+/announce"] * 2
 
 
 def test_listen_for_announce_gives_up_without_a_broker(monkeypatch):
@@ -780,6 +966,7 @@ def test_hassio_discovery_creates_both_entry(monkeypatch):
     assert result["description_placeholders"] == {
         "name": "SecuraCV",
         "url": "http://d0491a67-privacy-witness-kernel:8799",
+        "plaintext_warning": "",
     }
     assert probes == [], "a payload that names its device id is not probed before confirm"
 
@@ -796,6 +983,48 @@ def test_hassio_discovery_creates_both_entry(monkeypatch):
     assert data[CONF_KERNEL_VERIFYING_KEY] == KEY
     assert data[CONF_ENABLE_MQTT] is True and data[CONF_MQTT_PREFIX] == DEFAULT_MQTT_PREFIX
     assert data[CONF_SETUP_MODE] == SETUP_MODE_BOTH
+
+
+def test_the_hassio_confirm_screen_names_the_address_the_token_goes_to():
+    """Any app on the system can post a discovery payload, and its card and
+    confirm screen read like the SecuraCV app's own. The one screen before
+    the token file's contents are sent names the address they go to, and
+    says so when that address is another host over plain http."""
+    strings = json.loads((Path(config_flow.__file__).resolve().parent / "strings.json").read_text(encoding="utf-8"))
+    description = strings["config"]["step"]["hassio_confirm"]["description"]
+    for placeholder in ("{name}", "{url}", "{plaintext_warning}"):
+        assert placeholder in description, placeholder
+    flow = make_flow()
+    foreign = dict(HASSIO_CONFIG, host="a0d7b954-other-addon", device_id="pwk_ffffffff")
+    info = SimpleNamespace(config=foreign, name="Some other app", slug="a0d7b954_other", uuid="uuid-9")
+    result = drive(flow.async_step_hassio(info))
+    assert result["type"] == "form" and result["step_id"] == "hassio_confirm"
+    assert result["description_placeholders"] == {
+        "name": "Some other app",
+        "url": "http://a0d7b954-other-addon:8799",
+        "plaintext_warning": config_flow.PLAINTEXT_WARNING,
+    }
+
+
+def test_no_copy_names_a_card_that_is_never_rendered():
+    """The discovered cards read "SecuraCV app" and "SecuraCV sidecar at
+    <host>" (flow_title "SecuraCV {name}" and the title placeholders the
+    two discovery steps set). Copy that sent an owner to a "SecuraCV
+    discovered" card sent them looking for a title nothing renders."""
+    root = Path(config_flow.__file__).resolve().parent
+    for name in ("strings.json", "translations/en.json", "www/securacv-strategy.js", "kernel_trust.py"):
+        assert "SecuraCV discovered" not in (root / name).read_text(encoding="utf-8"), name
+    strings = json.loads((root / "strings.json").read_text(encoding="utf-8"))
+    assert strings["config"]["flow_title"] == "SecuraCV {name}"
+    assert "the SecuraCV sidecar card" in strings["config"]["step"]["kernel"]["description"]
+    assert "SecuraCV app card" in (root / "www" / "securacv-strategy.js").read_text(encoding="utf-8")
+    flow = make_flow()
+    drive(flow.async_step_mqtt(announce_info(signed_announce())))
+    assert flow.context["title_placeholders"] == {"name": "sidecar at 192.168.1.20"}
+    flow = make_flow()
+    drive(flow.async_step_hassio(SimpleNamespace(config=dict(HASSIO_CONFIG), name="SecuraCV",
+                                                 slug="d0491a67_privacy_witness_kernel", uuid="uuid-1")))
+    assert flow.context["title_placeholders"] == {"name": "app"}
 
 
 def test_hassio_discovery_legacy_payload_asks_the_kernel_who_it_is_on_confirm(monkeypatch):
@@ -1222,13 +1451,15 @@ def test_reauth_of_a_paired_entry_asks_for_a_new_code(monkeypatch):
     flow = make_flow(entries=[entry], source="reauth", context={"entry_id": "entry-1"})
     result = drive(flow.async_step_reauth(entry.data))
     assert result["type"] == "form" and result["step_id"] == "reauth_confirm"
-    assert schema_keys(result) == [CONF_URL, CONF_PAIRING_CODE]
+    assert schema_keys(result) == [CONF_URL, CONF_PAIRING_CODE, CONF_MQTT_TOPIC_PREFIX]
     assert schema_defaults(result)[CONF_URL] == "http://192.168.1.20:8799"
+    assert schema_defaults(result)[CONF_MQTT_TOPIC_PREFIX] == "witness"
 
     result = drive(flow.async_step_reauth_confirm({CONF_URL: "http://192.168.1.20:8799",
                                                    CONF_PAIRING_CODE: "483921"}))
     assert calls == [("http://192.168.1.20:8799", "483921")]
     assert result["type"] == "abort" and result["reason"] == "reauth_successful"
+    assert entry.data[CONF_MQTT_TOPIC_PREFIX] == "witness", "a form submitted without the prefix leaves it"
     assert entry.data[CONF_TOKEN] == PAIRED.token
     assert entry.data[CONF_KERNEL_TOKEN_ID] == "0a1b2c3d"
     assert entry.data[CONF_KERNEL_VERIFYING_KEY] == KEY, "a re-pair never moves the pin"
@@ -1314,6 +1545,64 @@ def test_reconfigure_moves_the_url_and_prefix_on_the_same_kernel(monkeypatch):
     assert entry.data[CONF_MQTT_TOPIC_PREFIX] == "pwk"
     assert entry.unique_id == UNIQUE_ID
     assert flow.hass.config_entries.reloads == ["entry-1"]
+
+
+def test_reconfigure_of_a_paired_entry_moves_the_url_and_prefix_on_the_same_kernel(monkeypatch):
+    """The paired sidecar's Reconfigure offered the URL and the code only:
+    a sidecar whose `--mqtt-topic-prefix` changed could not be followed
+    here, though the form's text said the prefix could be changed. The
+    first-contact pair form still has no prefix field (the announce names
+    it)."""
+    calls = fake_pair(monkeypatch, PAIRED)
+    entry = _paired_entry()
+    flow = make_flow(entries=[entry], source="reconfigure", context={"entry_id": "entry-1"})
+    result = drive(flow.async_step_reconfigure(None))
+    assert result["type"] == "form" and result["step_id"] == "reconfigure"
+    assert schema_keys(result) == [CONF_URL, CONF_PAIRING_CODE, CONF_MQTT_TOPIC_PREFIX]
+    assert schema_defaults(result)[CONF_MQTT_TOPIC_PREFIX] == "witness"
+
+    # A mistyped code: the typed prefix survives with the typed URL.
+    result = drive(flow.async_step_reconfigure({CONF_URL: "http://10.0.0.9:8799",
+                                                CONF_PAIRING_CODE: "12",
+                                                CONF_MQTT_TOPIC_PREFIX: " pwk "}))
+    assert result["errors"] == {CONF_PAIRING_CODE: "invalid_pairing_code"}
+    assert schema_defaults(result)[CONF_URL] == "http://10.0.0.9:8799"
+    assert schema_defaults(result)[CONF_MQTT_TOPIC_PREFIX] == "pwk"
+    assert entry.data[CONF_MQTT_TOPIC_PREFIX] == "witness" and calls == []
+
+    result = drive(flow.async_step_reconfigure({CONF_URL: "http://10.0.0.9:8799",
+                                                CONF_PAIRING_CODE: "483921",
+                                                CONF_MQTT_TOPIC_PREFIX: " pwk "}))
+    assert calls == [("http://10.0.0.9:8799", "483921")]
+    assert result["type"] == "abort" and result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_URL] == "http://10.0.0.9:8799"
+    assert entry.data[CONF_MQTT_TOPIC_PREFIX] == "pwk"
+    assert entry.data[CONF_TOKEN] == PAIRED.token
+    assert entry.data[CONF_KERNEL_VERIFYING_KEY] == KEY, "a re-pair never moves the pin"
+    assert entry.unique_id == UNIQUE_ID
+    assert flow.hass.config_entries.reloads == ["entry-1"]
+
+    # An emptied prefix field is the default prefix, as on the token-file form.
+    entry = _paired_entry()
+    entry.data[CONF_MQTT_TOPIC_PREFIX] = "pwk"
+    flow = make_flow(entries=[entry], source="reconfigure", context={"entry_id": "entry-1"})
+    drive(flow.async_step_reconfigure({CONF_URL: "http://10.0.0.9:8799", CONF_PAIRING_CODE: "483921",
+                                       CONF_MQTT_TOPIC_PREFIX: "  "}))
+    assert entry.data[CONF_MQTT_TOPIC_PREFIX] == DEFAULT_MQTT_TOPIC_PREFIX
+
+    # First contact: the announce names the prefix; the form has no field.
+    flow = make_flow()
+    drive(flow.async_step_mqtt(announce_info(signed_announce())))
+    result = drive(flow.async_step_announce_confirm({}))
+    assert schema_keys(result) == [CONF_URL, CONF_PAIRING_CODE]
+
+    # And the copy says what each path offers.
+    strings = json.loads((Path(config_flow.__file__).resolve().parent / "strings.json").read_text(encoding="utf-8"))
+    for step in ("reauth_confirm", "reconfigure"):
+        assert "mqtt_topic_prefix" in strings["config"]["step"][step]["data"], step
+    description = strings["config"]["step"]["reconfigure"]["description"]
+    assert "how it authenticates, or the prefix" not in description
+    assert "6-digit code" in description and "prefix" in description
 
 
 def test_reconfigure_refuses_a_different_kernel(monkeypatch):

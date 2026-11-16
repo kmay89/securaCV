@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { setOverride, clearOverride, applyOverrides, listingState, overridesPatch, listOverrides } from '../src/modules/listing.mjs';
 import { storefrontCatalog, createCheckout, StoreError } from '../src/modules/storefront.mjs';
 import { nexusWatch, taxVerdict, thresholdFor, NO_SALES_TAX } from '../src/modules/nexus.mjs';
-import { ntfyUrlFor, newOrderOn, savePhone, testPush, newOrderNudge, pushConfigured } from '../src/modules/notify.mjs';
+import { ntfyUrlFor, ntfyTokenFor, newOrderOn, savePhone, testPush, newOrderNudge, pushConfigured, maskTopic } from '../src/modules/notify.mjs';
 import { doctor } from '../src/modules/health.mjs';
 import { setFlag } from '../src/flags.mjs';
 import { recordOrder } from '../src/modules/orders.mjs';
@@ -99,6 +99,15 @@ test('the phone is set in Settings, the environment wins, staging and the demo p
   assert.equal(ntfyUrlFor(db, testCfg({ env: 'staging', ntfyUrl: 'https://ntfy.sh/from-env' })), '', 'staging pushes nowhere'); assert.equal(ntfyUrlFor(db, testCfg({ demo: true })), '');
   assert.equal(db.get("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'notify.settings'").n, 2);
   assert.ok(!JSON.stringify(db.all("SELECT detail FROM audit_log WHERE action = 'notify.settings'")).includes('tk_secret'), 'the token is never in the log');
+  // the topic's name is the secret: a page prints its host and its end — four characters at most, never more than a third of it
+  assert.equal(maskTopic('https://ntfy.sh/errer-orders-9f3'), 'https://ntfy.sh/…-9f3'); assert.equal(maskTopic('https://ntfy.sh/t-abc'), 'https://ntfy.sh/…c'); assert.equal(maskTopic('https://ntfy.example.test:8443/ab'), 'https://ntfy.example.test:8443/…');
+  assert.equal(maskTopic(''), ''); assert.equal(maskTopic(null), ''); assert.equal(maskTopic('not a url'), '');
+  // the doctor names where pushes go by the same mask
+  const dcfg = testCfg({ secret: 's' }); savePhone(db, { ntfy_url: 'https://ntfy.sh/errer-orders-9f3', new_order: true });
+  const pushRow = doctor(db, dcfg).checks.find(c => c.key === 'push'); assert.equal(pushRow.detail, 'to https://ntfy.sh/…-9f3'); assert.ok(!JSON.stringify(doctor(db, dcfg)).includes('errer-orders'), 'the doctor never prints the topic');
+  // null leaves the saved topic as it is; '' removes it, and the token saved for it
+  savePhone(db, { ntfy_url: null, new_order: true }); assert.equal(ntfyUrlFor(db, dcfg), 'https://ntfy.sh/errer-orders-9f3'); assert.equal(ntfyTokenFor(db, dcfg), 'tk_secret');
+  savePhone(db, { ntfy_url: '' }); assert.equal(ntfyUrlFor(db, dcfg), ''); assert.equal(ntfyTokenFor(db, dcfg), ''); assert.equal(pushConfigured(db, dcfg), false);
 });
 
 test('over HTTP: the product page edits the listing, the Products page prints the patch, Settings saves the phone, Books shows where tax is owed', async () => {
@@ -116,8 +125,14 @@ test('over HTTP: the product page edits the listing, the Products page prints th
     const list = await get('/products'); assert.ok(list.includes('1 product is edited here') && list.includes('&quot;price&quot;: 88'), 'the pill and the patch');
     const live = await (await fetch(base + '/store/catalog')).json(); assert.equal(live.products.find(p => p.sku === sku).price_cents, 8800, 'the store serves the edit');
     assert.equal((await post(`/products/${sku}/listing/clear`, {})).status, 303); assert.equal((await (await fetch(base + '/store/catalog')).json()).products.find(p => p.sku === sku).price_cents, cat.products.get(sku).price_cents);
-    assert.equal((await post('/settings/phone', { ntfy_url: 'https://ntfy.sh/t-abc', ntfy_token: '', new_order: '1' })).status, 303);
-    const settings = await get('/settings'); assert.ok(settings.includes('Your phone') && settings.includes('pushes go to https://ntfy.sh/t-abc') && settings.includes('Send a test push'));
+    assert.equal((await post('/settings/phone', { ntfy_url: 'https://ntfy.sh/errer-orders-9f3', ntfy_token: 'tk_secret', new_order: '1' })).status, 303);
+    let settings = await get('/settings'); assert.ok(settings.includes('Your phone') && settings.includes('pushes go to https://ntfy.sh/…-9f3') && settings.includes('Send a test push'));
+    // Settings shows that the topic and the token are set, never what they are: not in the field, not in the line under it
+    assert.ok(!settings.includes('errer-orders') && !settings.includes('tk_secret'), 'neither secret is printed back'); assert.ok(settings.includes('ntfy topic URL (set — blank keeps it)') && settings.includes('Access token (set — blank keeps it)'));
+    // a blank field keeps what is saved (the page could not have filled it in); the box removes the topic and its token
+    assert.equal((await post('/settings/phone', { ntfy_url: '', ntfy_token: '', new_order: '1' })).status, 303); assert.equal(db.setting('notify:ntfy_url'), 'https://ntfy.sh/errer-orders-9f3'); assert.equal(db.setting('notify:ntfy_token'), 'tk_secret');
+    assert.equal((await post('/settings/phone', { ntfy_url: '', ntfy_token: '', new_order: '1', ntfy_forget: '1' })).status, 303); assert.equal(db.setting('notify:ntfy_url'), ''); assert.equal(db.setting('notify:ntfy_token'), '');
+    settings = await get('/settings'); assert.ok(settings.includes('no topic yet') && !settings.includes('blank keeps it') && !settings.includes('ntfy_forget'));
     const books = await get('/books'); assert.ok(books.includes('Where sales tax is owed') && books.includes('ships from here'));
   } finally { await app.close(); }
 });

@@ -16,10 +16,23 @@
 // reach the glass as a blank line.
 
 #include "../common/network/wifi_join_policy.h"
+#include "../common/network/wifi_store.h"  // the joined bit the setup rule reads after a power cut
 
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <sstream>
 #include <string>
+
+// The two supervisors that hand the setup rule its state (read below for the
+// wiring a header test cannot show). Relative to firmware/tests_host, where
+// the Makefile runs this.
+#ifndef WIFI_SUPERVISOR_SRC
+#define WIFI_SUPERVISOR_SRC "../common/network/wifi_supervisor.cpp"
+#endif
+#ifndef DISPLAY_WIFI_MGR_SRC
+#define DISPLAY_WIFI_MGR_SRC "../projects/canary-display/src/net/wifi_mgr.cpp"
+#endif
 
 using namespace canary::net;
 
@@ -185,6 +198,109 @@ static void setup_waits_out_a_slow_booting_router() {
         "the threshold attempt must open setup");
 }
 
+// ── a power cut is not a first boot ─────────────────────────────────────────
+
+// What a supervisor hands wifi_should_open_setup after a restart: this power
+// cycle's RAM flag OR the ring's joined bit (wifi_store::any_joined).
+static WifiRetry setup_state_after_reboot(const wifi_store::Store& ring, uint32_t attempts) {
+  WifiRetry s;
+  s.online = false;
+  s.ever_online = wifi_store::any_joined(ring);  // the RAM flag is false after a restart
+  s.attempts = attempts;
+  return s;
+}
+
+static void a_reboot_with_a_joined_ring_never_opens_setup() {
+  // The whole-house power blip: router and Canary restart together, the
+  // Canary is up in 3 s, the router beacons again 90 s later. Every attempt
+  // meanwhile is NotFound — a "fixable" reason — and the RAM flag is fresh.
+  // The ring remembers the network joined; that is not a credential problem.
+  wifi_store::Store before; wifi_store::init(before);
+  CHECK(wifi_store::add(before, "Home", "hunter2"), "the network that worked");
+  uint8_t blob[wifi_store::BLOB_BYTES];
+  CHECK(wifi_store::serialize(before, blob, sizeof(blob)) == wifi_store::BLOB_BYTES, "to NVS");
+  wifi_store::Store ring;
+  CHECK(wifi_store::parse(blob, sizeof(blob), ring), "from NVS, after the power cut");
+
+  for (uint32_t attempts = 0; attempts <= 1000; attempts += (attempts < 10 ? 1 : 99)) {
+    const WifiRetry s = setup_state_after_reboot(ring, attempts);
+    for (JoinFailure f : kAllFailures) {
+      CHECK(!wifi_should_open_setup(s, f, 3),
+            "a ring that has joined must not open setup (attempt %u)", attempts);
+    }
+  }
+
+  // The outage reboot keeps judging by the RAM flag alone: a link that has
+  // not associated THIS power cycle is still never rebooted, joined ring or
+  // not — or the blip would become a reboot every five minutes.
+  WifiRetryPolicy p;
+  WifiRetry reboot_state;
+  reboot_state.ever_online = false;   // retry_state(): RAM only
+  reboot_state.lost_since_ms = 0;
+  reboot_state.last_attempt_ms = 0;
+  CHECK(wifi_next_action(p, reboot_state, p.outage_reboot_ms * 10, 0) != WifiAction::Reboot,
+        "no association this power cycle: never a reboot");
+}
+
+static void a_seeded_ring_that_never_joined_still_opens_setup() {
+  // The other side: credentials typed into a flasher and never proven. A
+  // wrong password there is exactly what setup is for, reboot or no reboot.
+  wifi_store::Store before; wifi_store::init(before);
+  CHECK(wifi_store::import_legacy(before, "Home", "typo"), "seeded");
+  wifi_store::note_result(before, 0, false);
+  uint8_t blob[wifi_store::BLOB_BYTES];
+  CHECK(wifi_store::serialize(before, blob, sizeof(blob)) == wifi_store::BLOB_BYTES, "to NVS");
+  wifi_store::Store ring;
+  CHECK(wifi_store::parse(blob, sizeof(blob), ring), "from NVS");
+
+  CHECK(!wifi_should_open_setup(setup_state_after_reboot(ring, 2), JoinFailure::BadPassword, 3),
+        "not before the threshold");
+  CHECK(wifi_should_open_setup(setup_state_after_reboot(ring, 3), JoinFailure::BadPassword, 3),
+        "a never-joined ring with a wrong password opens setup");
+  CHECK(wifi_should_open_setup(setup_state_after_reboot(ring, 3), JoinFailure::NotFound, 3),
+        "and with a network that is not there");
+
+  // Its first join ends that, for good.
+  wifi_store::note_result(ring, 0, true);
+  CHECK(!wifi_should_open_setup(setup_state_after_reboot(ring, 1000), JoinFailure::NotFound, 3),
+        "once it has joined, a later outage is not a setup problem");
+}
+
+static std::string squeezed(const char* path) {
+  std::ifstream f(path);
+  if (!f) return std::string();
+  std::stringstream ss;
+  ss << f.rdbuf();
+  std::string out;
+  for (char c : ss.str()) {
+    if (c != ' ' && c != '\t' && c != '\n' && c != '\r') out += c;
+  }
+  return out;
+}
+
+static void both_supervisors_hand_the_setup_rule_the_ring() {
+  // The composition above is the supervisors', and neither compiles on a
+  // host: read them. The setup rule gets RAM-or-ring; the reboot decision
+  // keeps RAM alone.
+  const std::string sup = squeezed(WIFI_SUPERVISOR_SRC);
+  CHECK(!sup.empty(), "cannot read %s (run from firmware/tests_host)", WIFI_SUPERVISOR_SRC);
+  CHECK(sup.find("setup_st.ever_online=s_ever_online||wifi_store::any_joined(s_store);") != std::string::npos,
+        "wifi_supervisor.cpp: the setup rule's ever_online is RAM or the ring");
+  CHECK(sup.find("wifi_should_open_setup(setup_st,s_last_failure,") != std::string::npos,
+        "wifi_supervisor.cpp: and that is the state the setup rule is handed");
+  CHECK(sup.find("st.ever_online=s_ever_online;") != std::string::npos &&
+        sup.find("wifi_next_action(s_cfg.retry,st,") != std::string::npos,
+        "wifi_supervisor.cpp: the outage reboot judges by the RAM flag alone");
+
+  const std::string disp = squeezed(DISPLAY_WIFI_MGR_SRC);
+  CHECK(!disp.empty(), "cannot read %s (run from firmware/tests_host)", DISPLAY_WIFI_MGR_SRC);
+  CHECK(disp.find("st.ever_online=s_ever_online||canary::cfg::wifi_saved_any_joined();") != std::string::npos,
+        "display wifi_mgr.cpp: the setup rule's ever_online is RAM or the ring");
+  CHECK(disp.find("st.ever_online=s_ever_online;") != std::string::npos &&
+        disp.find("wifi_next_action(retry_policy(),st,") != std::string::npos,
+        "display wifi_mgr.cpp: the outage reboot judges by the RAM flag alone");
+}
+
 // ── the words on the screen ─────────────────────────────────────────────────
 
 static void every_failure_has_text_for_every_surface() {
@@ -322,6 +438,9 @@ int main() {
   setup_opens_only_for_a_problem_setup_can_fix();
   a_device_that_worked_before_never_throws_away_its_config();
   setup_waits_out_a_slow_booting_router();
+  a_reboot_with_a_joined_ring_never_opens_setup();
+  a_seeded_ring_that_never_joined_still_opens_setup();
+  both_supervisors_hand_the_setup_rule_the_ring();
   every_failure_has_text_for_every_surface();
   the_two_common_failures_name_their_real_cause();
   the_narrow_forms_say_no_more_than_the_hint();

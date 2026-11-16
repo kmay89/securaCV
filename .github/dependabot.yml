@@ -252,11 +252,17 @@ updates:
       # pin: a bump on its own cannot resolve.
       - dependency-name: "paho-mqtt"
 
-  # Docker base images (FROM lines in the root and sidecar Dockerfiles). The
-  # bases are pinned by digest for reproducibility, so Dependabot is what keeps
-  # those digests fresh — it opens a PR to bump the pinned digest whenever the
-  # upstream tag moves (e.g. a bookworm security rebuild), instead of the pins
-  # silently going stale.
+  # Docker base images: the FROM lines of all four Dockerfiles (the root, the
+  # Frigate sidecar, the Home Assistant app in privacy_witness_kernel/ and the
+  # backoffice in backoffice/deploy/). The bases are pinned by digest for
+  # reproducibility, so Dependabot is what keeps those digests fresh — it
+  # opens a PR to bump the pinned digest whenever the upstream tag moves (e.g.
+  # a bookworm or Alpine security rebuild), instead of the pins silently going
+  # stale. One entry per directory: the docker ecosystem reads only the
+  # Dockerfiles in the directory it is given. Dependabot rewrites a tag and
+  # digest written on the FROM line itself, never one assembled from an ARG.
+  # The app's runtime bases live on ghcr.io: if its first run cannot list
+  # their tags anonymously, add a `registries:` entry for ghcr.io.
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
@@ -267,6 +273,22 @@ updates:
 
   - package-ecosystem: "docker"
     directory: "/docker/sidecar"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(docker)"
+
+  - package-ecosystem: "docker"
+    directory: "/privacy_witness_kernel"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(docker)"
+
+  - package-ecosystem: "docker"
+    directory: "/backoffice/deploy"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5

@@ -135,6 +135,16 @@ uint32_t fat16_read_file(const uint8_t* buf, const FatFile& f,
 // when the root directory is full.
 bool fat16_write_result(uint8_t* buf, const char* text);
 
+// May a dropped update open the inactive slot now? Only while no other
+// installer holds it: the pull engine idle, and no Bluetooth session
+// receiving, verifying or rebooting. Each of the three opens the same slot
+// with its own esp_ota_begin, and the slot is erased under whichever wrote
+// first. (The pull engine asks the other way round: ota_can_install()
+// defers while a drop-zone is open.)
+inline bool update_install_allowed(bool pull_engine_idle, bool ble_session_idle) {
+  return pull_engine_idle && ble_session_idle;
+}
+
 } // namespace evidence_drive
 
 #endif // SECURACV_EVIDENCE_DRIVE_LOGIC_H

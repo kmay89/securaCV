@@ -25,8 +25,8 @@ parse time.
 **SecuraCV** → Start → the ingress wizard finds Mosquitto and Frigate, reads
 Frigate's cameras from its config (no RTSP screen), has nothing to type →
 done screen, primary button **Install the integration and restart Home
-Assistant** (option on by default; never automatic) → after the restart the
-**SecuraCV discovered** card → Configure (zero fields) → the one-time
+Assistant** (option on by default; never automatic) → after the restart
+the **SecuraCV app** card under Discovered → Add (zero fields) → the one-time
 notification *Add the dashboard: Settings → Dashboards → Add dashboard →
 SecuraCV* → the first Frigate event shows **Sealed ✓** within a minute of a
 detection; **Verified ✓** follows the integration's next chain check.

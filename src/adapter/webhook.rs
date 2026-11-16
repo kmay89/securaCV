@@ -592,6 +592,70 @@ fn handle_connection<S: Read + Write>(stream: S, shared: &Shared) -> Result<()> 
     write_response(reader.get_mut(), 204, "")
 }
 
+/// Fuzz entry point (`fuzz/fuzz_targets/webhook_request.rs`): serve `bytes`
+/// as one webhook connection — request line, headers, auth, body, routing —
+/// exactly as a pool worker would, with the response discarded. Run twice:
+/// with no authentication, where whatever is forwarded must respect the
+/// listener's own bounds, and under replay-protected HMAC, where input that
+/// carries no valid MAC must forward nothing.
+///
+/// Compiled only under `--cfg fuzzing` (cargo-fuzz sets it, nothing else
+/// does), so `Shared` and `handle_connection` stay private in every shipped
+/// build.
+#[cfg(fuzzing)]
+#[doc(hidden)]
+pub fn fuzz_handle_connection(bytes: &[u8]) {
+    /// One connection: reads yield the input, writes are swallowed.
+    struct Peer<'a>(&'a [u8]);
+    impl Read for Peer<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.0.read(buf)
+        }
+    }
+    impl Write for Peer<'_> {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let serve = |auth: WebhookAuth| -> Vec<SensorMessage> {
+        let (tx, rx) = channel();
+        let shared = Shared {
+            tx,
+            auth,
+            rate_limit: None,
+            buckets: Mutex::new(HashMap::new()),
+            seen_nonces: Mutex::new(HashMap::new()),
+        };
+        let _ = handle_connection(Peer(bytes), &shared);
+        drop(shared);
+        rx.try_iter().collect()
+    };
+
+    for (path, body) in serve(WebhookAuth::None) {
+        assert!(
+            body.len() <= MAX_BODY,
+            "forwarded a {}-byte body, past MAX_BODY",
+            body.len()
+        );
+        assert!(
+            !path.contains('?'),
+            "forwarded a path with its query string"
+        );
+    }
+    let forwarded = serve(WebhookAuth::Hmac {
+        secret: b"fuzz-only-secret".to_vec(),
+        replay_window: Some(Duration::from_secs(300)),
+    });
+    assert!(
+        forwarded.is_empty(),
+        "forwarded a request that carries no valid MAC"
+    );
+}
+
 fn write_response<W: Write>(stream: &mut W, code: u16, body: &str) -> Result<()> {
     let reason = match code {
         204 => "No Content",

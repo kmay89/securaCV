@@ -48,7 +48,7 @@ website sees.
 | The domain name lapses | The most common small-business outage anywhere | The whole site is gone | Keep auto-renew on at your registrar and the card there current. Check once a year | 5 minutes a year |
 | The card on file at DigitalOcean expires | Likely, once every few years | Nothing for a while; DigitalOcean emails you, then stops the server after a grace period | Update the card. Put a calendar reminder two months before expiry | 5 minutes |
 | A security restart at 04:30 | Monthly, normal | Nothing. The programs restart on their own in under a minute | Nothing | 0 |
-| The backoffice crashes or will not start after an update | Occasional | Nothing. The store page notices the backoffice is unreachable and sells by Stripe's payment links instead; order mail is delayed, not lost | Log in and run `kit doctor`; it names the problem and the fix. The deploy also rolls itself back to the previous version if the new one is not healthy within two minutes | 10 minutes |
+| The backoffice crashes or will not start after an update | Occasional | Nothing. The store page notices the backoffice is unreachable and sells by Stripe's payment links instead; order mail is delayed, not lost | Log in and run `kit doctor`; it names the problem and the fix. The deploy also rolls itself back to the previous version if the new one is not healthy within two minutes. One case it cannot undo by itself: the new version changed the database's layout before it failed, and the previous version will not open a database changed that way. The deploy says so; `kit rollback backoffice` then puts back the copy taken just before the change and starts the previous version | 10 minutes |
 | Stripe is down | Rare, hours a year | Checkout fails with a message that nothing was charged | Nothing; it is Stripe's to fix | 0 |
 | Mail stops sending | Occasional (a changed mailbox password, a provider limit) | Order confirmations stop | The backoffice's health page shows the outbox stuck; `kit env backoffice` to fix the mail password, then `kit deploy backoffice` | 10 minutes |
 | The disk fills up | Rare; logs rotate and the data is small | Nothing until it is full, then errors | `kit doctor` warns at 85 percent. Resize the droplet one size up in the dashboard | 10 minutes |
@@ -121,12 +121,16 @@ only variable charge is Stripe's, and it only happens when you were paid.
   computer up. It is in this folder; a copy with your key filled in is what
   you paste.
 - **kit**: the small tool on the server (`kit doctor`, `kit deploy`, …).
-  Every command prints what it did; none of them can lose data.
+  Every command prints what it did. `kit rollback backoffice` puts an older
+  copy of the database back: what was written after that copy (orders,
+  tickets, mail) is not in it, and the file it replaced is kept beside the
+  database.
 - **.env**: the file holding the server's secrets. `kit env backoffice`
   opens it. Its contents are the password manager entry.
 - **Deploy**: start a newer version of a program. On this server it happens
   by itself after a merge on GitHub, and it rolls back by itself if the new
-  version is not healthy.
+  version is not healthy (the one case that needs `kit rollback` from you is
+  in the table above).
 - **Snapshot**: DigitalOcean's weekly copy of the whole computer. Restoring
   one is a button in their dashboard.
 - **Off-site backup**: the backoffice's own nightly encrypted copy at

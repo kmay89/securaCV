@@ -61,7 +61,10 @@ MQTT-only; start at the [Canary walkthrough](#manual-walkthrough-canary-via-mqtt
    no Supervisor role and cannot install, start or stop other apps. You
    choose how long to keep sealed events (7 days, 30 days, 1 year), what to
    seal (every tracked object, or only Frigate alerts) and whether you want
-   the daily digest. The device signing key is generated once, shown once,
+   the daily digest. "Only Frigate alerts" needs recording on in Frigate
+   (Frigate creates alerts only for cameras that record); the Frigate config
+   the wizard writes when it finds none is detection-only, so on that path
+   the choice is not offered. The device signing key is generated once, shown once,
    and kept in the app's own data (`/data/device_key` inside the app, not
    under `/config`) — save it somewhere safe; see
    [the device key and your backups](#the-device-key-and-your-backups).
@@ -74,8 +77,8 @@ MQTT-only; start at the [Canary walkthrough](#manual-walkthrough-canary-via-mqtt
    With the integration already installed from HACS the button reads **Open
    Settings → Devices & Services** instead; the app never touches a copy
    HACS or you installed.
-4. After the restart, **Settings → Devices & Services** shows a **SecuraCV
-   discovered** card. Press **Configure**. The form has no fields — *"The
+4. After the restart, **Settings → Devices & Services** shows the **SecuraCV
+   app** card under Discovered. Press **Add**. The form has no fields — *"The
    SecuraCV app announced its witness kernel. Submit to connect — nothing to
    type. Frigate events appear as sealed witness events within a minute of
    the next detection."* Submit.
@@ -110,7 +113,12 @@ the dashboards under `/config/securacv/dashboards/`, registering the
 strategy dashboard as a YAML dashboard when your `configuration.yaml`
 allows it ([Step 4c](#step-4c-ready-made-dashboards)); and creates the
 daily-digest automation when a mobile-app notify service exists. It is
-idempotent: re-running it never repeats a finished step.
+idempotent: re-running it never repeats a finished step. The hub's own MQTT
+connection is made through the Mosquitto app's own discovery (Home
+Assistant signs in as the app's `homeassistant` service user with the
+password Mosquitto hands over through the Supervisor); if it still does not
+finish, the run names it, and you press Add, then Submit on the MQTT
+card under Settings → Devices & Services.
 
 Two things stay yours, and the installer says so when it finishes:
 
@@ -202,7 +210,14 @@ must use the **same MQTT broker** as Frigate and the sidecar.
    fingerprint is `ab12cd34` — the same eight characters `docker exec
    securacv pair` prints. Submit to pair; the next step asks for the 6-digit
    code and confirms the kernel URL."* Compare the fingerprint with the
-   card `pair` printed, then Submit.
+   card `pair` printed, then Submit. The card is offered only for an
+   announcement that carries a valid signature by the key it names, so it
+   shows a key's fingerprint only over an announcement that key signed.
+   That check cannot tell your kernel's key from someone else's: a card
+   published under another key shows that key's fingerprint, so the
+   comparison with what `pair` printed is the step that catches it, and the
+   Kernel URL on the next form is where the code is sent, so make sure it
+   is your Docker host.
 4. **Pair with the SecuraCV sidecar** has two fields. **Kernel URL** is
    prefilled — from `SECURACV_ANNOUNCE_HOST` when you set it in the compose
    file, otherwise from the host of Home Assistant's own MQTT broker — and
@@ -1166,9 +1181,11 @@ The kernel's key is not in that menu on purpose: it is pinned over the
 authenticated channel at pairing or discovery and rotated only through the
 Repairs fix flow after you have compared fingerprints.
 
-**Reconfigure** (the entry's ⋮ menu) moves the kernel URL, the credential
-(a fresh pairing code, or the token file path) and the witness prefix in
-place; the entry stays bound to the same kernel and a different kernel is
+**Reconfigure** (the entry's ⋮ menu) moves the kernel URL and the witness
+prefix in place, and for an app or token-file entry the token file path or
+static token as well; a paired sidecar is re-paired on every change, so its
+form asks for a fresh code from `docker exec securacv pair` along with the
+URL and prefix you want; the entry stays bound to the same kernel and a different kernel is
 refused (*That is a different witness kernel. Add it as a new entry instead
 of moving this one.*). **Re-authenticate** starts by itself when the kernel
 definitively rejects Home Assistant's credential (a revoked paired token, an
@@ -1337,9 +1354,10 @@ silent — are sensors and events, not issues.
 | Symptom | Check |
 |---|---|
 | No **SecuraCV app** card under Discovered after the app restart | The app must have started once with the kernel answering `/health` (its log says `discovery` posted); the integration must be installed (the done screen's button, or HACS) and Home Assistant restarted after installing it. Settings → Devices & Services → Add Integration → SecuraCV → Automatic finds the app without the card. |
-| No **SecuraCV sidecar** card under Discovered | Home Assistant and the sidecar must share one broker. `docker exec securacv doctor` must show the retained announce published; a sidecar stopped uncleanly leaves no announce — restart it, or clear a stale one with `mosquitto_pub -r -n -t witness/<kernel id>/announce`. The manifest subscribes `witness/+/announce`, so a non-default witness prefix is not discovered — add it through the **Witness Kernel Connection** form, or set `MQTT_TOPIC_PREFIX` back to `witness`. |
+| No **SecuraCV sidecar** card under Discovered | Home Assistant and the sidecar must share one broker. `docker exec securacv doctor` must show the retained announce published; a sidecar stopped uncleanly leaves no announce — restart it, or clear a stale one with `mosquitto_pub -r -n -t witness/<kernel id>/announce`. The manifest subscribes `witness/+/announce`, so a non-default witness prefix is not discovered — add it through the **Witness Kernel Connection** form, or set `MQTT_TOPIC_PREFIX` back to `witness`. The card is also withheld from an announcement that carries no valid signature by the key it names; the sidecar's bridge always signs its own, so `doctor` showing the retained announce published is the check. |
 | *The code was not accepted* | Codes are single-use, live ten minutes and burn after five wrong tries; run `pair` again. Behind one shared source address (Docker Desktop, a proxy) a `429` lockout from other guesses blocks pairing too — wait it out. |
 | Kernel URL wrong on the pair form | It is a guess from the announcement or your broker's host. Type `http://<docker host>:8799`; set `SECURACV_ANNOUNCE_HOST` in the compose file to prefill it next time. |
+| The sidecar moved (a new host or prefix) and Home Assistant did not follow | An announcement moves a paired entry only when it is signed by the pinned key and newer than the last one accepted. The sidecar signs a new announcement each time it starts, stamped with its ten-minute window, so one started twice inside the same window is not followed: restart it in a later window, or move the entry by hand with ⋮ → Reconfigure. |
 | Events arrive but stay **Sealed ✓** | The walk runs every 15 minutes and 60 s after events go idle; press **Verify now**. If **Chain Valid** is unknown forever, the kernel's `/api/sealed-log` is not answering — check the entry's credential (Repairs would say) and the kernel log. |
 | **Chain Valid** off / rows **Failed ⚠** | The walk rejected the chain. Export evidence now (entries before the break still verify in the viewer). A replaced or restored log needs **Verify now** to re-anchor; a key change is a Repairs issue instead, never a failure. |
 | **Frigate link** off | Frigate has not been heard for an hour, or `frigate_bridge` lost the broker. Check Frigate's MQTT settings (host, `topic_prefix`), `docker exec securacv doctor --live`, the app's log. Its attributes carry the bridge's last-message window and mode. |
@@ -1825,11 +1843,13 @@ the proof line and the Frigate and export actions built in
 ### Witness Wall: the fleet roll-call
 
 The kernel's Event API also answers `GET /api/fleet`, the roll-call the
-tvOS Witness Wall reads: the kernel's own row first, then every Canary the
-app's MQTT publisher has heard on the broker. The app wires this itself —
-its `run.sh` points the kernel and `event_mqtt_bridge` at one file,
-`/config/fleet_peers.json` — so there is no option to set. What the Wall
-still needs from you, and why:
+tvOS Witness Wall reads: the kernel's own row first and, once you set the
+app's `fleet_rollcall` option to `full` (it ships `self`, because the route
+takes no token), every Canary the app's MQTT publisher has heard on the
+broker. The app wires the file itself — its `run.sh` points the kernel and
+`event_mqtt_bridge` at one file, `/config/fleet_peers.json` — so
+`fleet_rollcall` is the one option to set (see below). What the Wall still
+needs from you, and why:
 
 - **Keep MQTT publishing enabled** (`mqtt_publish.enabled: true` above, the
   default). The publisher is the process that listens for Canaries; with it

@@ -10,6 +10,7 @@ nothing here needs a Home Assistant or a network. Run:
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -603,10 +604,9 @@ class MqttConnectExecution(unittest.TestCase):
     def test_a_failing_connect_is_reported_but_does_not_sink_the_run(self):
         """Loud, but not fatal — and the distinction matters a lot here.
 
-        Home Assistant can answer a hand-started MQTT flow with a form asking
-        for broker credentials: the Mosquitto add-on authenticates against HA
-        users, and a manual flow does not inherit the add-on discovery that
-        would supply them. If that aborted the run, provisioning would stop
+        The connect can still fail — a broker that never comes back from the
+        mqtt-login restart, or a Home Assistant that answers some other way
+        (MqttConnectThroughTheAddon). If that aborted the run, provisioning would stop
         BEFORE Frigate and the witness kernel install — leaving a hub with far
         less on it than if we had never attempted the connect at all.
 
@@ -650,6 +650,102 @@ class MqttConnectExecution(unittest.TestCase):
         observed = hsa.observe(client, REAL_PLAN)
         self.assertIn("config_entries", observed)
         self.assertIn(("get_config_entry_domains",), client.calls)
+
+
+class ScriptedSupervisor(hsa.SupervisorClient):
+    """The real create_config_entry, against scripted Home Assistant answers."""
+
+    def __init__(self, answers):
+        super().__init__("http://supervisor.invalid", "t")
+        self.answers = list(answers)
+        self.sent = []
+
+    def _req(self, method, path, body=None, timeout=None):  # noqa: ARG002
+        self.sent.append((method, path, body))
+        return self.answers.pop(0)
+
+
+class MqttConnectThroughTheAddon(unittest.TestCase):
+    """On a Supervisor host the MQTT flow opens as a menu; the plan answers
+    "addon", which signs Home Assistant in with the credentials the Mosquitto
+    add-on hands over through Supervisor discovery — the broker form, which
+    Mosquitto refuses without a password, is never sent."""
+
+    MENU = {"type": "menu", "flow_id": "f1", "menu_options": ["addon", "broker"]}
+
+    def setUp(self):
+        self._sleep = hsa.time.sleep
+        hsa.time.sleep = lambda s: None
+
+    def tearDown(self):
+        hsa.time.sleep = self._sleep
+
+    def test_the_menu_is_answered_with_the_addon(self):
+        c = ScriptedSupervisor([self.MENU, {"type": "create_entry"}])
+        c.create_config_entry("mqtt", {"broker": "core-mosquitto", "port": 1883})
+        self.assertEqual(c.sent[1], ("POST", "/core/api/config/config_entries/flow/f1",
+                                     {"next_step_id": "addon"}))
+        self.assertEqual(len(c.sent), 2)
+        self.assertFalse(any(b and "broker" in b for _, _, b in c.sent))
+
+    def test_a_restarting_broker_is_retried_on_a_fresh_flow(self):
+        fail = {"type": "abort", "reason": "addon_connection_failed"}
+        c = ScriptedSupervisor([self.MENU, fail, dict(self.MENU, flow_id="f2"), {"type": "create_entry"}])
+        c.create_config_entry("mqtt", {})
+        self.assertEqual(c.sent[3][1], "/core/api/config/config_entries/flow/f2")
+
+    def test_a_broker_that_never_answers_is_named_not_hidden(self):
+        fail = {"type": "abort", "reason": "addon_connection_failed"}
+        answers = []
+        for _ in range(hsa.ADDON_FLOW_ATTEMPTS):
+            answers += [self.MENU, fail]
+        c = ScriptedSupervisor(answers)
+        with self.assertRaises(hsa.SupervisorError) as cm:
+            c.create_config_entry("mqtt", {})
+        self.assertIn("addon_connection_failed", str(cm.exception))
+        self.assertIn("Settings > Devices & Services", str(cm.exception))
+        self.assertEqual(c.answers, [])
+
+    def test_a_flow_without_the_menu_falls_back_to_the_broker_form(self):
+        c = ScriptedSupervisor([{"type": "form", "flow_id": "f1", "step_id": "broker"},
+                                {"type": "create_entry"}])
+        c.create_config_entry("mqtt", {"broker": "core-mosquitto", "port": 1883})
+        self.assertEqual(c.sent[1][2], {"broker": "core-mosquitto", "port": 1883})
+
+    def test_the_plan_sends_no_discovery_key_the_broker_schema_rejects(self):
+        step = next(s for s in REAL_PLAN["steps"] if s["id"] == "connect-mqtt")
+        self.assertNotIn("discovery", step["core_config_entry"]["data"])
+
+
+class AtomicConfigCopy(unittest.TestCase):
+    """A copy cut off mid-write leaves no config.yml for the next run's
+    never_overwrite skip to adopt as the owner's own edits."""
+
+    def test_a_failed_copy_leaves_nothing_and_is_replanned(self):
+        repo = Path(hsa.__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = str(Path(tmp) / "frigate" / "config.yml")
+            seed = {"steps": [{"id": "write-frigate-config", "dest": dest,
+                               "source": "canary-local/tools/hub_seed_apply.py", "never_overwrite": True}]}
+            step = next(s for s in hsa.plan_actions(seed, hsa.FRESH_HUB) if s.id == "write-frigate-config")
+            write = next(a for a in step.actions if a.kind == "write_config")
+
+            def partial(src, dst, follow_symlinks=True):  # noqa: ARG001
+                Path(dst).write_bytes(b"cameras:\n  fro")
+                raise OSError("No space left on device")
+
+            real = hsa.shutil.copyfile
+            hsa.shutil.copyfile = partial
+            try:
+                with self.assertRaises(OSError):
+                    hsa._perform(write, FakeClient(), repo)
+            finally:
+                hsa.shutil.copyfile = real
+            self.assertFalse(os.path.exists(dest))
+            self.assertFalse(os.path.exists(dest + ".tmp"))
+            observed = hsa.observe(FakeClient(), seed)
+            again = next(s for s in hsa.plan_actions(seed, observed) if s.id == "write-frigate-config")
+            self.assertFalse(next(a for a in again.actions if a.kind == "write_config").already)
 
 
 class MqttLogin(unittest.TestCase):

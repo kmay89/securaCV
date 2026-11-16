@@ -247,8 +247,8 @@ is two devices. §6 proposes the target layering and migration.
 
 Music Assistant / Mosquitto / Z-Wave JS pattern: the add-on POSTs a **Supervisor
 discovery** payload (`POST http://supervisor/discovery`, `{"service": "securacv", "config": {...}}`)
-→ HA fires the integration's `async_step_hassio` → user clicks **Configure** on a
-"SecuraCV discovered" card → done. Today, an add-on user who wants verified entities
+→ HA fires the integration's `async_step_hassio` → user clicks **Add** on the
+"SecuraCV app" card under Discovered → done. Today, an add-on user who wants verified entities
 must *also* find HACS, add the custom repo, install the integration, and manually
 enter the kernel URL + token file path that the add-on already knows. This handshake
 is ~50 lines total on both sides and collapses our two install stories into one.
@@ -303,8 +303,8 @@ generation/backup, camera RTSP testing, frigate.yml generation, mesh pairing).
 **P2 — Pairing is a handshake, not a manual.** (Mosquitto → MQTT integration.)
 The add-on announces itself via Supervisor discovery; the integration config-flow
 auto-fills from the payload; MQTT credentials keep flowing through `bashio::services`.
-Target first-run: *install add-on → wizard's three ceremonies → "SecuraCV discovered"
-card → Configure → entities exist.* Zero copied URLs, zero token paths typed.
+Target first-run: *install add-on → wizard's three ceremonies → "SecuraCV app"
+card → Add → entities exist.* Zero copied URLs, zero token paths typed.
 
 **P3 — One brand, one device tree.** (UniFi Protect.) A single "SecuraCV" hub/service
 device is the root; canaries, the adapter host, and (as sub-devices) witness zones

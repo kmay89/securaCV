@@ -24,7 +24,21 @@ export function qpEncode(str) {
 export const encodeHeader = (s) => /^[\x20-\x7e]*$/.test(s) ? s : `=?UTF-8?B?${Buffer.from(s, 'utf8').toString('base64')}?=`;
 export const messageId = (domain = 'backoffice.local') => `<${Date.now().toString(36)}.${randomBytes(8).toString('hex')}@${domain}>`;
 
+// A header is one line. A line break in an address, or in a header's name or value, would let whoever supplied it
+// add recipients and headers of their own (a Bcc:, a second To:), so it is refused where a mail is queued and again
+// where the message is built: the last line, whatever a caller forgot to validate.
+export function noCRLF(s, what) {
+  if (/[\r\n]/.test(String(s ?? ''))) { const err = new Error(`mail: a line break in ${what} is refused`); err.code = 'MAIL_HEADER'; throw err; }
+  return s;
+}
+const checkHeaders = (headers) => { for (const [k, v] of Object.entries(headers || {})) { noCRLF(k, 'a header name'); noCRLF(v, `the ${k} header`); } };
+// A subject is one line too, but it is outsider text (a ticket's subject arrives on a form or in a mail), so a line
+// break in it becomes a space instead of refusing the mail: nothing an outsider types can stop a reply to them.
+const oneLine = (s) => { const t = String(s); return /[\r\n]/.test(t) ? t.replace(/\s*[\r\n]+\s*/g, ' ').trim() : t; };
+
 export function buildMessage({ from, to, subject, text, html = null, headers = {}, id = null }) {
+  noCRLF(from, 'the From address'); noCRLF(to, 'the To address'); noCRLF(id, 'the Message-ID'); checkHeaders(headers);
+  subject = oneLine(subject ?? '');
   const domain = (String(from).match(/@([^>\s]+)/) || [])[1] || 'backoffice.local';
   const mid = id || messageId(domain);
   const common = [`Date: ${new Date().toUTCString().replace('GMT', '+0000')}`, `From: ${from}`, `To: ${to}`, `Subject: ${encodeHeader(subject)}`, `Message-ID: ${mid}`, 'MIME-Version: 1.0',
@@ -80,6 +94,10 @@ class LineReader {
 
 export async function smtpSend(url, { from, to, raw }, { timeoutMs = 30_000 } = {}) {
   const o = parseSmtpUrl(url);
+  // The envelope is read before the socket opens: an address is the part inside <>, and one that carries whitespace,
+  // a control character or a bracket is refused — on the wire it would be a second command (RCPT TO, DATA).
+  const addr = (s) => { const a = (String(s).match(/<([^>]+)>/) || [, String(s).trim()])[1]; if (!a || /[\x00-\x1f\x7f]/.test(String(s)) || /[\s<>]/.test(a)) throw new Error('smtp: an address with whitespace, a control character or a bracket is refused'); return a; };
+  const mailFrom = addr(from); const rcpts = [].concat(to).map(addr);
   let sock = o.tls ? tlsConnect({ host: o.host, port: o.port, servername: o.host }) : tcpConnect({ host: o.host, port: o.port });
   sock.setTimeout(timeoutMs, () => sock.destroy(new Error('smtp: timeout')));
   let rd = new LineReader(sock);
@@ -104,9 +122,8 @@ export async function smtpSend(url, { from, to, raw }, { timeoutMs = 30_000 } = 
     if (/PLAIN/i.test(auth) || !/LOGIN/i.test(auth)) { cmd(`AUTH PLAIN ${Buffer.from(`\0${o.user}\0${o.pass}`).toString('base64')}`); await expect([235], 'AUTH PLAIN'); }
     else { cmd('AUTH LOGIN'); await expect([334], 'AUTH LOGIN'); cmd(Buffer.from(o.user).toString('base64')); await expect([334], 'AUTH user'); cmd(Buffer.from(o.pass).toString('base64')); await expect([235], 'AUTH pass'); }
   }
-  const addr = (s) => (String(s).match(/<([^>]+)>/) || [, String(s).trim()])[1];
-  cmd(`MAIL FROM:<${addr(from)}>`); await expect([250], 'MAIL FROM');
-  for (const t of [].concat(to)) { cmd(`RCPT TO:<${addr(t)}>`); await expect([250, 251], 'RCPT TO'); }
+  cmd(`MAIL FROM:<${mailFrom}>`); await expect([250], 'MAIL FROM');
+  for (const t of rcpts) { cmd(`RCPT TO:<${t}>`); await expect([250, 251], 'RCPT TO'); }
   cmd('DATA'); await expect([354], 'DATA');
   sock.write(raw.replace(/\r?\n/g, '\r\n').replace(/^\./gm, '..') + (raw.endsWith('\r\n') ? '' : '\r\n') + '.\r\n');
   await expect([250], 'message');
@@ -117,8 +134,9 @@ export async function smtpSend(url, { from, to, raw }, { timeoutMs = 30_000 } = 
 
 // ---------- the outbox
 export function enqueue(db, { to, subject, text, kind = 'transactional', ref = null, headers = {}, contactId = null }) {
+  noCRLF(to, 'the recipient'); checkHeaders(headers);   // refused here, with the reason, before a row exists
   const r = db.run('INSERT INTO mail_outbox (to_addr, subject, body_text, headers, kind, ref, contact_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    to, subject, text, JSON.stringify(headers), kind, ref, contactId, nowIso());
+    to, subject == null ? subject : oneLine(subject), text, JSON.stringify(headers), kind, ref, contactId, nowIso());
   return db.get('SELECT * FROM mail_outbox WHERE id = ?', r.lastInsertRowid);
 }
 
@@ -142,15 +160,18 @@ export async function sendOutbox(db, cfg, { transport = null, limit = 50, now = 
     const hdr = JSON.parse(m.headers || '{}'); const unsub = (hdr['List-Unsubscribe'] || '').replace(/^<|>$/g, '');
     const html = marketing ? renderHtml(m.body_text, brandOpts(cfg, { unsubscribe: unsub, preheader: hdr['X-Preheader'] || '' })) : null;
     delete hdr['X-Preheader'];
-    const msg = buildMessage({ from: cfg.mailFrom, to: m.to_addr, subject: m.subject, text: m.body_text, html, headers: hdr });
     try {
+      // Built inside the try: a row whose address or header carries a line break (queued before enqueue refused them)
+      // fails here, with the reason on the row, and the rest of the queue is sent.
+      const msg = buildMessage({ from: cfg.mailFrom, to: m.to_addr, subject: m.subject, text: m.body_text, html, headers: hdr });
       await tx({ from: cfg.mailFrom, to: m.to_addr, raw: msg.raw, id: msg.id });
       db.run('UPDATE mail_outbox SET status = \'sent\', sent_at = ?, message_id = ?, attempts = attempts + 1 WHERE id = ?', now(), msg.id, m.id);
       out.sent++;
     } catch (e) {
       // 30 s, 2 min, 8 min, 32 min, ~2 h, then 6 h apart: a relay down for an afternoon loses nothing; after ~48 h of refusals the row is failed, and a person can retry it
       const delay = Math.min(6 * 3600_000, 30_000 * 4 ** m.attempts);
-      db.run('UPDATE mail_outbox SET attempts = attempts + 1, last_error = ?, next_attempt_at = ?, status = CASE WHEN attempts + 1 >= 12 THEN \'failed\' ELSE \'queued\' END WHERE id = ?', String(e.message || e).slice(0, 500), new Date(Date.parse(now()) + delay).toISOString(), m.id);
+      // a refused header is not the relay's doing and will not pass on a retry: failed at once
+      db.run('UPDATE mail_outbox SET attempts = attempts + 1, last_error = ?, next_attempt_at = ?, status = CASE WHEN attempts + 1 >= 12 OR ? THEN \'failed\' ELSE \'queued\' END WHERE id = ?', String(e.message || e).slice(0, 500), new Date(Date.parse(now()) + delay).toISOString(), e?.code === 'MAIL_HEADER' ? 1 : 0, m.id);
       out.failed++;
     }
   }

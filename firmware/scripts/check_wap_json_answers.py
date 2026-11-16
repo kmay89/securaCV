@@ -2388,8 +2388,11 @@ RECORDED: dict[tuple[str, str], tuple[tuple[str, ...], str]] = {
         "printable ASCII in its strings, sweep F264, and a string a quote cut short, F301) and active, "
         "tamper_events_active_kind()'s literal kinds; each row is length-tested and a cut one skipped"),
     ("csi_integration.cpp", "handle_pair_token"): (
-        ("hex",),
-        "the pairing token answer: pair_token_issue() writes hex digits"),
+        ("hex", "origin"),
+        "the pairing token answer: pair_token_issue() writes hex digits; origin is empty or \"http://\" "
+        "and the request's Host, which pair_link_authority() keeps only when "
+        "provisioning_logic::pair_link_host_ok() takes it (letters, digits, '.', '-', ':', '[', ']': no "
+        "'\"' or '\\\\'); an answer that does not fit buf is refused, never sent cut"),
     ("csi_integration.cpp", "handle_settings_get"): (
         ("tz", "tz_iana"),
         "the settings answer: tz is kept only when tz_rule::posix_valid() parses it (letters, digits, "

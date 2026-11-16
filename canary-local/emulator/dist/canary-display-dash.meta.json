@@ -1,7 +1,7 @@
 {
   "flavor": "dash",
-  "fw_version": "2.4.19",
-  "git": "b8438e23",
+  "fw_version": "2.4.20",
+  "git": "0a06c14b",
   "lvgl": "v8.4.0",
   "arduinojson": "7.4.1"
 }

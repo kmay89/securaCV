@@ -78,6 +78,12 @@ concurrency:
 jobs:
   factory-images:
     name: Build + attach browser-flasher factory images
+    # Signs with OTA_SIGNING_KEY_PEM, which belongs to this environment
+    # (firmware-release.yml's header says why): once the owner has moved it
+    # there, a job outside it cannot read the key. The environment's
+    # reviewers, when the owner sets them, approve this run too. Nothing here
+    # checks the ref: `channel: dev` signs the dispatch branch's HEAD.
+    environment: firmware-release
     runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 60
     steps:

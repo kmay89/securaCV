@@ -77,7 +77,7 @@ from .mqtt_payload import (  # noqa: F401 - re-exported: every handler imports t
     parse_mqtt_json,
     valid_device_id,
 )
-from .voice import status_online
+from .voice import status_verdict
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -944,7 +944,14 @@ def _async_device_status_received(hass: HomeAssistant, entry: SecuraCVConfigEntr
         async_sync_canary_device(hass, entry, device_id, name=name)
         # The verdict comes from voice.py so the entities, the spoken answer
         # and the availability can never disagree about which Canaries are up.
-        _async_canary_online_changed(hass, entry, device_id, status_online(payload))
+        # A status that says neither online nor offline is no verdict: the
+        # flagship's status names its witness state ("state":"NOFIX") and
+        # its liveness is the availability last will handled above, so
+        # reading that word as offline took the device and every entity on
+        # it down thirty seconds after each connect.
+        verdict = status_verdict(payload)
+        if verdict is not None:
+            _async_canary_online_changed(hass, entry, device_id, verdict)
 
     return _callback
 

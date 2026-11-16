@@ -280,18 +280,19 @@ final class BLEConsole: NSObject, ObservableObject {
 
     // MARK: - Wi-Fi provisioning over BLE (the rescue path)
 
-    /// Which console peripheral a device id maps to — learned from the
-    /// snapshot's own `id` field, so the mapping is the device's claim, not
-    /// a guess from advertising order.
+    /// Which console peripheral a device id maps to. Not filled from the
+    /// snapshot's `id`: that field is the peripheral's own claim, and any
+    /// host in range can advertise the console and claim a paired WAP's id
+    /// (ids are in the LAN's mDNS TXT). Until the console proves identity
+    /// (a phone nonce signed by the pinned Ed25519 key), no peripheral is
+    /// trusted with credentials.
     private var peripheralIDByDevice: [String: UUID] = [:]
 
-    /// Canaries whose console is connected RIGHT NOW — the set the Wi-Fi
-    /// rollout may offer the Bluetooth rescue to.
-    var provisionableDeviceIDs: Set<String> {
-        Set(peripheralIDByDevice.compactMap { id, peripheralID in
-            peripherals[peripheralID]?.state == .connected ? id : nil
-        })
-    }
+    /// Canaries the Wi-Fi rollout may hand credentials over Bluetooth.
+    /// Empty: nothing on this lane proves which device is on the other
+    /// end yet (see peripheralIDByDevice), and no WAP advertises the
+    /// console today (ledger A65).
+    var provisionableDeviceIDs: Set<String> { [] }
 
     /// Would fire when a connected console reports tamper that wasn't there
     /// a beat ago (NOTIFY is sub-second). No Canary's console connects today
@@ -563,7 +564,6 @@ extension BLEConsole: CBCentralManagerDelegate, CBPeripheralDelegate {
             let key = snap.id ?? peripheral.identifier.uuidString
             let tamperRose = (snap.tamper == true) && (snapshotsByDevice[key]?.tamper != true)
             snapshotsByDevice[key] = snap
-            if snap.id != nil { peripheralIDByDevice[key] = peripheral.identifier }
             // A connected console's tamper NOTIFY goes to the alert loop at
             // once. No Canary's console connects today (ledger A65), so the
             // chirp and the 5-second sentinel carry tamper.

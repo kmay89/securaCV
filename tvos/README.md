@@ -65,7 +65,11 @@ categories are simply **empty**, and this app sits in all three:
    time or head, so a replayed or cut-short genuine log still walks clean
    (tvos/discovery/DISCOVERY.md, "What 'Verified' proves"). A log signed
    by any other key is an alarm ("Your hub's signing key changed since this
-   Apple TV was paired"), a revoked token a warning, and an unpaired Wall
+   Apple TV was paired"), a revoked token a warning, a paired hub that
+   answers the roll-call but serves no sealed log for three cycles running
+   a warning too ("Paired, but your hub served no sealed record this
+   cycle" — the TV was paired to be told when its check stops, so that is
+   never folded into the calm self-report), and an unpaired Wall
    still labels the fleet's status as the devices' own report ("Your fleet
    reported in through …", the device's self-stamp shown only as "Device
    reports …") or, when it did walk a log, as "not yet pinned". Forgetting
@@ -79,7 +83,14 @@ categories are simply **empty**, and this app sits in all three:
 2. **Zero-typing, zero-cloud setup.** Turn it on: the Wall probes the same
    well-known LAN addresses the desktop Flasher, the Lab and the web walls
    probe (`canary.local:8099`, the kernel's own port `canary.local:8799`,
-   then `canary.local`), finds the fleet by itself, and remembers it. No account,
+   then `canary.local`), finds the fleet by itself, and remembers it. A
+   hub's roll-call is the kernel's own row alone until its owner opts into
+   the full one — `fleet_rollcall: full` in the Home Assistant add-on,
+   `SECURACV_FLEET_ROLLCALL=1` on the Docker sidecar, `api.fleet_rollcall:
+   full` in a host kernel's config — because that route takes no token
+   ([`docs/security/REMEDIATION-2026-11.md`](../docs/security/REMEDIATION-2026-11.md));
+   the Wall says so under its headline when a hub lists only itself, and
+   an add-on with MQTT publishing off serves the same single row. No account,
    no subscription, nothing leaves the room — and tvOS's own constraints
    (storage the OS may purge, foreground-only apps) match the architecture:
    the TV never holds the record, it witnesses, displays, and proves.

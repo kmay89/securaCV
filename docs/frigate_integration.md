@@ -20,7 +20,7 @@ with a recognizable sentinel in every discarded field, are replayed in CI by
 | Mode | Subscribes to | Frigate | Seals |
 |------|---------------|---------|-------|
 | **Events** (default) | `<prefix>/events` | every version | every tracked object, at its `new` message — one claim per camera, object class and ten-minute window |
-| **Alerts** (`enable_reviews` / `--enable-reviews`) | `<prefix>/reviews` **instead of** `<prefix>/events` | 0.14+ | only review items of severity `alert`, once each, at the message that made them an alert — one claim per camera and window, confidence 1.0 |
+| **Alerts** (`enable_reviews` / `--enable-reviews`) | `<prefix>/reviews` **instead of** `<prefix>/events` | 0.14+ | only review items of severity `alert`, once each, at the message that made them an alert — one claim per camera and window, confidence 1.0. Needs recording on in Frigate: Frigate creates review items only for cameras that record, so with recording off no event is sealed |
 
 The topic prefix follows Frigate's `mqtt.topic_prefix` (default `frigate`) —
 set `frigate.topic_prefix` (app) or `FRIGATE_TOPIC_PREFIX` (Docker sidecar) if
@@ -63,7 +63,11 @@ is generated once, shown once, and kept in the app's own data
 configuration-only backup does not carry it; save it somewhere safe). You
 choose the retention (7 / 30 / 365
 days), what to seal (every tracked object, or only Frigate alerts) and the
-daily digest. Manual YAML is only needed for an external broker or
+daily digest. The Frigate config the wizard writes (when it finds none) is
+detection-only: recording is off and snapshots are not turned on; enable
+either in Frigate if you want footage. "Only Frigate alerts" needs
+recording on in Frigate and is not offered when the wizard writes
+Frigate's config. Manual YAML is only needed for an external broker or
 non-default Frigate topics:
 
 ```yaml
@@ -102,7 +106,7 @@ verify_interval_hours: 1
 
 The done screen's **Install the integration and restart Home Assistant**
 button installs the carried integration on your click. After the restart,
-**Settings → Devices & Services → SecuraCV discovered → Configure** (nothing
+**Settings → Devices & Services → the SecuraCV app card under Discovered → Add** (nothing
 to type), then **Settings → Dashboards → Add dashboard → SecuraCV**. Walk
 past a camera: the first event reads **Sealed ✓** within a minute,
 **Verified ✓** after the integration's next chain check. The entities,
@@ -418,6 +422,11 @@ name typed with a space no longer silently drops every event of that camera.
 
 Zone ids keep their own rule (`zone:` + lowercase letters, digits, `_` and
 `-`), so existing `zone:…` ids do not move.
+A zone or camera name with letters outside ASCII (`Küche`) now yields
+`zone:k_che`: every character outside `a-z`, `0-9`, `_` and `-` becomes
+`_`. Before 0.9.1 such a name produced an id the kernel refused, and each
+of its events was sealed as a `GapMissingData` record instead. Names that
+differ only in replaced characters share one zone id.
 
 ## Events mode and alerts mode
 
@@ -451,8 +460,9 @@ and through broker outages:
   60 s, connects to nothing and seals nothing, while `witness_api` keeps
   serving so the record can be read and exported. Appending onto an
   untrusted tail would launder the tampering.
-- **Lifecycle records.** `start` at boot — a trailing `start` from the
-  previous run seals a `PowerLoss` record first — and `shutdown_clean` on
+- **Lifecycle records.** `start` at boot — a previous run that never sealed
+  its `shutdown_clean` (a trailing `start`, or one retention has already
+  pruned) seals a `PowerLoss` record first — and `shutdown_clean` on
   SIGTERM/SIGINT. s6 and `docker stop` deliver SIGTERM, so a restart no
   longer looks like a power cut.
 - **Heartbeats.** One per ten-minute bucket, checked every 300 s, plus one

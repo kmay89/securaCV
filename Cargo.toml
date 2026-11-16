@@ -3,7 +3,7 @@ name = "witness-kernel"
 # Kept in lockstep with custom_components/securacv/manifest.json and
 # privacy_witness_kernel/config.yaml via scripts/bump_version.sh; CI fails
 # on drift (scripts/lint_version_sync.sh).
-version = "0.9.0"
+version = "0.9.1"
 edition = "2021"
 license = "Apache-2.0"
 description = "Privacy Witness Kernel (PWK) - witnessd + tools + break_glass"
@@ -12,7 +12,7 @@ description = "Privacy Witness Kernel (PWK) - witnessd + tools + break_glass"
 anyhow = "1.0"
 # default-features off: the other default, `ffi-sqlite-wasm-rs`, only adds
 # wasm-only crates to the lockfile that no shipped target builds.
-rusqlite = { version = "0.41", default-features = false, features = ["bundled-sqlcipher", "cache"] }
+rusqlite = { version = "0.43", default-features = false, features = ["bundled-sqlcipher", "cache"] }
 hkdf = "0.13"
 # Memory-hard KDF for the optional `seed-argon2id:v1:` device-seed format
 # (a passphrase seed must not be brute-forceable through the fast SHA-256

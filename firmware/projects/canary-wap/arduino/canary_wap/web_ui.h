@@ -2534,7 +2534,8 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
           <div id="otaError" style="display:none;margin-top:0.75rem;padding:0.75rem;background:rgba(239,68,68,0.15);border-radius:8px;">
             <p style="font-size:0.8rem;color:#ef4444;margin:0;" id="otaErrorText"></p>
           </div>
-          <div style="display:flex;gap:0.5rem;margin-top:1rem;flex-wrap:wrap;">
+          <p class="tnote" style="margin-top:1rem;">Installing an update or changing the update settings takes the API token: paste it (it is in your recovery kit), or use BOOT Tap Once.</p>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
             <button class="btn btn-secondary" onclick="otaCheck()" id="otaCheckBtn" title="Ask the update server if newer software is available">Check for Updates</button>
             <button class="btn btn-primary" onclick="otaInstall()" id="otaInstallBtn" style="display:none;" title="Download, verify, and install the new software">Install Update</button>
           </div>
@@ -3621,6 +3622,7 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
       const latest = document.getElementById('otaLatest').textContent;
       if (!confirm(`Install version ${latest}? The device restarts on its own and is back within a minute. If the update fails, the previous software is restored automatically.`)) return;
       const data = await api('/api/ota/install', 'POST');
+      if (signInRaised(data)) return;   // the install takes the API token; the sign-in is up
       if (!data.ok) {
         alert('Could not start the install: ' + (data.error || 'unknown problem'));
         return;
@@ -3635,6 +3637,16 @@ static const char CANARY_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
         manifest_url: document.getElementById('otaManifestUrl').value.trim()
       };
       const data = await api('/api/ota/config', 'POST', body);
+      if (signInRaised(data)) {
+        // The settings take the API token and the sign-in is up. Nothing was
+        // saved, so the two switches go back to what the device holds.
+        const held = await api('/api/ota/status');
+        if (held && held.ok === true) {
+          document.getElementById('otaAuto').checked = !!held.auto_update;
+          document.getElementById('otaLocalHttp').checked = !!held.local_http_allowed;
+        }
+        return;
+      }
       if (!data.ok) {
         alert(data.error === 'url_rejected'
           ? 'That update server address was not accepted. Use https, or turn on the local server option for a home network address.'

@@ -407,6 +407,16 @@ function classifyFlashError(err) {
         "loads one from, so the board couldn't start from it (the details say where). " +
         "Use an image laid out for this chip: SecuraCV factory images from fw-v2.4.18 on are." };
 
+  // The typed settings don't fit the one NVS page they are written into
+  // (flash-engine provisioning.rs: "provisioning values do not fit in one NVS
+  // page"). The engine refuses after the download and before any write; the
+  // browser flasher refuses the same install on its confirm card
+  // (core.settingsSeedProblem) with this same sentence. Named, so it is not
+  // read as an unknown failure and coached toward download mode.
+  if (has("do not fit in one nvs page"))
+    return { kind: "settings-size", title: "Your settings don't fit on the board",
+      hint: SETTINGS_TOO_BIG };
+
   if (has("failed to open serial port", "port is already open", "already open",
           "resource temporarily unavailable", "resource busy", "device or resource busy") ||
       (has("open") && has("access", "busy", "in use")))
@@ -970,7 +980,7 @@ const HELP_DESKTOP_OVERRIDES = {
     what: "Every byte on the board is saved to this app's backups folder before anything is written. It's your undo.",
   },
   wifi_bake: {
-    what: "Your network is written into the chip with the firmware, so the Canary joins it on first boot. It only leaves this app over the USB cable. A Sense, Vision or WAP can be left blank: the SecuraCV iPhone app hands it your Wi-Fi at first power-on.",
+    what: "Your network is written into the chip with the firmware, so the Canary joins it on first boot. It only leaves this app over the USB cable. A Sense, Vision or WAP can be left blank if you have the SecuraCV iPhone app (TestFlight by invite today), which hands it your Wi-Fi at first power-on; without the app, type the network here or join the setup network the Canary raises.",
   },
 };
 // Inlined from canary-local/assets/flash-core.js (SETUP_DOOR_NOTE,
@@ -979,9 +989,20 @@ const HELP_DESKTOP_OVERRIDES = {
 // isSetupNetworkSsid) — this bundle cannot import canary-local, and
 // tests/desktop_parity.test.js fails the build if any of them drift.
 const SETUP_DOOR_NOTE =
-  "Leave blank for Sense, Vision and WAP: your iPhone hands them your Wi-Fi when you power them on near it.";
+  "Sense, Vision and WAP can be left blank if you have the SecuraCV iPhone app (TestFlight by invite today): " +
+  "it hands them your Wi-Fi at first power-on. Otherwise type the network here, or leave it blank and join the " +
+  "setup network the Canary raises — its key is shown after the install.";
 const WIFI_PASS_REQUIRED =
   "Type the Wi-Fi password for that network — or tick “open network (no password)” if it really has none.";
+// Also inlined from flash-core.js, held equal by the same test: why a safety
+// copy that was due could not be taken, and what both flashers say when the
+// typed settings are too big for the one settings page they are written into.
+const BACKUP_SKIP_NO_SIZE =
+  "the board did not report its flash size, so no safety copy could be taken";
+const SETTINGS_TOO_BIG =
+  "Nothing was written. The settings typed here (Wi-Fi, the hub, the dials) are baked into one small page " +
+  "of the board's settings region, and together they are too big for it. The broker's CA certificate can " +
+  "take most of that page by itself: paste one certificate rather than a chain, then install again.";
 const SETUP_NETWORK_LINE_RES = [
   /\[SETUP\] Setup network up: "([^"\n]+)"\s+password (\S+)/g,
   /\[WIFI\] AP started: (\S+) \(password: ([^)\n]+)\)/g,
@@ -1989,6 +2010,14 @@ const fleetBook = {
     const port = this.webPortFor(entry);
     if (!s || !port) return null;
     let host = s.ip || s.host;
+    // An mDNS announcement is unauthenticated LAN traffic: anything on the
+    // network can announce a friendly name with a public address or an
+    // internet host name. Every device call already passes the Rust gate
+    // (fleet.rs host_is_local), but the Open button hands this address to
+    // the OS browser, which passes nothing — so an address that is not on
+    // this network gets no base at all (no Open, no calls). The row's facts
+    // still show what was announced.
+    if (!hostIsLocal(host)) return null;
     // An IPv6 literal (the IPv6-only-LAN case) must ride in brackets or the
     // URL is malformed — with or without a port. The Rust base guard already
     // unwraps brackets before its private-host check.
@@ -2223,11 +2252,14 @@ const fleetBook = {
         : e.lastSeenAt
           ? `<span class="fb-dot off"></span> last seen ${relativeTime(e.lastSeenAt)}`
           : `<span class="fb-dot off"></span> not seen on the network yet`;
-      const canTalk = online && this.httpCapable(e) && e.hasToken;
+      // baseFor is null for a device with no web port — and for one whose
+      // announced address is not on this network (hostIsLocal).
+      const reachable = online && !!this.baseFor(e);
+      const canTalk = reachable && e.hasToken;
       // Any web-capable device gets an Open button to its own page — the
       // display's glass mirror, the wap's dashboard. No token needed to
       // open a browser at it; the device's own auth takes it from there.
-      const canOpen = online && !isHub && this.httpCapable(e);
+      const canOpen = reachable && !isHub;
       const busy = !!this.opBusy[e.key];
       const buttons = isHub
         ? `<button class="btn btn-ghost btn-small" data-book-open="${esc(e.key)}">Open</button>`
@@ -2321,6 +2353,70 @@ const fleetBook = {
       }));
   },
 };
+
+// ── is this host on this network? ───────────────────────────────────────────
+// The JS twin of the Rust gate every fleet call passes (desktop/src-tauri
+// fleet.rs host_is_local): an IP literal in RFC 1918, 100.64/10, 127/8 or
+// 169.254/16 (for IPv6: ::1, fe80::/10, fc00::/7, and an IPv4-mapped address
+// judged as the IPv4 it carries); otherwise a name ending in .local, .lan,
+// .internal or .home.arpa, or a single label, which can only resolve
+// locally. This page needs its own copy because the Open button on a fleet
+// row leaves the page without passing the Rust gate — the OS browser follows
+// it (fleetBook.baseFor). The Lab app carries the same helper
+// (canary-local/assets/lab-app.js hostIsLocal); tests/desktop_parity.test.js
+// holds the two to each other and to fleet.rs's own accept/refuse lists.
+const v4Octets = (s) => {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s);
+  if (!m) return null;
+  const o = m.slice(1).map(Number);
+  return o.some((n) => n > 255) ? null : o;
+};
+const v4IsLocal = (o) =>
+  o[0] === 10 || o[0] === 127 || (o[0] === 192 && o[1] === 168) || (o[0] === 172 && o[1] >= 16 && o[1] <= 31)
+  || (o[0] === 169 && o[1] === 254) || (o[0] === 100 && o[1] >= 64 && o[1] <= 127);
+// An IPv6 literal as its eight groups, or null when the text is not one.
+const v6Groups = (s) => {
+  if (!s.includes(":") || !/^[0-9a-f:.]+$/.test(s)) return null;
+  // A trailing dotted quad (::ffff:192.168.1.40) is the last two groups.
+  const dotted = /^(.*:)(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(s);
+  if (dotted) {
+    const o = v4Octets(dotted[2]);
+    if (!o) return null;
+    s = dotted[1] + ((o[0] << 8) | o[1]).toString(16) + ":" + ((o[2] << 8) | o[3]).toString(16);
+  }
+  const halves = s.split("::");
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  let groups;
+  if (halves.length === 2) {
+    if (head.length + tail.length > 7) return null;
+    groups = [...head, ...new Array(8 - head.length - tail.length).fill("0"), ...tail];
+  } else groups = head;
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return null;
+  return groups.map((g) => parseInt(g, 16));
+};
+const v6IsLocal = (g) => {
+  if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return v4IsLocal([g[6] >> 8, g[6] & 255, g[7] >> 8, g[7] & 255]);
+  if (g.slice(0, 7).every((x) => x === 0) && g[7] === 1) return true;
+  return (g[0] & 0xffc0) === 0xfe80 || (g[0] & 0xfe00) === 0xfc00;
+};
+function hostIsLocal(host) {
+  const h = String(host || "").trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (!h) return false;
+  const o = v4Octets(h);
+  if (o) return v4IsLocal(o);
+  const g = v6Groups(h);
+  if (g) return v6IsLocal(g);
+  if (h.includes(":")) return false;
+  for (const suffix of [".local", ".lan", ".internal", ".home.arpa"]) {
+    if (h.endsWith(suffix) && h.length > suffix.length) return true;
+  }
+  // A bare number is an address, not a name: a browser reads 3627734734 or
+  // 0xd83ad6ce as a public IPv4.
+  if (/^(0x[0-9a-f]+|\d+)$/.test(h)) return false;
+  return !h.includes(".");
+}
 
 // Dotted-version compare for "is this board behind the app's firmware train".
 // Anything non-numeric compares as NOT behind — never nag on a dev build.
@@ -4308,7 +4404,11 @@ async function onFlash() {
   if (skipBackup) {
     noMapReason = "No change map this time — the safety copy is off under Advanced, and the map is drawn from it.";
   } else if (!state.flashBytes) {
-    noMapReason = "No change map this time — the board didn't report its flash size.";
+    // Not a choice anybody made: with no flash size there is no length to
+    // read, so the copy cannot run — and the map is drawn from the copy.
+    // Said in the install log too (below), not only where the map would be.
+    noMapReason = "No safety copy and no change map this time — " + BACKUP_SKIP_NO_SIZE +
+      ", and the map is drawn from it.";
   } else if (backupKey && state.backupsTaken[backupKey]) {
     noMapReason = "No change map this time — the safety copy from earlier this session describes " +
       "the board before its first install, not as it is now.";
@@ -4318,16 +4418,24 @@ async function onFlash() {
     backup: !skipBackup && !!state.flashBytes && !(backupKey && state.backupsTaken[backupKey]),
     erase: !!($("first-contact") && $("first-contact").checked),
   }), lastInstallText(product.id));
+  if (!skipBackup && !state.flashBytes) {
+    appendFlashLog(con, "⚠ No safety copy this time: " + BACKUP_SKIP_NO_SIZE + ".");
+    logEvent("warn", "No safety copy: " + BACKUP_SKIP_NO_SIZE);
+  }
   if (!skipBackup && state.flashBytes && !(backupKey && state.backupsTaken[backupKey])) {
     try {
-      // Named by the local date and the next free counter, never the board.
-      backupPath = await invoke("auto_backup_path", { day: localDay(new Date()) });
       appendFlashLog(con, "→ safety copy first — reading the whole chip…");
-      await invoke("backup_flash", {
+      // dest "auto": Rust works out the app's own backups folder and answers
+      // where the copy went. No path leaves this page as a write target.
+      backupPath = await invoke("backup_flash", {
         port: state.port,
-        outPath: backupPath,
         flashSize: state.flashBytes,
         baud: state.catalog.flash_baud || 921600,
+        // Named in Rust by the local date and the next free counter in the
+        // backups folder, never the board.
+        day: localDay(new Date()),
+        name: "",
+        dest: "auto",
       });
       if (backupKey) state.backupsTaken[backupKey] = backupPath;
       logEvent("ok", "Safety copy saved: " + backupPath);
@@ -5177,7 +5285,7 @@ function cancelRescue() {
 // snapshot and returns the success line; a throw becomes the error line. A
 // write/erase reboots or wipes the board, so the detected chip is dropped
 // afterward to force a clean re-read; keepChip:true is for the read-only backup.
-async function runRescue(label, op, { keepChip = false } = {}) {
+async function runRescue(label, op, { keepChip = false, stage = label + "…" } = {}) {
   const con = $("rescue-console");
   con.textContent = "";
   con.classList.remove("hidden");
@@ -5186,13 +5294,20 @@ async function runRescue(label, op, { keepChip = false } = {}) {
   await stopMonitor();
   // The liveness strip: minutes-long full-chip reads and writes run here.
   const strip = opFor(con);
-  strip.begin(label + "…");
+  strip.begin(stage);
   const unlisten = await listen("rescue:log", (ev) => appendFlashLog(con, ev.payload));
   try {
     const okMsg = await op();
-    strip.end();
-    setStatus("rescue-result", okMsg, "ok");
-    logEvent("ok", `${label} ✓`);
+    if (okMsg === null) {
+      // The op's own OS panel was canceled (backup_flash, dest "ask"):
+      // nothing ran, so there is no result to report and no console to keep.
+      strip.hide();
+      con.classList.add("hidden");
+    } else {
+      strip.end();
+      setStatus("rescue-result", okMsg, "ok");
+      logEvent("ok", `${label} ✓`);
+    }
   } catch (e) {
     strip.fail("Didn't finish — the details are below.");
     setStatus("rescue-result", String(e), "err");
@@ -5224,28 +5339,23 @@ async function onRescueBackup() {
   const port = state.port, flashBytes = state.flashBytes;
   state.busy = true;
   rescueButtons(false);
-  let out = null;
-  try {
-    out = await window.__TAURI__.dialog.save({
-      // The browser Lab's name (flash.js takeBackup) and the engine's
-      // (rescue::backup_filename): the local date and a counter, never the
-      // board's address — the restore panels on both flashers still tell the
-      // user to look for canary-…-backup.bin.
-      defaultPath: backupFileName(nextFileStamp()),
-      filters: [{ name: "Flash backup", extensions: ["bin"] }],
-    });
-  } catch (e) {
-    setStatus("rescue-result", String(e), "err");
-    cancelRescue();
-    return;
-  }
-  if (!out) { cancelRescue(); return; }
   // Read-only: the board isn't rebooted, so keep the detected chip.
   await runRescue("Backup", async () => {
-    await invoke("backup_flash", { port, outPath: out, flashSize: flashBytes, baud: flashBaud() });
+    // dest "ask": backup_flash raises the OS save panel itself, opened on the
+    // browser Lab's name (the local date and a counter, never the board's
+    // address: the canary-…-backup.bin both restore panels tell the user to
+    // look for), and writes only where the panel answered. This page suggests
+    // a name and never names a path.
+    const saved = await invoke("backup_flash", {
+      port, flashSize: flashBytes, baud: flashBaud(),
+      day: localDay(new Date()),
+      name: backupFileName(nextFileStamp()),
+      dest: "ask",
+    });
+    if (!saved) return null; // canceled in the save panel: nothing was read
     return "Backup saved. Store the file like a house key — it holds the board's " +
       "identity key and saved Wi-Fi.";
-  }, { keepChip: true });
+  }, { keepChip: true, stage: "Backup — choose where to save it…" });
 }
 
 async function onRescueRestore() {
@@ -5285,6 +5395,10 @@ async function onRescueRestore() {
       handle: picked.handle,
       flashSize: flashBytes || null, // optional fit-check; the shape guard runs regardless
       baud: flashBaud(),
+      // The chip read under the busy-lock above: the image's bootloader must
+      // sit where THIS chip's ROM loads it, as on every other write at 0x0
+      // (check_bootloader_offset; the browser's onRestoreFile runs its twin).
+      chip,
     });
     return `${name} written — the board is rebooting into it. Run a health check next.`;
   });
@@ -5512,22 +5626,18 @@ function nextFileStamp() {
   return fileStamp(new Date(), state.fileCounter);
 }
 
+// save_text_file raises the OS save panel itself and writes only where it
+// answered — this page passes the report and the name the panel opens on
+// (the browser's reportFileName, which Rust holds to one plain .json file
+// name), never a path. It answers false when the panel was canceled.
 async function onSaveHealthReport(r, full) {
-  let out = null;
-  try {
-    out = await window.__TAURI__.dialog.save({
-      defaultPath: reportFileName(nextFileStamp(), full),
-      filters: [{ name: "Health report", extensions: ["json"] }],
-    });
-  } catch (e) {
-    setStatus("health-result", String(e), "err");
-    return;
-  }
-  if (!out) return;
   const body = full ? reportFullProjection(r) : reportShareProjection(r, Date.now());
   try {
-    await invoke("save_text_file", { path: out, contents: JSON.stringify(body, null, 2) });
-    setStatus("health-result", full ? "Full report saved — keep it to yourself." : "Report saved.", "ok");
+    const saved = await invoke("save_text_file", {
+      name: reportFileName(nextFileStamp(), full),
+      contents: JSON.stringify(body, null, 2),
+    });
+    if (saved) setStatus("health-result", full ? "Full report saved — keep it to yourself." : "Report saved.", "ok");
   } catch (e) {
     setStatus("health-result", "Couldn't save the report: " + e, "err");
   }
@@ -7682,6 +7792,12 @@ const hub = {
   active: false,
   targets: [],
   selected: null, // device path
+  // The raw-disk permission check (hubPreflight, Linux): the disk it last
+  // asked about, whether the answer was "this account can't write it", and
+  // its in-flight guard.
+  probedDisk: undefined,
+  diskRefused: false,
+  preflightBusy: false,
   boards: [], // catalog boards (Pi 5 / Pi 4, with the models each covers)
   boardId: null,
   plan: null,
@@ -7703,6 +7819,15 @@ const hub = {
   // True while the self-setup run (over the hub's service console) is going —
   // one at a time, and the backend enforces the same.
   headlessBusy: false,
+  // True while an onboarding run (the account dialog and the calls after it)
+  // is going — one at a time, like headlessBusy.
+  onboardBusy: false,
+  // True while a first-boot / resume watch tick is still awaiting its probe
+  // (or the hand-over that follows a "ready"). The timers fire every 5–6 s
+  // and a probe can take longer than that while Core restarts; without these
+  // two ticks could both see "ready" and run onboarding and self-setup twice.
+  fbTicking: false,
+  resumeTicking: false,
   // The last flash's receipt, so the first-boot watch knows whether this card
   // carries the self-setup bundle it should run when the hub answers.
   lastReceipt: null,
@@ -7791,6 +7916,16 @@ function hubRenderPills(activeStage) {
   }).join("");
 }
 
+// A self-setup run that is over: the remote runner exited 0. `ok` is the
+// strict "everything connected" flag; `finished` without `ok` means it
+// carried on past one optional step (today Home Assistant's MQTT
+// integration) and left it for a person. Both are settled — the flash record
+// is cleared, the address hint stays folded, and no retry is offered: a
+// rerun would stop at the same step.
+function hubSetupSettled(report) {
+  return !!(report && (report.ok || report.finished));
+}
+
 function hubInit() {
   $("hub-flash-btn").addEventListener("click", hubFlash);
   $("hub-confirm").addEventListener("input", hubArm);
@@ -7859,8 +7994,9 @@ function hubInit() {
     hubRunHeadlessSetup($("hub-fb-text"), $("hub-fb-setup"), $("hub-fb-host").value).then(
       (report) => {
         // A reachability failure is the moment to unfold the address hint:
-        // mDNS-blocked networks need the IP from the router.
-        if (!(report && report.ok)) $("hub-fb-host-hint").open = true;
+        // mDNS-blocked networks need the IP from the router. A run that
+        // finished with one optional step left reached the hub fine.
+        if (!hubSetupSettled(report)) $("hub-fb-host-hint").open = true;
       }
     );
   });
@@ -8075,7 +8211,7 @@ async function hubMaybeResume() {
     const report = await hubRunHeadlessSetup(
       $("hub-resume-text"), $("hub-resume-setup"), undefined, rec.pihole, rec.display
     );
-    if (report && report.ok) hubClearFlashRecord();
+    if (hubSetupSettled(report)) hubClearFlashRecord();
     return;
   }
   const banner = $("hub-resume");
@@ -8095,7 +8231,8 @@ async function hubMaybeResume() {
   });
   let escalated = false;
   let saidPreparing = false;
-  const tick = async () => {
+  let handed = false; // this watch already handed over to onboarding/self-setup
+  const watchOnce = async () => {
     let probe = "offline";
     try { probe = await invoke("hub_probe_hub", { host: rec.host || HUB_HOST }); } catch (_) {}
     const alive = probe === "ready";
@@ -8113,6 +8250,7 @@ async function hubMaybeResume() {
       $("hub-resume-text").textContent = hubFindItChecklist();
     }
     if (alive) {
+      handed = true;
       if (hub.resumeTimer) { clearInterval(hub.resumeTimer); hub.resumeTimer = null; }
       stopCount();
       $("hub-resume-dot").className = "dot connected";
@@ -8137,7 +8275,7 @@ async function hubMaybeResume() {
         const report = await hubRunHeadlessSetup(
           $("hub-resume-text"), $("hub-resume-setup"), undefined, rec.pihole, rec.display
         );
-        if (report && report.ok) hubClearFlashRecord();
+        if (hubSetupSettled(report)) hubClearFlashRecord();
       } else {
         // accountNote (from the top of hubMaybeResume) is the same honesty the
         // early already-up path shows: without the secret drawer, a relaunch
@@ -8151,6 +8289,16 @@ async function hubMaybeResume() {
         hubChime();
         hubClearFlashRecord();
       }
+    }
+  };
+  // One tick at a time (hub.resumeTicking): see hubStartFirstBoot's tick.
+  const tick = async () => {
+    if (hub.resumeTicking || handed) return;
+    hub.resumeTicking = true;
+    try {
+      await watchOnce();
+    } finally {
+      hub.resumeTicking = false;
     }
   };
   hub.resumeTimer = setInterval(tick, 6000);
@@ -8407,30 +8555,64 @@ function hubByteLen(s) {
 }
 
 // ── preflight (free space + platform hint) ──────────────────────────────────
+// The raw-disk permission note under the card picker (Linux). The element is
+// made here, on first use, right after the list it speaks about.
+function hubDiskNote(text) {
+  let note = $("hub-disk-note");
+  if (!note) {
+    note = document.createElement("p");
+    note.id = "hub-disk-note";
+    note.className = "p-warn";
+    note.setAttribute("role", "status");
+    $("hub-target-list").after(note);
+  }
+  note.textContent = text ? "⚠ " + text : "";
+  note.classList.toggle("hidden", !text);
+}
+
 async function hubPreflight() {
+  if (hub.preflightBusy) return;
+  hub.preflightBusy = true;
+  // The disk chosen right now, if any: on Linux the backend tries to open it
+  // for writing (hub_io::write::probe_target, read-only in effect — nothing
+  // is written) so an account outside the disk group hears the one line to
+  // run when it picks the card, not after the download and the decompress.
+  const disk = hub.selected || null;
+  hub.probedDisk = disk;
   try {
-    const pf = await invoke("hub_preflight");
+    const pf = await invoke("hub_preflight", { diskPath: disk });
     hub.platform = pf.platform || "";
+    // Still refused: hubPollTargets asks again on its next pass, so the note
+    // clears by itself once the chown line has been run.
+    hub.diskRefused = pf.disk_writable === false;
+    hubDiskNote(hub.diskRefused ? pf.disk_note || "This account can't write " + disk + "." : "");
     const line = $("hub-preflight");
     if (!pf.staging_ok) {
       const freeGb = (pf.staging_free_bytes / 1024 ** 3).toFixed(1);
       line.textContent =
         `⚠ Only ${freeGb} GB free; the image needs about 6 GB. Free some space first.`;
+    } else if (hub.diskRefused) {
+      line.textContent =
+        "⚠ This account can't write " + disk + " yet. The note under the card picker has the one " +
+        "line to run; nothing is downloaded until the disk can be opened.";
     } else {
       // Linux has no authopen, so nothing prompts: a normal account can't
-      // open the raw disk, and the write stops with "no permission to write
-      // /dev/…" (hub-io write.rs names the grant). Say so before the
-      // download, not after it.
+      // open the raw disk (hub-io write.rs names the grant). The check runs
+      // when the card is picked (above) and again when ERASE is typed —
+      // before the download, not after it.
       line.textContent =
         hub.platform === "macos"
           ? "When the write starts, macOS asks for Touch ID or your password (“authopen”, Apple's disk-writing helper). Approve it and the flash continues."
           : hub.platform === "linux"
           ? "On Linux, an account outside the disk group can't write a raw disk, and nothing prompts for a password. " +
-            "If the write stops with “no permission”, run the one line it shows and type ERASE again (INSTALL.md, “Write a Pi hub card (Linux)”)."
+            "This app checks when you pick the card and again when you type ERASE, before anything is downloaded, " +
+            "and shows the one line to run (INSTALL.md, “Write a Pi hub card (Linux)”)."
           : "";
     }
   } catch (_) {
     /* preflight is advisory; never block on it */
+  } finally {
+    hub.preflightBusy = false;
   }
 }
 
@@ -8462,7 +8644,8 @@ function hubStartFirstBoot() {
   hub.fbCountStop = hubCountdownStart($("hub-fb-count"), t0);
   let escalated = false;
   let saidPreparing = false;
-  const tick = async () => {
+  let handed = false; // this watch already handed over to onboarding/self-setup
+  const watchOnce = async () => {
     // Three answers, and only one of them means "go": "offline" (still
     // booting), "preparing" (on the network, but HAOS is still installing
     // Home Assistant — the long part), "ready" (Home Assistant's own API
@@ -8490,6 +8673,7 @@ function hubStartFirstBoot() {
       $("hub-fb-text").textContent = hubFindItChecklist();
     }
     if (up) {
+      handed = true;
       hubStopFirstBoot(true);
       // The first address the hub answered at, for the change warning.
       try { await hubResolveAndNote(host, null); } catch (_) {}
@@ -8522,7 +8706,7 @@ function hubStartFirstBoot() {
           hubNotify("Your hub is ready", "Finishing setup automatically — no monitor needed.");
         }
         const report = await hubRunHeadlessSetup($("hub-fb-text"), $("hub-fb-setup"), typedHost);
-        if (report && report.ok) hubClearFlashRecord();
+        if (hubSetupSettled(report)) hubClearFlashRecord();
         else $("hub-fb-host-hint").open = true;
       } else if (wantAccount) {
         // hubRunOnboarding already wrote the outcome into the status line.
@@ -8534,6 +8718,20 @@ function hubStartFirstBoot() {
         hubChime();
         hubClearFlashRecord(); // it's up — nothing left to resume
       }
+    }
+  };
+  // One tick at a time. The timer fires every 5 s and a probe can take longer
+  // than that while Core restarts at the end of first boot: two ticks in
+  // flight could both answer "ready", and the account dialog and the
+  // self-setup run would each happen twice. A tick that finds another still
+  // awaiting its answer (or the hand-over already made) does nothing.
+  const tick = async () => {
+    if (hub.fbTicking || handed) return;
+    hub.fbTicking = true;
+    try {
+      await watchOnce();
+    } finally {
+      hub.fbTicking = false;
     }
   };
   hub.fbTimer = setInterval(tick, 5000);
@@ -8590,6 +8788,19 @@ async function hubResolveAndNote(host, statusEl) {
 }
 
 async function hubRunOnboarding(statusEl, hostOverride) {
+  // One run at a time, like the self-setup run's headlessBusy: a second
+  // caller while the dialog is up (or the calls after it are in flight) gets
+  // null and raises nothing.
+  if (hub.onboardBusy) return null;
+  hub.onboardBusy = true;
+  try {
+    return await hubOnboardOnce(statusEl, hostOverride);
+  } finally {
+    hub.onboardBusy = false;
+  }
+}
+
+async function hubOnboardOnce(statusEl, hostOverride) {
   const acct = hub.pendingAccount;
   if (!acct || !acct.password) return null;
   // Unlike the ssh path, onboarding wants the web port — the backend adds
@@ -8611,6 +8822,10 @@ async function hubRunOnboarding(statusEl, hostOverride) {
   // cover Core's own hiccups right after it comes up (a restart while it
   // finishes installing itself), not the landing page — hence a longer,
   // calmer window than the thirty seconds this used to allow.
+  // They are for "not reachable / not ready yet" ONLY. A person's "Not now"
+  // in the native dialog comes back as a report (hub_onboard answers it as
+  // one, never as an error), so it is asked once — it used to be read as a
+  // hiccup and the same dialog came back every ten seconds, twelve times.
   const attempts = 12;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
@@ -8641,8 +8856,12 @@ async function hubRunOnboarding(statusEl, hostOverride) {
       return report;
     } catch (e) {
       // Unreachable / not ready — HA can answer its front page moments before
-      // its API is up. Patience beats an error here.
-      if (attempt === attempts) {
+      // its API is up. Patience beats an error here. The one error that is
+      // not a hiccup: the hub's name answered somewhere else between the
+      // address shown and the send ("now answers at"). Waiting does not
+      // change that, so it is said once and the loop ends.
+      const moved = String(e).includes("now answers at");
+      if (moved || attempt === attempts) {
         hub.onboardNote =
           "Couldn't create your Home Assistant account automatically (" + e + "). " +
           "Open the hub; its wizard asks for the same details.";
@@ -8650,6 +8869,13 @@ async function hubRunOnboarding(statusEl, hostOverride) {
         return null;
       }
       await new Promise((r) => setTimeout(r, 10000));
+      // Look the name up again before the next try, so the address handed
+      // over as "the one the person saw" is where the hub is NOW (a restart
+      // can come back on another lease). A change is shown in the status
+      // line here and named again in the native dialog before anything is
+      // sent. If the lookup itself fails, keep the last answer: the backend
+      // re-resolves and refuses a mismatch.
+      try { resolved = await hubResolveAndNote(host, statusEl); } catch (_) {}
     }
   }
   return null;
@@ -8712,29 +8938,55 @@ async function hubRunHeadlessSetup(statusEl, retryBtn, hostOverride, piholeOverr
       el.scrollTop = el.scrollHeight;
       await new Promise((r) => setTimeout(r, waitS * 1000));
     }
+    const displayLine = withDisplay
+      ? " The hub display is installed too; give the screen its own Home Assistant user (Settings → People → Users, Administrator off), then enter that login under Settings → Apps → HAOS Kiosk Display → Configuration and press Start."
+      : "";
+    const openLine =
+      " Open your hub" +
+      (hub.onboardUser
+        ? " — sign in as " + hub.onboardUser + " with the password from Step 3 —"
+        : "") +
+      " and the SecuraCV panel is waiting. " + HUB_INTEGRATION_CLICK + " 🐤" +
+      // A clean install must not bury an account that still needs a human —
+      // carry the onboarding run's note over the finish line.
+      (hub.onboardNote ? " About your account: " + hub.onboardNote : "");
     if (report.ok) {
       statusEl.textContent =
         "Setup finished — Mosquitto, MQTT, Frigate, and securaCV are installed" +
         (withPihole
           ? ", plus Pi-hole (point your router's DNS at the hub's IP to switch it on)."
           : ".") +
-        (withDisplay
-          ? " The hub display is installed too; give the screen its own Home Assistant user (Settings → People → Users, Administrator off), then enter that login under Settings → Apps → HAOS Kiosk Display → Configuration and press Start."
-          : "") +
-        " Open your hub" +
-        (hub.onboardUser
-          ? " — sign in as " + hub.onboardUser + " with the password from Step 3 —"
-          : "") +
-        " and the SecuraCV panel is waiting. " + HUB_INTEGRATION_CLICK + " 🐤" +
-        // A clean install must not bury an account that still needs a human —
-        // carry the onboarding run's note over the finish line.
-        (hub.onboardNote ? " About your account: " + hub.onboardNote : "");
+        displayLine + openLine;
       hubNotify(
         "Hub setup finished",
         "Broker, MQTT, Frigate, and securaCV are installed — open " + HUB_HOST + ". " + HUB_INTEGRATION_CLICK
       );
       hubChime();
       logEvent("ok", "Hub self-setup finished over the service console");
+    } else if (report.finished) {
+      // The runner exited 0 but carried on past one optional step — today
+      // Home Assistant's MQTT integration, which can answer the runner with
+      // a form only a person can fill. That is a finish line with one thing
+      // left, not a failure: the note names what is left and where (the
+      // runner's own words after INCOMPLETE_OPTIONAL), the notification and
+      // the chime fire, and the retry button stays hidden — running it again
+      // would stop at the same step. It used to land in the failure branch
+      // below: "Details are in the console", a retry button, the network
+      // hint unfolded, and a resume banner on every relaunch for 45 minutes.
+      statusEl.textContent =
+        (report.note ||
+          "Setup finished, but one optional step needs finishing by hand in Home Assistant.") +
+        (withPihole
+          ? " Pi-hole is installed too; point your router's DNS at the hub's IP to switch it on."
+          : "") +
+        displayLine + openLine;
+      if (retryBtn) retryBtn.classList.add("hidden");
+      hubNotify(
+        "Hub setup finished",
+        "One optional step is left for you in Home Assistant — open " + HUB_HOST + ". " + HUB_INTEGRATION_CLICK
+      );
+      hubChime();
+      logEvent("ok", "Hub self-setup finished over the service console, with one optional step left for a person");
     } else {
       statusEl.textContent =
         (report.note || "The setup run didn't finish.") + " Details are in the console below.";
@@ -8894,6 +9146,11 @@ async function hubPollTargets() {
   // plugging in the card IS the choice.
   if (hub.selected && !eligible.some((t) => t.path === hub.selected)) hub.selected = null;
   if (!hub.selected && eligible.length === 1) hub.selected = eligible[0].path;
+  // The raw-disk permission check (Linux) follows the choice: asked once when
+  // it changes, and again on each pass only while the answer is "no" — a
+  // refused open touches nothing, and the note then clears by itself once
+  // the grant has been made.
+  if ((hub.selected || null) !== hub.probedDisk || hub.diskRefused) hubPreflight();
 
   const list = $("hub-target-list");
   list.innerHTML = eligible.length

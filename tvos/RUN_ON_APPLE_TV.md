@@ -88,7 +88,12 @@ low-headache path.
    the well-known LAN addresses by itself (`canary.local:8099`, then the
    kernel's own port `canary.local:8799`, then `canary.local` — the same list,
    in the same order, the desktop Flasher, the Lab and the web walls probe),
-   so on a standard install the fleet just appears. Keep the Apple TV and the
+   so on a standard install the fleet just appears. A hub shows its own row
+   alone until its owner turns on the full roll-call — `fleet_rollcall: full`
+   in the Home Assistant add-on, `SECURACV_FLEET_ROLLCALL=1` on the Docker
+   sidecar, `api.fleet_rollcall: full` in a host kernel's config — because
+   that route takes no token; the Wall says so under its headline when it
+   sees only the kernel's row. Keep the Apple TV and the
    SecuraCV host on the **same LAN**; if your hub lives at a custom address,
    the on-screen prompt takes it once and remembers it. (Unlike iOS, tvOS
    generally doesn't interpose the Local Network permission prompt — if the
@@ -102,6 +107,12 @@ low-headache path.
 - **Xcode can't see the Apple TV.** Both devices on the same subnet; re-open
   *Remotes and Devices*; disable **client isolation / AP isolation** on the
   router (it silently blocks device pairing *and* Bonjour).
+- **Just the hub's tile, no Canaries.** The kernel's roll-call lists only
+  itself by default (the route takes no token): set `fleet_rollcall: full`
+  (add-on), `SECURACV_FLEET_ROLLCALL=1` (sidecar) or `api.fleet_rollcall:
+  full` (host kernel) and keep MQTT publishing on — an add-on with it off
+  serves the same single row. The footnote under the Wall's headline says
+  the same.
 - **Empty fleet / no events.** Almost always the network, not the app: the
   kernel is on a different VLAN/subnet, or the router's AP/client isolation is
   blocking the TV from reaching `canary.local`. Put both on one subnet and

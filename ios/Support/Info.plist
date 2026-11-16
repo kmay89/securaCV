@@ -102,8 +102,11 @@
        and unqualified hosts unless local networking is allowed explicitly.
        Without this key every device call failed with -1022 on the phone while
        the tvOS Wall (which has always carried it) worked. Scoped to LOCAL
-       networking only: arbitrary public http:// loads stay blocked, so the
-       "nothing off-network" promise below is still enforced by the OS. -->
+       networking only: arbitrary public http:// loads stay blocked. ATS
+       blocks only CLEARTEXT off the network, so it is not the whole of the
+       "nothing off-network" promise below: the app's address gate
+       (DeviceAPI.isPrivate) and its no-redirect delegate (RefuseRedirects,
+       on every device and hub client) carry the rest. -->
   <key>NSAppTransportSecurity</key>
   <dict>
     <key>NSAllowsLocalNetworking</key>

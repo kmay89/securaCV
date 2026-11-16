@@ -20,6 +20,9 @@ serde_json = "1.0"
 
 [dependencies.witness-kernel]
 path = ".."
+# The webhook listener (`webhook_request`) lives behind this feature. It is
+# pure Rust and pulls in no crate the kernel does not already build.
+features = ["adapter-webhook"]
 
 # Fuzz targets are their own binaries and must not be picked up as tests.
 [[bin]]
@@ -74,6 +77,20 @@ bench = false
 [[bin]]
 name = "event_payload"
 path = "fuzz_targets/event_payload.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "api_read_request"
+path = "fuzz_targets/api_read_request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "webhook_request"
+path = "fuzz_targets/webhook_request.rs"
 test = false
 doc = false
 bench = false

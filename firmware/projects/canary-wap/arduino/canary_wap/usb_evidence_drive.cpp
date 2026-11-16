@@ -29,13 +29,16 @@
 #include "evidence_update_verify.h"
 #include "securacv_ota.h"
 #include "ota_release_key.h"
+#if FEATURE_BLUETOOTH && __has_include(<NimBLEDevice.h>)
+#include "ble_ota.h"            // ble_ota::get_state(): a Bluetooth session holds the slot
+#endif
 
 namespace usb_evidence_drive {
 
 using namespace evidence_drive;
 
 static Config s_cfg = {};
-static Mode s_mode = Mode::OFF;
+static volatile Mode s_mode = Mode::OFF;   // read by ota_can_install() on the OTA task
 static USBMSC s_msc;
 static bool s_usb_started = false;
 static uint8_t* s_staging = nullptr;          // PSRAM FAT16 volume
@@ -102,6 +105,25 @@ static void run_update_check() {
   if (!fat16_find_update(s_staging, &bin, &man, reason, sizeof reason)) {
     snprintf(s_status, sizeof s_status, "update drop: %s", reason);
     fat16_write_result(s_staging, reason);
+    return;
+  }
+
+  // One installer at a time on the inactive slot: the pull engine and a
+  // Bluetooth session each open it with their own esp_ota_begin, which
+  // erases it under the other. The pull engine's side is ota_can_install()
+  // in the sketch, which defers while this drop-zone is open.
+  bool ble_idle = true;
+#if FEATURE_BLUETOOTH && __has_include(<NimBLEDevice.h>)
+  {
+    const ble_ota::OtaState b = ble_ota::get_state();
+    ble_idle = !(b == ble_ota::OTA_RECEIVING || b == ble_ota::OTA_VERIFYING ||
+                 b == ble_ota::OTA_REBOOTING);
+  }
+#endif
+  if (!update_install_allowed(securacv_ota_get_state() == SECURACV_OTA_IDLE, ble_idle)) {
+    static const char kBusy[] = "another update is running - try again after it finishes";
+    snprintf(s_status, sizeof s_status, "update drop: %s", kBusy);
+    fat16_write_result(s_staging, kBusy);
     return;
   }
 

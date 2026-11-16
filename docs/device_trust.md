@@ -154,8 +154,13 @@ The apps and flashers read the same sources:
 - **The iPhone app** pins the key of a Canary paired to it (canary-wap
   or the `firmware/canary` build, the two that serve a provisioning
   receipt) from `/api/status` on first sight, over the LAN rather than
-  the broker, and shows the fingerprint under **Keys** → **Pinned
-  trust**. It shows no full key, so it can check a pin, not set one.
+  the broker, and pins it only when the key derives the `pubkey_fp` the
+  pairing receipt carried; a key that does not is not pinned and the row
+  reads that its key does not match its pairing receipt. A pairing saved
+  before the app kept `pubkey_fp`, or one synced from another device
+  (iCloud carries no fingerprint yet), pins whatever key answers first.
+  It shows the fingerprint under **Keys** → **Pinned trust**. It shows no
+  full key, so it can check a pin, not set one.
 
 This table is read from the firmware and app sources (the canary-wap
 route in `canary_wap.ino`'s `register_api_routes()`, the handlers in

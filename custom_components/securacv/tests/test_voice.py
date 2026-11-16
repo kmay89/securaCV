@@ -1012,6 +1012,26 @@ def test_speak_privacy_never_asserts_one_listening_mode():
     assert "Either way, I don't record you" in speech
 
 
+def test_speak_privacy_names_the_one_thing_it_keeps():
+    """"Nothing I hear is stored" was said without exception, while the
+    words of a "keep an eye on the ..." request are the watch's label, in
+    Home Assistant's storage until the watch ends. The answer says so."""
+    speech = speak_privacy()
+    assert "nothing I hear is stored or sent anywhere — the one thing I keep is" in speech
+    assert "the name you give a watch, until that watch ends" in speech
+    assert "the rest is gone once I've answered" in speech
+    assert "once I've answered, it's gone" not in speech
+    # And what it describes is so: the words a watch was asked for by are
+    # its stored row's label and, with no Canary bound, its subject.
+    from .. import watches
+
+    watch = watches.make_watch(
+        "w1", "the litter box", {"kind": "unbound", "ref": "the litter box"}, 1_000_000.0, days=14
+    )
+    assert watch["label"] == "the litter box"
+    assert watch["subject"] == {"kind": "unbound", "ref": "the litter box"}
+
+
 def test_speak_help_names_the_limit():
     speech = speak_help()
     for phrase in ("what's up", "is anything offline", "are you listening", "goodnight"):

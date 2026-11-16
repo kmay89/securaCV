@@ -116,6 +116,51 @@ final class DeviceAPITests: XCTestCase {
         XCTAssertEqual(receipt.tlsCertFingerprint, fixtureFP)
     }
 
+    // ── no redirect leaves the network (G1-11) ──
+    // A 302 from whatever answers a Canary's address must not carry the
+    // bearer or a Wi-Fi password body to the Location it names.
+    func testEveryDeviceSessionRefusesRedirects() {
+        let far = URL(string: "https://attacker.example/x")!
+        let redirect = HTTPURLResponse(url: base, statusCode: 302, httpVersion: "HTTP/1.1",
+                                       headerFields: ["Location": far.absoluteString])!
+        let task = URLSession.shared.dataTask(with: base)   // never resumed
+        var followed: URLRequest? = URLRequest(url: far)
+        RefuseRedirects.shared.urlSession(URLSession.shared, task: task, willPerformHTTPRedirection: redirect,
+                                          newRequest: URLRequest(url: far)) { followed = $0 }
+        XCTAssertNil(followed, "the plain-http delegate declines the redirect")
+        followed = URLRequest(url: far)
+        let pinned = PinnedSessions.shared.session(pinnedTo: fixtureFP)
+        pinned.delegate.urlSession(pinned.session, task: task, willPerformHTTPRedirection: redirect,
+                                   newRequest: URLRequest(url: far)) { followed = $0 }
+        XCTAssertNil(followed, "the pinned delegate declines it too")
+        XCTAssertTrue(LANSession.plain.delegate === RefuseRedirects.shared,
+                      "the plain-http session carries the no-redirect delegate")
+    }
+
+    // ── the receipt's key fingerprint holds the first-sight pin ──
+    // send_provisioning_receipt writes `pubkey_fp` (16 hex); the first poll
+    // pins a served key only when the key derives it (G1-09).
+    func testReceiptKeepsThePubkeyFingerprint() throws {
+        let json = Data(#"{"device_id":"canary-a3f7","base_url":"http://192.168.1.20","token":"cv_x","pubkey_fp":"F2F46527CD927662"}"#.utf8)
+        let receipt = try JSONDecoder().decode(ProvisioningReceipt.self, from: json)
+        XCTAssertEqual(receipt.pubkeyFingerprint, "f2f46527cd927662", "kept, lowercased")
+        let none = Data(#"{"device_id":"canary-a3f7","base_url":"http://192.168.1.20","token":"cv_x","pubkey_fp":"not-hex"}"#.utf8)
+        XCTAssertNil(try JSONDecoder().decode(ProvisioningReceipt.self, from: none).pubkeyFingerprint,
+                     "a value that cannot be a fingerprint is no fingerprint")
+    }
+
+    func testFirstSightPinsOnlyTheReceiptsKey() {
+        // pubkey = 00 01 … 1f derives f2f46527cd927662 (DeviceFingerprintTests).
+        let key = Data((0..<32).map { UInt8($0) })
+        let other = Data((1...32).map { UInt8($0) })
+        XCTAssertTrue(FleetStore.keyMatchesReceipt(key, expected: "f2f46527cd927662"))
+        XCTAssertTrue(FleetStore.keyMatchesReceipt(key, expected: "F2F46527CD927662"), "case-insensitive")
+        XCTAssertFalse(FleetStore.keyMatchesReceipt(other, expected: "f2f46527cd927662"),
+                       "a host answering the device's address with its own key is not pinned")
+        XCTAssertTrue(FleetStore.keyMatchesReceipt(other, expected: nil),
+                      "a ref with no receipt fingerprint keeps plain first-sight trust")
+    }
+
     // ── a recovery kit, used after the address it names went away ──
     // A kit names where its WAP answered when it was saved: the setup
     // network's 192.168.4.1, gone once the WAP is on your Wi-Fi, or its

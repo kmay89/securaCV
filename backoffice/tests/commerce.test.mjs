@@ -70,12 +70,12 @@ test('the customer fixes their own address on the signed page while it is on the
     const { order } = recordOrder(db, sampleOrder({ external_id: 'cs_addr' }), { catalog: catalog(), actor: 'test' });
     const url = orderStatusUrl(cfg, order).replace(cfg.baseUrl, base); const form = (o) => new URLSearchParams(o).toString();
     const page = await (await fetch(url)).text(); assert.ok(page.includes('Need to change the address?') && page.includes('action="' + url.replace(base, '') + '/address"'), 'the form is on the page while it waits');
-    let r = await fetch(url + '/address', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ name: 'Ada Lovelace', line1: '12 Analytical Way', line2: 'Apt 2', city: 'Cambridge', state: 'ma', zip: '02139' }) });
+    let r = await fetch(url + '/address', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ name: 'Ada Lovelace', line1: '12 Analytical Way', line2: 'Apt 2', city: 'Cambridge', state: 'ma', zip: '02139', email: 'ada@example.test' }) });
     assert.equal(r.status, 303); assert.ok(r.headers.get('location').endsWith('?ok=address'));
     const o2 = orderById(db, order.id); assert.equal(o2.ship_line1, '12 Analytical Way'); assert.equal(o2.ship_state, 'MA');
     assert.ok(timeline(db, order.id).some(ev => ev.kind === 'address' && ev.actor === 'customer'), 'the timeline names the customer');
     assert.ok((await (await fetch(url + '?ok=address')).text()).includes('Address updated'));
-    r = await fetch(url + '/address', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ name: 'Ada', line1: '12 Analytical Way', city: 'Cambridge', state: 'MA', zip: '1' }) });
+    r = await fetch(url + '/address', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ name: 'Ada', line1: '12 Analytical Way', city: 'Cambridge', state: 'MA', zip: '1', email: 'ada@example.test' }) });
     assert.equal(r.status, 400); assert.ok((await r.text()).includes('will not make a label'), 'the same validation the label uses, on the page');
     assert.equal((await fetch(url.replace(/\/[^/]+$/, '/nottoken') + '/address', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ line1: 'x' }) })).status, 404, 'a wrong token is nothing');
     transition(db, order.id, 'packed', { actor: 'test', cfg, shipping: DEMO_SHIPPING }); db.run('UPDATE orders SET label_url = ? WHERE id = ?', 'https://x/label.pdf', order.id);

@@ -160,6 +160,38 @@ async def test_no_seeded_secret_survives_the_dump(
     assert diagnostics["evidence_exports"] == {"count": 0}
 
 
+async def test_the_chain_walk_indexes_reach_the_dump_as_counts_only(
+    hass: HomeAssistant,
+    kernel: KernelMock,
+    mqtt_mock: MqttMockHAClient,
+    setup_kernel_entry,
+    hass_client: ClientSessionGenerator,
+) -> None:
+    """The verifier's two indexes hold (event type, zone label, bucket) for
+    every sealed entry it walked. The dump was built with ``asdict`` and
+    projected only ``covered`` out, so ``covered_seqs`` reached the download
+    whole: a zone label for every verified event. Each index is carried as
+    its size and no row survives."""
+    kernel.kernel.seal_event(zone="kids_bedroom")
+    kernel.kernel.seal_event(event_type="BoundaryCrossingObjectSmall", zone="kids_bedroom")
+    kernel.kernel.seal_event(zone="back_gate")
+    entry = await setup_kernel_entry(auth_mode="paired", enable_mqtt=True)
+    state = entry.runtime_data.verification
+    assert state.ok is True and sorted(state.covered_seqs) == [1, 2, 3], "the first walk covered the sealed entries"
+    assert {row[1] for row in state.covered_seqs.values()} == {"zone:kids_bedroom", "zone:back_gate"}
+
+    diagnostics = await get_diagnostics_for_config_entry(hass, hass_client, entry)
+    dump = json.dumps(diagnostics)
+    for leak in ("zone:", "kids_bedroom", "back_gate", "BoundaryCrossingObjectSmall", kernel.kernel.head_hash):
+        assert leak not in dump, f"{leak} reached the diagnostics dump"
+    chain = diagnostics["chain_verification"]
+    assert chain["ok"] is True
+    assert (chain["covered"], chain["covered_seqs"]) == (3, 3)
+    assert (chain["verified_seq"], chain["head_seq"]) == (3, 3)
+    assert "head_hash" not in chain
+    assert all(value is None or isinstance(value, (bool, int, str)) for value in chain.values()), chain
+
+
 async def test_the_dump_shows_the_firmware_the_device_page_shows(
     hass: HomeAssistant,
     kernel: KernelMock,

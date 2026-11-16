@@ -136,8 +136,9 @@ final class ImprovClient: NSObject, ObservableObject {
     }
 
     func centralDidFailToConnect(_ err: Error?) {
+        // fail() leaves the phase at .failed(why), so the sheet shows this
+        // sentence rather than the generic "didn't answer".
         fail("Couldn't connect over Bluetooth — move closer to the Canary and try again.")
-        phase = .disconnected
     }
 
     func centralDidDisconnect(_ err: Error?) {
@@ -145,10 +146,11 @@ final class ImprovClient: NSObject, ObservableObject {
         // the network; the card then watches the fleet for it.
         if phase == .joining {
             resolveJoin(.failed("Bluetooth dropped while the Canary was joining — watch the Fleet tab to see if it made it."))
+            phase = .disconnected
         } else {
+            // Stays .failed(why): the specific sentence is what the sheet shows.
             fail("Bluetooth dropped before the Canary answered.")
         }
-        phase = .disconnected
     }
 
     // MARK: - requests
@@ -456,7 +458,9 @@ extension ImprovClient: CBPeripheralDelegate {
                 }
                 hubWaiter = nil
                 hubDeadline = nil
-                w.resume(returning: status)
+                // A status byte that never left 0 by the deadline is no
+                // answer: `.unknown`, the same ending the timeout gives.
+                w.resume(returning: status == .none ? .unknown : status)
             }
 
         case Self.stateUUID:
