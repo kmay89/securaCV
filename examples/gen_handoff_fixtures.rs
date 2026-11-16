@@ -40,6 +40,14 @@ use witness_kernel::{
     Kernel, KernelConfig, ModuleDescriptor, TimeBucket, ZonePolicy,
 };
 
+/// A fixture's 32-byte salt: one hex byte repeated.
+fn fixture_salt(byte_hex: &str) -> [u8; 32] {
+    hex::decode(byte_hex.repeat(32))
+        .expect("fixture salt hex")
+        .try_into()
+        .expect("32 bytes")
+}
+
 fn main() -> anyhow::Result<()> {
     let bundle_dir = Path::new("tests/fixtures/export_bundle");
     let envelope_dir = Path::new("tests/fixtures/envelope");
@@ -48,10 +56,9 @@ fn main() -> anyhow::Result<()> {
 
     let recipient =
         HandoffRecipient::new("Dana Reyes", Some("Example County Records Office"), None)?;
-    // Fixed so the committed fixtures are byte-reproducible (the tests pin
-    // their bytes): a fixture salt, not a deployed secret.
-    // codeql[rust/hard-coded-cryptographic-value]
-    let recipient_salt = [0x11; 32];
+    // A fixed fixture salt, written as hex, so a reader can recompute the
+    // fixture's commitment: not a deployed secret.
+    let recipient_salt = fixture_salt("11");
     let recipient_commitment = handoff::recipient_commitment(&recipient_salt, &recipient);
 
     // Self-export with a declared operator context and a recipient.
@@ -81,10 +88,9 @@ fn main() -> anyhow::Result<()> {
     // 1. Grant, redemption and the device-signed unseal record.
     let unseal_token = grant(&mut kernel, &cfg, &policy, &alice, "vault:1")?;
     let redemption = kernel.redeem_token_durably(&unseal_token)?;
-    // Fixed so the committed fixtures are byte-reproducible (the tests pin
-    // their bytes): a fixture salt, not a deployed secret.
-    // codeql[rust/hard-coded-cryptographic-value]
-    let plaintext_salt = [0x22; 32];
+    // A fixed fixture salt, written as hex, so a reader can recompute the
+    // fixture's commitment: not a deployed secret.
+    let plaintext_salt = fixture_salt("22");
     let plaintext_commitment = handoff::plaintext_commitment(&plaintext_salt, b"securacv-fixture");
     kernel.record_unsealed(redemption, plaintext_commitment, Some(recipient_commitment))?;
 

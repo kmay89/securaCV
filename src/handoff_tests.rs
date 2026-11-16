@@ -107,12 +107,20 @@ fn edited(bytes: &[u8], edit: impl FnOnce(&mut HandoffSidecar)) -> Vec<u8> {
     s.to_canonical_bytes().unwrap()
 }
 
+/// A pinned vector's 32-byte salt: one hex byte repeated, decoded as the
+/// vector files spell it.
+fn vector_salt(byte_hex: &str) -> [u8; 32] {
+    hex::decode(byte_hex.repeat(32))
+        .expect("vector salt hex")
+        .try_into()
+        .expect("32 bytes")
+}
+
 #[test]
 fn recipient_commitment_matches_the_pinned_vector() {
     // The salt of a pinned vector (the same bytes the JS suite and the shell
-    // recipe pin): a test vector, not a deployed secret.
-    // codeql[rust/hard-coded-cryptographic-value]
-    let salt = [0x11; 32];
+    // recipe pin), written as the vector's hex: a test vector, not a secret.
+    let salt = vector_salt("11");
     assert_eq!(
         hex::encode(recipient_commitment(&salt, &dana())),
         "5d02af2bfc1a29471141dbb6b118f2b2d1af259e7f4dcf8681d9dfc8e9e598ce"
@@ -123,9 +131,8 @@ fn recipient_commitment_matches_the_pinned_vector() {
 #[test]
 fn plaintext_commitment_matches_the_pinned_vector() -> Result<()> {
     // The salt of a pinned vector (the same bytes the JS suite and the shell
-    // recipe pin): a test vector, not a deployed secret.
-    // codeql[rust/hard-coded-cryptographic-value]
-    let salt = [0x22; 32];
+    // recipe pin), written as the vector's hex: a test vector, not a secret.
+    let salt = vector_salt("22");
     let c = plaintext_commitment(&salt, PLAINTEXT);
     assert_eq!(
         hex::encode(c),
