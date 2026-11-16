@@ -109,8 +109,12 @@ fn edited(bytes: &[u8], edit: impl FnOnce(&mut HandoffSidecar)) -> Vec<u8> {
 
 #[test]
 fn recipient_commitment_matches_the_pinned_vector() {
+    // The salt of a pinned vector (the same bytes the JS suite and the shell
+    // recipe pin): a test vector, not a deployed secret.
+    // codeql[rust/hard-coded-cryptographic-value]
+    let salt = [0x11; 32];
     assert_eq!(
-        hex::encode(recipient_commitment(&[0x11; 32], &dana())),
+        hex::encode(recipient_commitment(&salt, &dana())),
         "5d02af2bfc1a29471141dbb6b118f2b2d1af259e7f4dcf8681d9dfc8e9e598ce"
     );
     assert_eq!(DOMAIN_HANDOFF_RECIPIENT.len(), 33);
@@ -118,20 +122,26 @@ fn recipient_commitment_matches_the_pinned_vector() {
 
 #[test]
 fn plaintext_commitment_matches_the_pinned_vector() -> Result<()> {
-    let c = plaintext_commitment(&[0x22; 32], PLAINTEXT);
+    // The salt of a pinned vector (the same bytes the JS suite and the shell
+    // recipe pin): a test vector, not a deployed secret.
+    // codeql[rust/hard-coded-cryptographic-value]
+    let salt = [0x22; 32];
+    let c = plaintext_commitment(&salt, PLAINTEXT);
     assert_eq!(
         hex::encode(c),
         "926a5596f3ec19a0f56ad186d1e7a28a444694a184d506e37b28685e625da1cb"
     );
     assert_eq!(DOMAIN_UNSEALED_PLAINTEXT.len(), 34);
     assert_eq!(
-        salted_commitment_reader(DOMAIN_UNSEALED_PLAINTEXT, &[0x22; 32], PLAINTEXT)?,
+        salted_commitment_reader(DOMAIN_UNSEALED_PLAINTEXT, &salt, PLAINTEXT)?,
         c
     );
     let big = vec![7u8; 200_000];
+    // Any salt shows the reader and the slice form agree: random, never a literal.
+    let any_salt: [u8; 32] = rand::random();
     assert_eq!(
-        salted_commitment_reader(DOMAIN_UNSEALED_PLAINTEXT, &[1; 32], &big[..])?,
-        salted_commitment(DOMAIN_UNSEALED_PLAINTEXT, &[1; 32], &big)
+        salted_commitment_reader(DOMAIN_UNSEALED_PLAINTEXT, &any_salt, &big[..])?,
+        salted_commitment(DOMAIN_UNSEALED_PLAINTEXT, &any_salt, &big)
     );
     Ok(())
 }
@@ -590,7 +600,7 @@ fn pairing_declared_without_salt_and_fail_with_wrong_salt() -> Result<()> {
 fn export_sidecar_verifies_and_a_swapped_bundle_fails_pairing() -> Result<()> {
     let mut f = fixture()?;
     let (mut token, granted) = f.grant(EXPORT_EVENTS_ENVELOPE_ID)?;
-    let salt = [0x11; 32];
+    let salt: [u8; 32] = rand::random();
     let bundle = f.kernel.export_events_bundle_authorized_with(
         f.cfg.ruleset_hash,
         crate::ExportOptions::default(),

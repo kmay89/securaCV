@@ -48,7 +48,11 @@ fn main() -> anyhow::Result<()> {
 
     let recipient =
         HandoffRecipient::new("Dana Reyes", Some("Example County Records Office"), None)?;
-    let recipient_commitment = handoff::recipient_commitment(&[0x11; 32], &recipient);
+    // Fixed so the committed fixtures are byte-reproducible (the tests pin
+    // their bytes): a fixture salt, not a deployed secret.
+    // codeql[rust/hard-coded-cryptographic-value]
+    let recipient_salt = [0x11; 32];
+    let recipient_commitment = handoff::recipient_commitment(&recipient_salt, &recipient);
 
     // Self-export with a declared operator context and a recipient.
     let (mut kernel, cfg, _) = seeded_kernel()?;
@@ -77,7 +81,11 @@ fn main() -> anyhow::Result<()> {
     // 1. Grant, redemption and the device-signed unseal record.
     let unseal_token = grant(&mut kernel, &cfg, &policy, &alice, "vault:1")?;
     let redemption = kernel.redeem_token_durably(&unseal_token)?;
-    let plaintext_commitment = handoff::plaintext_commitment(&[0x22; 32], b"securacv-fixture");
+    // Fixed so the committed fixtures are byte-reproducible (the tests pin
+    // their bytes): a fixture salt, not a deployed secret.
+    // codeql[rust/hard-coded-cryptographic-value]
+    let plaintext_salt = [0x22; 32];
+    let plaintext_commitment = handoff::plaintext_commitment(&plaintext_salt, b"securacv-fixture");
     kernel.record_unsealed(redemption, plaintext_commitment, Some(recipient_commitment))?;
 
     // 2. A second grant for export:events, spent by a quorum export that
