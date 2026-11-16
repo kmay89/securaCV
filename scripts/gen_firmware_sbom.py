@@ -233,6 +233,8 @@ VENDORED_FACTS: dict[str, dict] = {
                  "boundary over 70 characters in _parseRequest; this copy carries that cap "
                  "and adds its own two: the same cap in _parseForm, and a fixed-size "
                  "boundary buffer in place of the stack array the client's boundary sized. "
+                 "It also writes each chunked-transfer size line with a bounded snprintf "
+                 "of an unsigned int (the same bytes on the ESP32's 32-bit size_t). "
                  "Nothing else is backported. Host-tested under AddressSanitizer, and "
                  "compiled by the CI builds that link it; not run on a device. Every "
                  "file's upstream sha256 and the exact diff: "

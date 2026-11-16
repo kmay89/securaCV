@@ -77,6 +77,24 @@ PATCHES: dict[str, list[tuple[str, str]]] = {
     "library.properties": [
         ("version=2.0.0\n", "version=2.0.17+securacv.1\n"),
     ],
+    "src/WebServer.cpp": [
+        (
+            "  Modified 8 May 2015 by Hristo Gochkov (proper post and file upload handling)\n*/\n",
+            "  Modified 8 May 2015 by Hristo Gochkov (proper post and file upload handling)\n"
+            "  Modified 16 Nov 2026 for SecuraCV (chunk-size header written with a bounded snprintf"
+            " of an unsigned int)\n*/\n",
+        ),
+        (
+            '      sprintf(chunkSize, "%x%s", contentLength, footer);\n',
+            '      snprintf(chunkSize, 11, "%x%s", (unsigned) contentLength, footer);'
+            "  // SecuraCV: bounded, and %x takes an unsigned int on every word size\n",
+        ),
+        (
+            '      sprintf(chunkSize, "%x%s", size, footer);\n',
+            '      snprintf(chunkSize, 11, "%x%s", (unsigned) size, footer);'
+            "  // SecuraCV: bounded, and %x takes an unsigned int on every word size\n",
+        ),
+    ],
     "src/Parsing.cpp": [
         (
             "  Modified 8 May 2015 by Hristo Gochkov (proper post and file upload handling)\n*/\n",

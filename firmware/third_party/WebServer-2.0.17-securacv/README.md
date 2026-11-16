@@ -102,6 +102,14 @@ so a build log, an SBOM and a reader can tell this copy from the core's.
 - The header line records the change, as LGPL-2.1 section 2(b) asks of a
   modified file.
 
+`src/WebServer.cpp` has one more change, not an advisory's: upstream writes
+each chunked-transfer size line with `sprintf(chunkSize, "%x%s", <size_t>, ...)`
+into an 11-byte buffer. On the ESP32 `size_t` is 32 bits, so 8 hex digits, the
+`\r\n` and the NUL fill it exactly and nothing overflows; on a 64-bit host the
+same line could write past it, which is why code scanning flags it. Both calls
+are now `snprintf(chunkSize, 11, "%x%s", (unsigned) <size>, footer)`: the
+bytes on the ESP32 are unchanged, and the write is bounded on any word size.
+
 Nothing else differs from upstream; the test below holds every other file to
 its upstream hash.
 
@@ -121,7 +129,7 @@ nothing here changes that.
 ## How it is checked
 
 - `scripts/tests/test_vendored_webserver_core2.py` (lint.yml): every file here
-  against the upstream sha256 below; the two changed files differ from upstream
+  against the upstream sha256 below; the three changed files differ from upstream
   by exactly the hunks above; every core-2 PlatformIO env that compiles a
   WebServer user lists this storage, and no core-3 env does; and every Arduino
   CLI core 2.0.17 row that compiles the display sketch passes `--library` with
@@ -149,7 +157,7 @@ on 2026-11-16. `LICENSE.md` is the repository root's.
 | `src/HTTP_Method.h` | `libraries/WebServer/src/HTTP_Method.h` | `c68c547c8ee6fc28b14edec748e01472b1f6ad3e6e1edade478181deb2fcbe17` | verbatim |
 | `src/Parsing.cpp` | `libraries/WebServer/src/Parsing.cpp` | `122de5397729899ac8600d545f7ed4b8a02298351a4f1b0fa5c7fa73f87a14d0` | patched |
 | `src/Uri.h` | `libraries/WebServer/src/Uri.h` | `bde0f8c102c7f1fa10bf3f7aa6240d448dc63a32cb9543fdb03d2c71c177ab49` | verbatim |
-| `src/WebServer.cpp` | `libraries/WebServer/src/WebServer.cpp` | `7fe7cc252b2f3cf83b330f52de687fe9fc22cdc71028089eb6b0e177a9ce0aae` | verbatim |
+| `src/WebServer.cpp` | `libraries/WebServer/src/WebServer.cpp` | `7fe7cc252b2f3cf83b330f52de687fe9fc22cdc71028089eb6b0e177a9ce0aae` | patched |
 | `src/WebServer.h` | `libraries/WebServer/src/WebServer.h` | `7770ef659d332dee92947cf7d98097874c39583a9113fd66735ca329459c8e8b` | verbatim |
 | `src/detail/RequestHandler.h` | `libraries/WebServer/src/detail/RequestHandler.h` | `c923e1b14fba9b08beb53b2a5b6160d0e2159260cd88454911a0c75ceedcd39f` | verbatim |
 | `src/detail/RequestHandlersImpl.h` | `libraries/WebServer/src/detail/RequestHandlersImpl.h` | `1900613216526a0456a969ac2e6679a3fbaacd7b14660b27d5c3ddd481e7dac9` | verbatim |

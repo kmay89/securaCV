@@ -18,6 +18,7 @@
   License along with this library; if not, write to the Free Software
   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
   Modified 8 May 2015 by Hristo Gochkov (proper post and file upload handling)
+  Modified 16 Nov 2026 for SecuraCV (chunk-size header written with a bounded snprintf of an unsigned int)
 */
 
 
@@ -480,7 +481,7 @@ void WebServer::sendContent(const char* content, size_t contentLength) {
   if(_chunked) {
     char * chunkSize = (char *)malloc(11);
     if(chunkSize){
-      sprintf(chunkSize, "%x%s", contentLength, footer);
+      snprintf(chunkSize, 11, "%x%s", (unsigned) contentLength, footer);  // SecuraCV: bounded, and %x takes an unsigned int on every word size
       _currentClientWrite(chunkSize, strlen(chunkSize));
       free(chunkSize);
     }
@@ -503,7 +504,7 @@ void WebServer::sendContent_P(PGM_P content, size_t size) {
   if(_chunked) {
     char * chunkSize = (char *)malloc(11);
     if(chunkSize){
-      sprintf(chunkSize, "%x%s", size, footer);
+      snprintf(chunkSize, 11, "%x%s", (unsigned) size, footer);  // SecuraCV: bounded, and %x takes an unsigned int on every word size
       _currentClientWrite(chunkSize, strlen(chunkSize));
       free(chunkSize);
     }

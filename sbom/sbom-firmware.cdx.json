@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:4efc6ad7-f889-57d7-8c21-30d58ab377da",
+  "serialNumber": "urn:uuid:45e8a7e9-08b7-5b98-b248-e453465b02be",
   "version": 1,
   "metadata": {
     "tools": {
@@ -1803,7 +1803,7 @@
             ]
           }
         ],
-        "notes": "Upstream's fix (bb86048, first released in 3.3.8) refuses a multipart boundary over 70 characters in _parseRequest; this copy carries that cap and adds its own two: the same cap in _parseForm, and a fixed-size boundary buffer in place of the stack array the client's boundary sized. Nothing else is backported. Host-tested under AddressSanitizer, and compiled by the CI builds that link it; not run on a device. Every file's upstream sha256 and the exact diff: firmware/third_party/WebServer-2.0.17-securacv/README.md."
+        "notes": "Upstream's fix (bb86048, first released in 3.3.8) refuses a multipart boundary over 70 characters in _parseRequest; this copy carries that cap and adds its own two: the same cap in _parseForm, and a fixed-size boundary buffer in place of the stack array the client's boundary sized. It also writes each chunked-transfer size line with a bounded snprintf of an unsigned int (the same bytes on the ESP32's 32-bit size_t). Nothing else is backported. Host-tested under AddressSanitizer, and compiled by the CI builds that link it; not run on a device. Every file's upstream sha256 and the exact diff: firmware/third_party/WebServer-2.0.17-securacv/README.md."
       },
       "properties": [
         {
