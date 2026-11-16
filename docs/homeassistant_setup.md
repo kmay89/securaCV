@@ -117,7 +117,7 @@ idempotent: re-running it never repeats a finished step. The hub's own MQTT
 connection is made through the Mosquitto app's own discovery (Home
 Assistant signs in as the app's `homeassistant` service user with the
 password Mosquitto hands over through the Supervisor); if it still does not
-finish, the run names it, and you press Configure, then Submit on the MQTT
+finish, the run names it, and you press Add, then Submit on the MQTT
 card under Settings → Devices & Services.
 
 Two things stay yours, and the installer says so when it finishes:

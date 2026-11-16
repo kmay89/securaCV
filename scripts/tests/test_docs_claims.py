@@ -5169,8 +5169,10 @@ MUST_PASS_IN = [
     # The second review's replacements.
     ("firmware/projects/canary-wap/arduino/canary_wap/README.md",
      "it can still write blind with the owner's session (any write a session "
-    "may make, of which since F361 only the firmware install restarts the "
-    "unit, and only into a newer signed image)"),
+    "may make, which since 2.4.20 no longer includes the firmware install or "
+    "the update settings; the one restart left to a session is an install "
+    "sent from a broker it re-pointed the MQTT bridge at, and only into a "
+    "newer signed image)"),
     ("CHANGELOG.md",
      "owner's session: a reboot, or any other write a session may make "
     "*(amended 2026-10-27, the owner-authority PR, #1887, after 2.4.17: since "

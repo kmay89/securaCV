@@ -15,7 +15,8 @@
 # │    • It is NEVER committed. `.gitignore` already ignores `*.pem`; this    │
 # │      script also refuses to write it inside the repo working tree.       │
 # │    • Only its PUBLIC half (a C header) goes into the repo, and a copy of  │
-# │      the PEM goes into the OTA_SIGNING_KEY_PEM GitHub Actions secret.     │
+# │      the PEM goes into the firmware-release environment's secret          │
+# │      OTA_SIGNING_KEY_PEM.                                                 │
 # └─────────────────────────────────────────────────────────────────────────┘
 #
 # What it does (idempotent — safe to re-run):
@@ -137,13 +138,17 @@ KEY_ID="$(grep -i 'Key id' "$CANONICAL_HEADER" 2>/dev/null | head -1 | sed 's/^[
 bold "3/3  Next steps (do these yourself — the script stops here on purpose)"
 cat <<EOF
 
-  a) Add the PRIVATE key as a GitHub Actions secret so CI can sign releases:
-       GitHub → your repo → Settings → Secrets and variables → Actions
-       → New repository secret
+  a) Add the PRIVATE key as a secret of the firmware-release environment so
+     CI can sign releases:
+       GitHub → your repo → Settings → Environments → firmware-release
+       → Add environment secret
          Name:  OTA_SIGNING_KEY_PEM
          Value: the FULL contents of $KEY_PATH
                 (everything from '-----BEGIN PRIVATE KEY-----' to
                  '-----END PRIVATE KEY-----', inclusive)
+     Then set the repository variable OTA_SIGNING_KEY_IN_ENVIRONMENT to true
+     (Settings → Secrets and variables → Actions → Variables), so the
+     release buttons know the key lives in the environment.
 
      Copy it to your clipboard with:
 EOF

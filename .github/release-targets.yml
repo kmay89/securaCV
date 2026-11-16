@@ -85,7 +85,10 @@ targets:
       signed and nothing was dispatched. Both halves are required: the PUBLIC key
       committed in firmware/common/ota/src/ota_release_key.h (all zeros means OTA
       is hard-disabled in firmware), and the PRIVATE key as the
-      OTA_SIGNING_KEY_PEM Actions secret. One-time ceremony, on your own machine:
+      OTA_SIGNING_KEY_PEM secret of the firmware-release environment, with the
+      repository variable OTA_SIGNING_KEY_IN_ENVIRONMENT set to true (this
+      button cannot see an environment secret; a repository-level secret still
+      counts). One-time ceremony, on your own machine:
       `firmware/scripts/setup_release_key.sh --key ~/securacv-releaser.pem`, then
       add the secret and commit the public headers plus the regenerated
       canary-local/devices/flash.json. Until then the in-browser flasher shows

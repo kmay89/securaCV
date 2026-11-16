@@ -147,8 +147,6 @@ Then, exactly as it prints:
    `-----END PRIVATE KEY-----` — and set
    the repository variable `OTA_SIGNING_KEY_IN_ENVIRONMENT` to `true`
    ([Who can sign](#who-can-sign) says why, and what else to set there).
-   The helper's own printout still says "New repository secret": use the
-   environment.
 2. Commit **only** the public `ota_release_key.h` files (never `releaser.pem`;
    `*.pem` is already gitignored).
 3. Cut a release (below) — CI signs with the secret.

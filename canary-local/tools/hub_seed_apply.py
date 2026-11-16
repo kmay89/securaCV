@@ -726,7 +726,7 @@ class SupervisorClient:
         raise SupervisorError(
             f"{handler}: Home Assistant did not finish connecting through the "
             f"Mosquitto add-on's discovery ({detail}). Finish MQTT in Settings > "
-            "Devices & Services (Configure, then Submit). Everything else in this "
+            "Devices & Services (Add on the MQTT card, then Submit). Everything else in this "
             "plan still applied."
         )
 
