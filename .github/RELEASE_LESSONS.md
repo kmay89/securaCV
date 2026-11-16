@@ -13,6 +13,39 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-11-15 (n) — A commit made from a file list leaves out the file the list did not know
+
+- **Symptom:** the iOS commit referenced `RefuseRedirects.swift` and did not
+  contain it. It was caught before CI ran, by `git status` after the commit.
+- **Cause:** the commit was staged from the leg's owned-file list, and a file
+  the leg created was in no list.
+- **Fix:** the file committed in the next commit.
+- **Applies to:** any commit staged by path list. Before committing, read `git
+  status --short` for untracked files under the directories being staged, and
+  after committing check that what remains is only what was meant to remain.
+
+## 2026-11-15 (m) — The version bump moved six catalogs and the train regenerated three
+
+- **Symptom:** after firmware went to 2.4.20, `page logic tests (committed
+  artifacts)` stayed red through four pushes, each time on a different file:
+  first the emulator dist, then `sense.json`, `vision.json` and
+  `playground.json`, then `wap.json`, then `homeassistant.json`.
+- **Cause:** the release step ran the generators it knew read the dist
+  (`gen_flash.py`, `gen_senselab.py`) and the ones `bump_version.sh` names.
+  Four more read a version string directly (`gen_sense.py`, `gen_vision.py`,
+  `gen_playground.py` from `version.h`, `gen_wap.py` from the sketch), and
+  `gen_homeassistant.py` embeds `wap.json`'s retained payloads, so it is
+  downstream of `gen_wap.py`. Each failure named only the next stale file.
+- **Fix:** every catalog regenerated, in order: the dist rebuild, then
+  `gen_flash`, `gen_senselab`, `gen_sense`, `gen_vision`, `gen_playground`,
+  `gen_wap`, then `gen_homeassistant`, `gen_hub_image`, `gen_hub_seed`,
+  `gen_hub_provision_bundle`, `gen_start`, and `gen_csp` last.
+- **Applies to:** every firmware version bump. Run all of
+  `canary-local/tools/gen_*.py` after the dist lands, not the ones a grep for
+  `dist` finds, then run every file under `canary-local/tests/` once before
+  pushing: one local pass costs two minutes, and each red push cost a CI
+  round.
+
 ## 2026-11-15 (l) — Short rules a parallel fix pass paid for (add-on, website), continued
 
 - **Symptom:** none of these reached a release. Each was caught by a reviewer
