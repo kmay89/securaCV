@@ -350,7 +350,11 @@ fn permission_message(path: &str) -> String {
 pub fn probe_target(path: &str) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
-        match std::fs::OpenOptions::new().read(true).write(true).open(path) {
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path)
+        {
             Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
                 Err(permission_message(path))
             }

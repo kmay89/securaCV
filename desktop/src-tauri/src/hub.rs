@@ -1563,7 +1563,13 @@ fn headless_report(code: i32, transcript: &str, known_hosts: &std::path::Path) -
         transcript
             .lines()
             .find(|l| l.contains("INCOMPLETE_OPTIONAL:"))
-            .map(|l| l.split("INCOMPLETE_OPTIONAL:").nth(1).unwrap_or("").trim().to_string())
+            .map(|l| {
+                l.split("INCOMPLETE_OPTIONAL:")
+                    .nth(1)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string()
+            })
     } else {
         None
     };
@@ -1746,7 +1752,8 @@ mod tests {
         let early = headless_report(1, "Home Assistant Core isn't running yet\n", kh);
         assert!(!early.ok && !early.finished && early.retry_later && early.remainder.is_none());
 
-        let unreachable = headless_report(255, "ssh: connect to host hub port 22222: refused\n", kh);
+        let unreachable =
+            headless_report(255, "ssh: connect to host hub port 22222: refused\n", kh);
         assert!(!unreachable.finished && unreachable.retry_later);
 
         let stopped = headless_report(3, "step 4 failed\n", kh);

@@ -1293,8 +1293,7 @@ async fn save_text_file(app: AppHandle, mac: String, contents: String) -> Result
     let Some(out) = asked else {
         return Ok(false);
     };
-    std::fs::write(&out, contents)
-        .map_err(|e| format!("couldn't save {}: {e}", out.display()))?;
+    std::fs::write(&out, contents).map_err(|e| format!("couldn't save {}: {e}", out.display()))?;
     Ok(true)
 }
 
@@ -2033,7 +2032,10 @@ mod webview_boundary_tests {
         // means: allowed.
         let existing = dir.path().join("old-report.json");
         std::fs::write(&existing, b"{}").unwrap();
-        assert!(validated_save_path(&existing).is_ok(), "an existing regular file");
+        assert!(
+            validated_save_path(&existing).is_ok(),
+            "an existing regular file"
+        );
 
         // A folder wearing the extension is not a file to write.
         let folder = dir.path().join("folder.json");
@@ -2072,7 +2074,10 @@ mod webview_boundary_tests {
             let name = report_filename(hostile);
             assert!(!name.contains('/') && !name.contains('\\'), "{name}");
             assert!(!name.contains(".."), "{name}");
-            assert!(name.starts_with("canary-") && name.ends_with("-report.json"), "{name}");
+            assert!(
+                name.starts_with("canary-") && name.ends_with("-report.json"),
+                "{name}"
+            );
         }
     }
 

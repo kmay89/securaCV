@@ -152,13 +152,20 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt;
             let mode = std::fs::metadata(&dest).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode, 0o600, "the raw image must be owner-only, got {mode:o}");
+            assert_eq!(
+                mode, 0o600,
+                "the raw image must be owner-only, got {mode:o}"
+            );
         }
         // A file (or a planted link) already at the name is refused, not
         // overwritten or followed.
         let err = decompress(&src, &dest, &CancelToken::default(), |_| {}).unwrap_err();
         assert!(err.contains("couldn't create the raw image"), "{err}");
-        assert_eq!(std::fs::read(&dest).unwrap(), raw, "the existing file is untouched");
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            raw,
+            "the existing file is untouched"
+        );
     }
 
     #[test]
