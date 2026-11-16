@@ -4543,7 +4543,11 @@ static esp_err_t handle_status(httpd_req_t* req) {
     ns.node           = DEVICE_TYPE;    // the type constant, the same word as the mDNS dt
     ns.product        = OTA_PRODUCT;
     ns.fw             = FIRMWARE_VERSION;
-    ns.hardware       = nullptr;        // no CANARY_FIGURE_HARDWARE token on this tree (handle_fleet omits it too)
+#ifdef CANARY_FIGURE_HARDWARE
+    ns.hardware       = CANARY_FIGURE_HARDWARE;  // the S3 target's board token (build_config.h); the C3 has none
+#else
+    ns.hardware       = nullptr;        // no board token on this target: omitted ("cannot say"), as handle_fleet omits it
+#endif
     ns.name           = setup_wizard::get_device_name();
     ns.uptime_s       = uptime_seconds();
     ns.ip             = g_wifi_status.sta_connected ? g_wifi_status.sta_ip : nullptr;
@@ -8704,6 +8708,11 @@ static esp_err_t handle_fleet(httpd_req_t* req) {
   self.name    = (nm && nm[0]) ? nm : (const char*)g_device.device_id;
   self.product = DEVICE_TYPE;
   self.online  = 1;   // we are answering this request, so we are up
+#ifdef CANARY_FIGURE_HARDWARE
+  // Which board this is (build_config.h): the S3 target's token, the key
+  // figures.json draws the WAP from. The C3 defines none, so `hw` is omitted.
+  self.hardware = CANARY_FIGURE_HARDWARE;
+#endif
   // Honest coarse chain state, backed by an actual tail check (see
   // chain_tail_intact): the latched flags PLUS the newest record
   // recomputing, matching the head, and verifying under this device's key.
@@ -10011,11 +10020,8 @@ static void mdns_reannounce() {
   MDNS.addServiceTxt("securacv", "tcp", "host",      (const char*)g_device.mdns_hostname);
   MDNS.addServiceTxt("securacv", "tcp", "name",
                      setup_wizard::get_device_name() ? setup_wizard::get_device_name() : "");
-  #if defined(HARDWARE_XIAO_ESP32C3)
-  MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32C3");
-  #else
-  MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32S3");
-  #endif
+  // The target's board, as the banner and Improv name it (build_config.h).
+  MDNS.addServiceTxt("securacv", "tcp", "model", HARDWARE_BOARD_NAME);
   // Canonical fleet TXT identity (see docs/onboarding_unified_wizard.md):
   // dt is the canonical hyphenated device type the HA component and the
   // companion app key modality/wizard branches off; role separates
@@ -12166,11 +12172,8 @@ static void wifi_init_provisioning() {
           MDNS.addServiceTxt("securacv", "tcp", "host", (const char*)g_device.mdns_hostname);
           MDNS.addServiceTxt("securacv", "tcp", "name",
                              setup_wizard::get_device_name() ? setup_wizard::get_device_name() : "");
-          #if defined(HARDWARE_XIAO_ESP32C3)
-          MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32C3");
-          #else
-          MDNS.addServiceTxt("securacv", "tcp", "model", "XIAO ESP32S3");
-          #endif
+          // The target's board, as the banner and Improv name it (build_config.h).
+          MDNS.addServiceTxt("securacv", "tcp", "model", HARDWARE_BOARD_NAME);
           // Canonical fleet TXT identity (see docs/onboarding_unified_wizard.md):
           // dt is the canonical hyphenated device type the HA component and the
           // companion app key modality/wizard branches off; role separates
@@ -12285,15 +12288,12 @@ static void wifi_init_provisioning() {
     MDNS.addServiceTxt("securacv", "tcp", "host",      (const char*)g_device.mdns_hostname);
     MDNS.addServiceTxt("securacv", "tcp", "name",
                        setup_wizard::get_device_name() ? setup_wizard::get_device_name() : "");
-    // The same firmware compiles for both XIAO ESP32S3 and XIAO ESP32C3
-    // (see DEVICE_ID_PREFIX selection at lines 201-205). Advertise the
-    // actual hardware so the fleet manager and the SPA can pick the
-    // right capability set (e.g., the C3 has no camera).
-    #if defined(HARDWARE_XIAO_ESP32C3)
-    MDNS.addServiceTxt("securacv", "tcp", "model",     "XIAO ESP32C3");
-    #else
-    MDNS.addServiceTxt("securacv", "tcp", "model",     "XIAO ESP32S3");
-    #endif
+    // The same firmware compiles for both the XIAO ESP32-S3 Sense and the
+    // XIAO ESP32-C3 (see the DEVICE_ID_PREFIX selection). Advertise the
+    // actual hardware, the target's board as the banner and Improv name it
+    // (build_config.h HARDWARE_BOARD_NAME), so the fleet manager and the SPA
+    // can pick the right capability set (e.g., the C3 has no camera).
+    MDNS.addServiceTxt("securacv", "tcp", "model",     HARDWARE_BOARD_NAME);
     // Canonical fleet TXT identity (see docs/onboarding_unified_wizard.md):
     // dt is the canonical hyphenated device type the HA component and the
     // companion app key modality/wizard branches off; role separates
@@ -13186,11 +13186,13 @@ void setup() {
     bi.build_date    = __DATE__;
     bi.build_time    = __TIME__;
     bi.device_type   = DEVICE_TYPE;
-    bi.model         = "XIAO ESP32S3 Sense";
+    // The hardware target's names (build_config.h): these said the S3's on
+    // the C3 build too.
+    bi.model         = "Canary WAP (" HARDWARE_BOARD_NAME ")";
     // Privacy (Invariant III): do not surface the raw MAC. The device's stable
     // identity is shown separately as "Device ID" (g_device.device_id). mac_address
     // is left null, so boot_banner skips the line.
-    bi.board_name    = "XIAO ESP32S3";
+    bi.board_name    = HARDWARE_BOARD_NAME;
     bi.chip_model    = ESP.getChipModel();
     bi.chip_revision = (uint8_t)ESP.getChipRevision();
     bi.cpu_freq_mhz  = (uint16_t)ESP.getCpuFreqMHz();

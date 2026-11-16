@@ -339,7 +339,8 @@ async def test_the_health_sensor_writes_only_a_reading_the_core_can_carry(
     "Integer exceeds 64-bit range" from State.as_dict_json), so one written
     into the Health sensor failed the recorder and every websocket
     subscription on the entity, downstream of the callback that read it.
-    The sensor reads healthy with the no-reading attributes, and its state
+    The sensor reads healthy with the no-reading attributes (both unknown:
+    battery_percent was 100 there until #1971, sweep HA60), and its state
     serializes as the recorder and the websocket serialize one; the
     largest integer the core carries still reads as sent."""
     await setup_kernel_entry(enable_mqtt=True)
@@ -354,10 +355,10 @@ async def test_the_health_sensor_writes_only_a_reading_the_core_can_carry(
         await hass.async_block_till_done()
         state = hass.states.get("sensor.kitchen_cam_health")
         assert state is not None and state.state == "healthy", raw
-        assert state.attributes["battery_percent"] == 100, raw
+        assert state.attributes["battery_percent"] is None, raw
         assert state.attributes["memory_free_bytes"] is None, raw
         carried = json.loads(state.as_dict_json)["attributes"]
-        assert (carried["battery_percent"], carried["memory_free_bytes"]) == (100, None), raw
+        assert (carried["battery_percent"], carried["memory_free_bytes"]) == (None, None), raw
     fire(hass, f"securacv/{CANARY}/health", health.replace("1e300", str(2**64 - 1)))
     await hass.async_block_till_done()
     state = hass.states.get("sensor.kitchen_cam_health")

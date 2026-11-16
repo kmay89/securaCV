@@ -18,6 +18,7 @@
 #include "canary/runtime_config.h"      // NVS-backed device id (OTA-safe)
 #include "identity/device_pseudonym.h"  // MAC-free hostname suffix (Invariant III)
 #include "network/mdns_txt.h"           // the one _securacv._tcp TXT schema (common/)
+#include "pins.h"                       // CANARY_FIGURE_HARDWARE, the TXT `hw` (check_board_registry.py check 11)
 
 namespace canary::net {
 

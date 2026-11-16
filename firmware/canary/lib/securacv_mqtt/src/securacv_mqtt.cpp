@@ -1152,7 +1152,14 @@ static void add_device_info(JsonObject& device, const char* device_id, const cha
   snprintf(name, sizeof(name), "SecuraCV Canary %s", device_id);
   device["name"] = name;
   device["mf"] = "ERRERlabs";
-  device["mdl"] = "Canary v1";
+  // Model is the product; Hardware is the board this env was made for
+  // (canary_config.h). Model said "Canary v1", a name no release carries,
+  // and no board was named on any port. A build that names no board sends
+  // no `hw`, so Home Assistant shows none rather than a borrowed one.
+  device["mdl"] = CANARY_PRODUCT_NAME;
+#ifdef CANARY_BOARD_NAME
+  device["hw"] = CANARY_BOARD_NAME;
+#endif
   device["sw"] = fw_version;
 }
 

@@ -74,7 +74,6 @@
         "ts_ms": 3600000
       },
       "health": {
-        "battery": 100,
         "battery_present": false,
         "memory_free": 201344,
         "uptime": 3600,
@@ -102,7 +101,6 @@
         "ts_ms": 3600000
       },
       "health": {
-        "battery": 100,
         "battery_present": false,
         "memory_free": 154112,
         "uptime": 3600,
@@ -125,7 +123,6 @@
         "ts_ms": 3600000
       },
       "health": {
-        "battery": 100,
         "battery_present": false,
         "memory_free": 176220,
         "uptime": 3600,

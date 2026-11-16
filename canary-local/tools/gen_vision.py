@@ -777,7 +777,7 @@ PANE_ONLINE = [
         "occupancy": "none", "posture": "unknown", "proximity": "unknown", "occ_mask": 0,
         "last_event": "boot", "uptime_s": EX_UPTIME_S, "ts_ms": EX_TS_MS}, STATE_KEYS, "state")),
     ("health", True, keyed_as({
-        "battery": 100, "battery_present": False, "memory_free": EX_HEAP, "uptime": EX_UPTIME_S,
+        "battery_present": False, "memory_free": EX_HEAP, "uptime": EX_UPTIME_S,
         "firmware_version": FW_VERSION, "public_key": EX_PUBKEY}, HEALTH_KEYS, "health")),
     ("chain", True, keyed_as({
         "v": 1, "length": EX_CHAIN, "latest_hash": "5d0e…", "algorithm": "ed25519",

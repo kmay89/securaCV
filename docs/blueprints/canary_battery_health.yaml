@@ -18,7 +18,8 @@
 #   2. Worn-out cell — battery_health_pct (cycle-fade estimate) dropped below
 #                      the threshold: plan a replacement cell.
 #   3. Recovered     — battery back to healthy or charging again: clears the
-#                      persistent notification.
+#                      persistent notification (a Canary with a battery only;
+#                      a mains Canary recovering from low memory sends none).
 
 blueprint:
   name: "SecuraCV — Canary battery health"
@@ -126,13 +127,16 @@ condition: []
 action:
   - choose:
       # Low battery — only when the degradation is the battery's (the Health
-      # sensor also goes critical on low memory, a different runbook).
+      # sensor also goes critical on low memory, a different runbook), and
+      # only on a charge that was read: battery_percent is unknown when a
+      # battery reports no number, and battery_pct would read that as 0.
       - conditions:
           - condition: trigger
             id: low
           - condition: template
             value_template: >-
               {{ state_attr(health_sensor, 'battery_present') == true
+                 and state_attr(health_sensor, 'battery_percent') is number
                  and battery_pct < (low_threshold | int) }}
         sequence:
           - variables:
@@ -189,9 +193,17 @@ action:
                 resets on reboot.
 
       # Recovered — clears the low-battery notification once power is back.
+      # Only on a Canary with a battery whose charge was read: the Health
+      # sensor also leaves "warning" when low memory clears, and a Canary on
+      # mains, or a battery that reports no number, has no battery_percent,
+      # so the push would name a charge nothing measured.
       - conditions:
           - condition: trigger
             id: recovered
+          - condition: template
+            value_template: >-
+              {{ state_attr(health_sensor, 'battery_present') == true
+                 and state_attr(health_sensor, 'battery_percent') is number }}
         sequence:
           - service: persistent_notification.dismiss
             data:

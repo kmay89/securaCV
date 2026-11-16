@@ -45,6 +45,7 @@ from _tooling import die, repo_root
 REPO = repo_root()
 FW = REPO / "firmware/projects/canary-wap/arduino/canary_wap"
 INO = FW / "canary_wap.ino"
+BUILD_CONFIG_H = FW / "build_config.h"
 SETUP_WIZARD_H = FW / "setup_wizard.h"
 SETUP_PAGE_H = FW / "setup_page_html.h"
 BOOT_BANNER_CPP = FW / "boot_banner.cpp"
@@ -467,8 +468,10 @@ MDNS_SECURACV_PORT = MDNS_PORTS["securacv"][0]
 # MDNS.addServiceTxt("securacv", "tcp", "<key>", <value>); calls sit below
 # its MDNS.begin() in the same function, and the starts must agree. A value
 # that is one string literal at every start is listed as key=value, any
-# other as the key. A key may sit under a condition only as an #if/#else
-# pair that adds it in both branches (the board's model).
+# other as the key (the board's `model`, which every start adds as
+# build_config.h's HARDWARE_BOARD_NAME). A key may sit under a condition only
+# as an #if/#else pair that adds it in both branches (as `model` did, one
+# literal per target, until it read that macro; none does today).
 # mdns_sync_broker_txt(), which every start must call, adds the records
 # listed apart: they hold a value only while the MQTT link is up, on a build
 # with the gossip switch on. Refused, with the line: another service, a key
@@ -803,6 +806,20 @@ for needle in ("Waking up...", "This is your privacy witness device.",
                "Checking the hardware...", "The canary is singing. Everything is working."):
     must(BOOT_BANNER_CPP, needle, "boot banner")
 
+# The banner's Model and Board lines come from the hardware target the page
+# emulates, the XIAO ESP32-S3 Sense, as build_config.h names it (the
+# HARDWARE_BOARD_NAME beside HARDWARE_TARGET_NAME "XIAO_ESP32S3") and as
+# setup() composes them (bi.model, bi.board_name): never a name typed here.
+S3_BOARD_NAME = grab(
+    BUILD_CONFIG_H,
+    r'#define HARDWARE_TARGET_NAME "XIAO_ESP32S3"\n\s*#define HARDWARE_BOARD_NAME\s+"([^"]+)"',
+    "the S3 target's HARDWARE_BOARD_NAME")
+_model = re.search(r'bi\.model\s*=\s*"([^"]*)"\s*HARDWARE_BOARD_NAME\s*"([^"]*)";', read(INO))
+if not _model:
+    die("boot banner: bi.model is no longer composed from HARDWARE_BOARD_NAME in canary_wap.ino")
+MODEL_PREFIX, MODEL_SUFFIX = _model.groups()
+must(INO, "bi.board_name    = HARDWARE_BOARD_NAME;", "boot banner Board line")
+
 BANNER = [
     "              ,_,          Waking up...",
     "             (o.o)",
@@ -814,7 +831,7 @@ BANNER = [
     "    sees, so nobody can change the story later.",
     "",
     f"    Type        {DEVICE_TYPE}",
-    f"    Model       {BOARD_NAME_FULL or 'XIAO ESP32S3 Sense'}",
+    f"    Model       {MODEL_PREFIX}{S3_BOARD_NAME}{MODEL_SUFFIX}",
     "    ------------------------------------------------",
     "",
     "              ,_,",
@@ -822,7 +839,7 @@ BANNER = [
     "             (  >)",
     "              \" \"          What am I running on?",
     "    ------------------------------------------------",
-    "    Board       XIAO ESP32S3",
+    f"    Board       {S3_BOARD_NAME}",
     "    Chip        ESP32-S3 rev 0",
     "    CPU         240 MHz, 2 core(s)",
     "    Flash       8 MB",
@@ -1693,7 +1710,8 @@ out = {
         "device_type": DEVICE_TYPE,
         "tagline": wap_reg.get("tagline", ""),
         "model": BOARD_NAME_FULL or "Seeed XIAO ESP32-S3 Sense",
-        "board_short": "XIAO ESP32S3",
+        # The board as the firmware names it (banner, Improv, mDNS `model`).
+        "board_short": S3_BOARD_NAME,
         "board_id": BOARD_ID,
         "fw_version": FW_VERSION,
         "fw_train": FW_TRAIN,

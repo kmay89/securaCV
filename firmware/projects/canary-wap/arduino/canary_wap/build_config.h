@@ -333,10 +333,29 @@
   #define BUILD_PROFILE_NAME "FULL"
 #endif
 
+// The names a surface shows for this hardware target, from the target and
+// nowhere else: the boot banner's Model and Board, the serial system
+// monitor's title, and Improv's hardware string all said the S3's names on
+// the C3 build. HARDWARE_BOARD_NAME is spelled as the board's
+// firmware/boards/<id>/pins/pins.h BOARD_NAME (xiao-esp32s3-sense,
+// xiao-esp32c3; check_board_registry.py check 10 holds it there).
+// CANARY_FIGURE_HARDWARE is the board token GET /api/status (`hw`, inside its
+// `node_status` object) and the GET /api/fleet self row (`hw`) carry:
+// "board:seeed_xiao_esp32s3" is the key canary-local/devices/figures.json maps
+// to the WAP's figure. The C3 has no figure, so it defines none and both
+// surfaces omit it ("cannot say"). The mDNS `model` reads HARDWARE_BOARD_NAME
+// too; check_board_registry.py check 10 holds every one of these readers.
 #if defined(HARDWARE_XIAO_ESP32C3)
   #define HARDWARE_TARGET_NAME "XIAO_ESP32C3"
+  #define HARDWARE_BOARD_NAME  "XIAO ESP32-C3"
+  #define HARDWARE_CHIP_NAME   "ESP32-C3"
 #elif defined(HARDWARE_XIAO_ESP32S3)
   #define HARDWARE_TARGET_NAME "XIAO_ESP32S3"
+  #define HARDWARE_BOARD_NAME  "XIAO ESP32-S3 Sense"
+  #define HARDWARE_CHIP_NAME   "ESP32-S3"
+  #ifndef CANARY_FIGURE_HARDWARE
+    #define CANARY_FIGURE_HARDWARE "board:seeed_xiao_esp32s3"
+  #endif
 #endif
 
 // ════════════════════════════════════════════════════════════════════════════

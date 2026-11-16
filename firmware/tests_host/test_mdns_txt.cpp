@@ -63,6 +63,27 @@ static void a_broker_without_a_port_is_no_broker() {
   CHECK(!std::strcmp(value_of(kv, n, "device_id"), "canary") && !std::strcmp(value_of(kv, n, "role"), "witness"), "defaults");
 }
 
+// A build that names no board omits `model`, the way `hw` is omitted: absent
+// means "cannot say". It used to publish `model=` empty, and the flagship
+// filled the gap with "XIAO ESP32S3" on every board port (device-details §1.4).
+static void the_model_is_omitted_when_the_build_names_no_board() {
+  Fields f;
+  f.device_id = "canary_esp32cam"; f.host = "canary"; f.fw = "2.4.16";
+  f.dt = "canary"; f.role = ROLE_WITNESS; f.caps = CAP_STATUS | CAP_FLEET;
+  Kv kv[MAX_KEYS]; Scratch s;
+  const size_t n = enumerate(f, kv, MAX_KEYS, s);
+  CHECK(value_of(kv, n, "model") == nullptr, "no model key when the build names no board");
+  CHECK(n == 10, "10 keys without model/hw/tls: %zu", n);
+  const char* order[] = {"device_id", "name", "host", "fw", "dt", "role", "caps", "coord", "broker", "bport"};
+  for (size_t i = 0; i < n && i < 10; i++) CHECK(!std::strcmp(kv[i].key, order[i]), "key %zu is %s", i, kv[i].key);
+  f.model = "";
+  CHECK(value_of(kv, enumerate(f, kv, MAX_KEYS, s), "model") == nullptr, "an empty model is no model");
+  f.model = "AI-Thinker ESP32-CAM";
+  const size_t m = enumerate(f, kv, MAX_KEYS, s);
+  CHECK(m == 11 && !std::strcmp(kv[4].key, "model") && !std::strcmp(kv[4].value, "AI-Thinker ESP32-CAM"),
+        "a named board sits after fw: %zu", m);
+}
+
 static void caps_round_trip() {
   char buf[CAPS_CAP];
   CHECK(caps_string(0, buf, sizeof(buf)) == 0 && buf[0] == '\0', "no caps, empty word list");
@@ -99,6 +120,7 @@ static void the_constants() {
 int main() {
   the_canonical_order_and_the_omits();
   a_broker_without_a_port_is_no_broker();
+  the_model_is_omitted_when_the_build_names_no_board();
   caps_round_trip();
   host_labels();
   the_constants();

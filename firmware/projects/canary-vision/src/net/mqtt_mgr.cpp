@@ -421,10 +421,13 @@ void publish_state_retained(const Topics& topics, const StateSnapshot& s) {
 // the byte-identical envelopes are what lets HA's existing handlers and
 // TOFU pinning work for vision with zero integration changes.
 void publish_health_retained(const Topics& topics) {
+  // No `battery` value: this board reads no battery, so there is no charge
+  // to report, and `battery_present: false` says so. It used to send 100
+  // beside that, a charge nothing measured; Home Assistant reads the absent
+  // value as unknown (health_metrics.battery_percent).
   char msg[384];
   const int n = snprintf(msg, sizeof(msg),
            "{"
-           "\"battery\":100,"
            "\"battery_present\":false,"
            "\"memory_free\":%lu,"
            "\"uptime\":%lu,"
