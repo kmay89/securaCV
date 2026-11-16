@@ -1,6 +1,41 @@
 # Changelog
 
 ## [Unreleased]
+### Device details: the design is on main, and each of its 24 privacy findings has a home, an open backlog item or the PR that fixed it (docs and one test)
+
+- **`docs/design/device_details.md` is the design for showing every chip,
+  radio and sensor fact a Canary can honestly report, in every app.** One
+  record per Canary (`securacv.canary.details/v1`) cut into small parts, one
+  vocabulary file to generate every copy from, privacy classes and tiers that
+  decide who sees each fact, and a plan of 22 PRs. Four of them merged before
+  the design did: PR 1 (#1970), PR 2 (#1891), PR 6 (#1971) and PR 7 (#1892);
+  #1961 built one slice of PR 3. The record, its routes and every Details
+  screen are still plan. The document was read against `0a06c14b` before it
+  landed, and nothing in it was checked on a device. `docs/README.md` indexes
+  it.
+- **Its privacy review's findings, P1 to P24, each have a home** (its §11).
+  Fourteen are filed as new open items in
+  `docs/audit/repo_todo_sweep_2026-09.md`: F375 to F377, F379 to F383, F389,
+  F390 and F393 to F396. Four are held by items already there, which now cite
+  their finding: F357 (a dated note, P4), F430 (P15), A132 (P14) and A133
+  (P12). Six were fixed before the design landed: P8 by #1887, P11 by #1892
+  (sweep F384), P13 and P24 by #1970, P18 by #1891, #1916 and #1961 (F391),
+  and P19 by #1891 (F392). #1970 also fixed part of P12 and P14; A133 and A132
+  hold the rest. Nothing is fixed here.
+- **The backlog no longer says the design is missing.** F430 is the identifier
+  lint with the rest of finding P15 (the `mac_address` slot in `boot_info_t`),
+  and it is `[code]`: the scope it waited on is the design's §10 item 3. HA62
+  and HA63 point at the vocabulary questions the design leaves open (§2.2).
+  F22's note says Home Assistant's redaction set has held `last_frame_age_ms`
+  since #1916.
+- **`scripts/tests/test_ledger_numbers.py` (new)** holds the backlog to one
+  heading per id, under every prefix; each §11 row to a home that exists, an
+  open backlog entry that cites the row back or `fixed in #N`; each backlog
+  entry that cites a finding to the row that names it; and the counts and
+  lists in §11's opening sentence and in the index line to the table. A
+  heading, a row, a list or a sentence it cannot read fails.
+- Docs and one test. No code, firmware or generated file changes.
+
 ### Honest names: what the Canaries, their pages and Home Assistant show comes from the build and the board, never one literal every build shares, and Home Assistant shows a battery nobody read as unknown (F398, HA60; device-details §1.4, PR 6, #1971)
 
 - **The flagship names its board, or no board.** The mDNS TXT `model` was
