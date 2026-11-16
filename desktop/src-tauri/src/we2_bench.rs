@@ -106,34 +106,36 @@ fn do_cmd(
 
 /// Pull the model card out of an `INFO?` reply: the data is a base64 JSON
 /// card, either bare or nested as `data.info` (both shapes exist in the
-/// field — the browser bench documents the same). Returns the card's name and
-/// whether it pins the `person` class (which is what earns "person" labels —
-/// honesty about an unknown model's classes, mirroring the browser).
-fn model_card(reply: &Value) -> (Option<String>, bool) {
+/// field — the browser bench documents the same). Returns whether a card is
+/// there and whether it lists the `person` class (which is what earns "person"
+/// labels — honesty about an unknown model's classes, mirroring the browser).
+/// The card's own text (its name, its description) is never returned: the
+/// module's stock catalog includes models that would name a capability this
+/// project refuses (docs/hardware/grove_vision_ai_v2_guide.md), and a card is
+/// the module's say-so, so it picks the label map and never names the model.
+/// A model is named only by the flash path, right after a write whose SHA-256
+/// matched the pinned release (we2.rs, app.js).
+fn model_card(reply: &Value) -> (bool, bool) {
     let raw = match reply.get("data") {
         Some(Value::String(s)) => Some(s.as_str()),
         Some(other) => other.get("info").and_then(Value::as_str),
         None => None,
     };
     let Some(raw) = raw else {
-        return (None, false);
+        return (false, false);
     };
     let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(raw) else {
-        return (None, false);
+        return (false, false);
     };
     let Ok(card) = serde_json::from_slice::<Value>(&bytes) else {
-        return (None, false);
+        return (false, false);
     };
-    let name = card
-        .get("name")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned);
-    let pinned = card
+    let person_class = card
         .get("classes")
         .and_then(Value::as_array)
         .map(|c| c.iter().any(|v| v.as_str() == Some("person")))
         .unwrap_or(false);
-    (name, pinned)
+    (true, person_class)
 }
 
 struct Pending {
@@ -230,8 +232,10 @@ fn bench_thread(
     let info = do_cmd(&mut port, "INFO?", Duration::from_millis(2000))
         .ok()
         .flatten();
-    let (model_name, pinned) = info.as_ref().map(model_card).unwrap_or((None, false));
-    emit(json!({ "kind": "id", "software": software, "model": model_name, "pinned": pinned }));
+    let (has_card, person_class) = info.as_ref().map(model_card).unwrap_or((false, false));
+    emit(
+        json!({ "kind": "id", "software": software, "has_card": has_card, "person_class": person_class }),
+    );
 
     // Continuous invoke, with frames (result_only=0). The stream arrives as
     // type-1 INVOKE events; a type-0 ack may or may not precede it depending
@@ -447,26 +451,52 @@ mod tests {
     fn model_card_reads_both_reply_shapes() {
         let card = json!({ "name": "Person Detection", "classes": ["person"] });
         for nested in [false, true] {
-            let (name, pinned) = model_card(&card_reply(card.clone(), nested));
-            assert_eq!(name.as_deref(), Some("Person Detection"));
-            assert!(pinned);
+            assert_eq!(model_card(&card_reply(card.clone(), nested)), (true, true));
         }
     }
 
     #[test]
-    fn model_card_without_person_class_is_not_pinned() {
+    fn model_card_without_person_class_lists_none() {
         let card = json!({ "name": "Traffic", "classes": ["car", "bus"] });
-        let (name, pinned) = model_card(&card_reply(card, false));
-        assert_eq!(name.as_deref(), Some("Traffic"));
-        assert!(!pinned);
+        assert_eq!(model_card(&card_reply(card, false)), (true, false));
+    }
+
+    #[test]
+    fn model_card_without_a_class_list_is_no_person_card() {
+        // Only a card that lists the person class earns "person" labels: not a
+        // card with no class list, nor one whose list is not a list, nor the
+        // card the browser writes after burning a file the person picked (no
+        // name, no classes: we2-core.js localModelInfoJson).
+        for card in [
+            json!({ "name": "Person Detection" }),
+            json!({ "name": "Person Detection", "classes": "person" }),
+            json!({ "name": "", "classes": [], "sha256": "ab".repeat(32) }),
+        ] {
+            assert_eq!(
+                model_card(&card_reply(card.clone(), false)),
+                (true, false),
+                "{card}"
+            );
+        }
+    }
+
+    #[test]
+    fn model_card_text_never_leaves_the_parser() {
+        // A card's name is the module's own text. Whatever it says, the
+        // bench's answer is the same two booleans: the name is not a field
+        // the bench can emit.
+        for name in ["Person Detection", "Some Other Model", ""] {
+            let card = json!({ "name": name, "classes": ["person"] });
+            assert_eq!(model_card(&card_reply(card, false)), (true, true));
+        }
     }
 
     #[test]
     fn model_card_tolerates_garbage() {
         assert_eq!(
             model_card(&json!({ "data": "not base64 !!!" })),
-            (None, false)
+            (false, false)
         );
-        assert_eq!(model_card(&json!({ "code": 0 })), (None, false));
+        assert_eq!(model_card(&json!({ "code": 0 })), (false, false));
     }
 }

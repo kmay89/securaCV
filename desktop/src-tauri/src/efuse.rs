@@ -30,8 +30,17 @@
 //! The field tables, bit offsets, and the three-state clean/touched/active
 //! semantics are a line-for-line port of intake.js, and the desktop-parity
 //! test pins the two against each other — one drifting field fails CI.
+//!
+//! In the same ROM session it reads what the About-this-board rows need from
+//! eFuse blocks 1 and 2 (package, wafer, in-package flash and PSRAM, the
+//! block version behind "factory calibration"), by FIELD: those fields share
+//! words with per-chip trims, so each word is reduced to its allowlisted
+//! fields the moment it arrives (`fields_of_word`) and never kept, returned
+//! or saved. The allowlist is intake.js CHIP_FUSE_FIELDS, pinned by the same
+//! parity test.
 
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
 
@@ -190,6 +199,120 @@ fn security_fields_for(chip: &str) -> Option<Vec<FieldDef>> {
     Some(table)
 }
 
+// ── eFuse blocks 1 and 2: what this chip is, by FIELD, never by word ─────────
+// Read offsets from espefuse 5.6.0's efuse/<chip>/mem_definition.py (the same
+// on the S3, C3 and C6): BLOCK1 at base + 0x044 (6 words), BLOCK2 at base +
+// 0x05C (8 words). Each allowed field is named with its block, word, bit and
+// width from espefuse's efuse_defs/<chip>.yaml — the same table as intake.js
+// CHIP_FUSE_FIELDS. What is never read: block 1 words 0-2 (the factory MAC
+// and pad config), block 2 words 0-3 (OPTIONAL_UNIQUE_ID) and 5-7 (the rest of
+// the ADC calibration), block 3, and on the C6 the whole of block 2.
+pub const EFUSE_BLOCK1_RD_OFFSET: u32 = 0x044;
+pub const EFUSE_BLOCK2_RD_OFFSET: u32 = 0x05c;
+
+pub struct AllowedField {
+    pub key: &'static str,
+    pub block: u32,
+    pub word: u32,
+    pub bit: u32,
+    pub width: u32,
+}
+
+const fn allowed(key: &'static str, block: u32, word: u32, bit: u32, width: u32) -> AllowedField {
+    AllowedField {
+        key,
+        block,
+        word,
+        bit,
+        width,
+    }
+}
+
+const ALLOWED_S3: &[AllowedField] = &[
+    allowed("WAFER_VERSION_MINOR_LO", 1, 3, 18, 3),
+    allowed("PKG_VERSION", 1, 3, 21, 3),
+    allowed("BLK_VERSION_MINOR", 1, 3, 24, 3),
+    allowed("FLASH_CAP", 1, 3, 27, 3),
+    allowed("FLASH_TEMP", 1, 3, 30, 2),
+    allowed("FLASH_VENDOR", 1, 4, 0, 3),
+    allowed("PSRAM_CAP", 1, 4, 3, 2),
+    allowed("PSRAM_TEMP", 1, 4, 5, 2),
+    allowed("PSRAM_VENDOR", 1, 4, 7, 2),
+    allowed("PSRAM_CAP_3", 1, 5, 19, 1),
+    allowed("WAFER_VERSION_MINOR_HI", 1, 5, 23, 1),
+    allowed("WAFER_VERSION_MAJOR", 1, 5, 24, 2),
+    allowed("BLK_VERSION_MAJOR", 2, 4, 0, 2),
+];
+
+const ALLOWED_C3: &[AllowedField] = &[
+    allowed("WAFER_VERSION_MINOR_LO", 1, 3, 18, 3),
+    allowed("PKG_VERSION", 1, 3, 21, 3),
+    allowed("BLK_VERSION_MINOR", 1, 3, 24, 3),
+    allowed("FLASH_CAP", 1, 3, 27, 3),
+    allowed("FLASH_TEMP", 1, 3, 30, 2),
+    allowed("FLASH_VENDOR", 1, 4, 0, 3),
+    allowed("WAFER_VERSION_MINOR_HI", 1, 5, 23, 1),
+    allowed("WAFER_VERSION_MAJOR", 1, 5, 24, 2),
+    allowed("BLK_VERSION_MAJOR", 2, 4, 0, 2),
+];
+
+const ALLOWED_C6: &[AllowedField] = &[
+    allowed("WAFER_VERSION_MINOR", 1, 3, 18, 4),
+    allowed("WAFER_VERSION_MAJOR", 1, 3, 22, 2),
+    allowed("PKG_VERSION", 1, 3, 24, 3),
+    allowed("BLK_VERSION_MINOR", 1, 3, 27, 3),
+    allowed("BLK_VERSION_MAJOR", 1, 3, 30, 2),
+    allowed("FLASH_CAP", 1, 4, 0, 3),
+    allowed("FLASH_TEMP", 1, 4, 3, 2),
+    allowed("FLASH_VENDOR", 1, 4, 5, 3),
+];
+
+pub fn allowed_fields(chip: &str) -> Option<&'static [AllowedField]> {
+    match chip {
+        "ESP32-S3" => Some(ALLOWED_S3),
+        "ESP32-C3" => Some(ALLOWED_C3),
+        "ESP32-C6" => Some(ALLOWED_C6),
+        _ => None,
+    }
+}
+
+/// The (block, word) pairs a chip's allowlist touches, in read order — the
+/// only block-1/2 words the reader ever asks the ROM for.
+pub fn chip_fuse_words(chip: &str) -> Vec<(u32, u32)> {
+    let mut words: Vec<(u32, u32)> = allowed_fields(chip)
+        .unwrap_or(&[])
+        .iter()
+        .map(|f| (f.block, f.word))
+        .collect();
+    words.sort_unstable();
+    words.dedup();
+    words
+}
+
+pub fn chip_fuse_addr(efuse_base: u32, block: u32, word: u32) -> u32 {
+    let offset = if block == 1 {
+        EFUSE_BLOCK1_RD_OFFSET
+    } else {
+        EFUSE_BLOCK2_RD_OFFSET
+    };
+    efuse_base + offset + 4 * word
+}
+
+/// Allowlisted field values by field name — the only shape a block-1/2 read
+/// ever leaves the reader in.
+pub type ChipFields = BTreeMap<&'static str, u32>;
+
+/// The allowlisted fields of ONE word, and nothing else from it. The reader
+/// passes each word straight in and keeps only what comes back.
+pub fn fields_of_word(chip: &str, block: u32, word: u32, value: u32) -> Vec<(&'static str, u32)> {
+    allowed_fields(chip)
+        .unwrap_or(&[])
+        .iter()
+        .filter(|f| f.block == block && f.word == word)
+        .map(|f| (f.key, (value >> f.bit) & ((1u32 << f.width) - 1)))
+        .collect()
+}
+
 // ── the verdict, shaped like intake.js readSecurityEfuses ───────────────────
 
 #[derive(Serialize, Clone)]
@@ -207,10 +330,17 @@ pub struct EfuseFieldState {
 pub struct EfuseScan {
     pub supported: bool,
     pub chip: String,
+    /// Block 0 only — it holds no per-chip value. No block 1 or 2 word is
+    /// ever put here or anywhere else.
     pub words: Vec<u32>,
     pub fields: Vec<EfuseFieldState>,
     pub burned: Vec<EfuseFieldState>,
     pub virgin: Option<bool>,
+    /// The allowlisted block-1/2 FIELD values (never words) for the About rows,
+    /// decoded by the frontend exactly as intake.js decodeChipFuses does.
+    /// `None` when the chip has no allowlist or those reads did not finish
+    /// (the security verdict above stands either way).
+    pub chip_fields: Option<ChipFields>,
 }
 
 // Decode block 0 into a verdict — three states, not two, exactly as the
@@ -226,6 +356,7 @@ pub fn decode_security_efuses(chip: &str, words: &[u32]) -> EfuseScan {
             fields: Vec::new(),
             burned: Vec::new(),
             virgin: None,
+            chip_fields: None,
         };
     };
     let fields: Vec<EfuseFieldState> = table
@@ -267,6 +398,7 @@ pub fn decode_security_efuses(chip: &str, words: &[u32]) -> EfuseScan {
         fields,
         burned,
         virgin,
+        chip_fields: None,
     }
 }
 
@@ -531,18 +663,21 @@ fn sync(port: &mut Box<dyn serialport::SerialPort>) -> bool {
     false
 }
 
-/// Read the six block-0 words: reset into the ROM with the sequence the port
-/// calls for (see `read_block0_in_rom`), SYNC, six READ_REGs. Read-only at
-/// every step — the two commands used cannot write anything. However it
-/// ends, the lines are parked and no reset follows.
-fn read_block0<L: RomLink>(
+/// Read the six block-0 words, and the chip's allowlisted block-1/2 fields:
+/// reset into the ROM with the sequence the port calls for (see
+/// `read_block0_in_rom`), SYNC, READ_REGs. Read-only at every step — the two
+/// commands used cannot write anything. However it ends, the lines are parked
+/// and no reset follows.
+fn read_fuses<L: RomLink>(
     link: &mut L,
     efuse_base: u32,
+    chip: &str,
     usb_serial_jtag: bool,
-) -> Result<Vec<u32>, String> {
-    let words = read_block0_in_rom(link, efuse_base, usb_serial_jtag);
+) -> Result<(Vec<u32>, Option<ChipFields>), String> {
+    let read = read_block0_in_rom(link, efuse_base, usb_serial_jtag)
+        .map(|words| (words, read_chip_fields(link, efuse_base, chip)));
     park(link);
-    words
+    read
 }
 
 // Two attempts. A chip's own USB-Serial/JTAG port gets its own sequence
@@ -589,6 +724,26 @@ fn read_block0_in_rom<L: RomLink>(
     Ok(words)
 }
 
+// The About rows' fields, read in the same ROM session once block 0 is in.
+// Each word is read inside the expression that reduces it to its allowlisted
+// fields, so this function never holds it under a name; a word that does not
+// answer leaves the fields out (the rows say "Not checked") without touching
+// the security verdict, which already has its six words. A chip with no
+// allowlist reads nothing more.
+fn read_chip_fields<L: RomLink>(link: &mut L, efuse_base: u32, chip: &str) -> Option<ChipFields> {
+    allowed_fields(chip)?;
+    let mut got = ChipFields::new();
+    for (block, word) in chip_fuse_words(chip) {
+        got.extend(fields_of_word(
+            chip,
+            block,
+            word,
+            link.read_reg(chip_fuse_addr(efuse_base, block, word))?,
+        ));
+    }
+    Some(got)
+}
+
 // The chip's own USB-Serial/JTAG peripheral, which the ROM's download mode
 // and an hwcdc firmware both present: Espressif's VID, PID 0x1001.
 const ESPRESSIF_USB_VID: u16 = 0x303A;
@@ -606,9 +761,14 @@ fn is_usb_serial_jtag(port_name: &str) -> bool {
     })
 }
 
-/// Read the six block-0 words off a real board. The port is dropped (and
-/// closed) only after `read_block0` has parked its lines.
-fn read_block0_words(port_name: &str, efuse_base: u32) -> Result<Vec<u32>, String> {
+/// Read the six block-0 words and the chip's allowlisted block-1/2 fields off
+/// a real board. The port is dropped (and closed) only after `read_fuses` has
+/// parked its lines.
+fn read_fuses_from_port(
+    port_name: &str,
+    efuse_base: u32,
+    chip: &str,
+) -> Result<(Vec<u32>, Option<ChipFields>), String> {
     let usb_serial_jtag = is_usb_serial_jtag(port_name);
     let port = serialport::new(port_name, 115_200)
         .timeout(Duration::from_millis(100))
@@ -618,7 +778,7 @@ fn read_block0_words(port_name: &str, efuse_base: u32) -> Result<Vec<u32>, Strin
         port,
         dtr_state: false,
     };
-    read_block0(&mut link, efuse_base, usb_serial_jtag)
+    read_fuses(&mut link, efuse_base, chip, usb_serial_jtag)
 }
 
 /// The Tauri command: read and decode the chip's security fuses. `chip` is
@@ -631,8 +791,10 @@ pub async fn read_security_efuses(port: String, chip: String) -> Result<EfuseSca
         return Ok(decode_security_efuses(&chip, &[]));
     };
     tauri::async_runtime::spawn_blocking(move || {
-        let words = read_block0_words(&port, base)?;
-        Ok(decode_security_efuses(&chip, &words))
+        let (words, chip_fields) = read_fuses_from_port(&port, base, &chip)?;
+        let mut scan = decode_security_efuses(&chip, &words);
+        scan.chip_fields = chip_fields;
+        Ok(scan)
     })
     .await
     .map_err(|e| format!("fuse-read worker failed: {e}"))?
@@ -712,6 +874,65 @@ mod tests {
         assert_eq!(scan.virgin, None);
         assert!(efuse_base("ESP32").is_none());
         assert!(efuse_base("ESP32-S3").is_some());
+    }
+
+    #[test]
+    fn the_chip_field_allowlist_stays_inside_the_words_it_may_read() {
+        for chip in ["ESP32-S3", "ESP32-C3", "ESP32-C6"] {
+            for f in allowed_fields(chip).unwrap() {
+                assert!(f.bit + f.width <= 32, "{chip} {} straddles its word", f.key);
+                // Block 1 words 0-2 hold the factory MAC and pad config;
+                // block 2 words 0-3 the unique id, 5-7 the ADC calibration.
+                assert!(
+                    (f.block == 1 && (3..=5).contains(&f.word)) || (f.block == 2 && f.word == 4),
+                    "{chip} {} reads a word the allowlist excludes",
+                    f.key
+                );
+            }
+        }
+        assert!(
+            chip_fuse_words("ESP32-C6").iter().all(|(b, _)| *b == 1),
+            "the C6 reads nothing from block 2"
+        );
+        assert_eq!(
+            chip_fuse_words("ESP32-S3"),
+            vec![(1, 3), (1, 4), (1, 5), (2, 4)]
+        );
+        assert!(chip_fuse_words("ESP32").is_empty());
+        assert_eq!(chip_fuse_addr(0x6000_7000, 1, 3), 0x6000_7050);
+        assert_eq!(chip_fuse_addr(0x6000_7000, 2, 4), 0x6000_706c);
+    }
+
+    #[test]
+    fn a_word_full_of_trims_decodes_exactly_like_a_word_without_them() {
+        // Every bit outside the allowlist set, against every such bit clear:
+        // the fields that come out must be identical, per chip, so no trim or
+        // calibration value can reach anything the reader returns.
+        for chip in ["ESP32-S3", "ESP32-C3", "ESP32-C6"] {
+            let table = allowed_fields(chip).unwrap();
+            for (block, word) in chip_fuse_words(chip) {
+                let mut allowed_mask = 0u32;
+                let mut pattern = 0u32;
+                for (i, f) in table
+                    .iter()
+                    .filter(|f| f.block == block && f.word == word)
+                    .enumerate()
+                {
+                    let m = ((1u64 << f.width) - 1) as u32;
+                    allowed_mask |= m << f.bit;
+                    // A distinct nonzero value per field, so a field read from
+                    // the wrong bits would also differ.
+                    pattern |= (((i as u32) + 1) & m) << f.bit;
+                }
+                let with_trims = pattern | !allowed_mask;
+                let without = pattern;
+                assert_eq!(
+                    fields_of_word(chip, block, word, with_trims),
+                    fields_of_word(chip, block, word, without),
+                    "{chip} block {block} word {word}: a masked bit reached a field"
+                );
+            }
+        }
     }
 
     #[test]
@@ -869,27 +1090,77 @@ mod tests {
         assert_eq!((last('D'), last('R')), (false, false));
     }
 
+    // The S3's About fields as the scripted board answers them: each READ_REG
+    // answers its own address, so each word is that address.
+    fn s3_fields_from_addresses() -> ChipFields {
+        let mut want = ChipFields::new();
+        for (block, word) in chip_fuse_words("ESP32-S3") {
+            let addr = chip_fuse_addr(0x6000_7000, block, word);
+            want.extend(fields_of_word("ESP32-S3", block, word, addr));
+        }
+        want
+    }
+
     #[test]
     fn a_successful_read_leaves_the_chip_in_the_rom() {
+        let about = chip_fuse_words("ESP32-S3").len();
         let mut b = Bench {
             syncs: vec![true],
-            reads: EFUSE_BLOCK0_WORDS,
+            reads: EFUSE_BLOCK0_WORDS + about,
             ..Bench::default()
         };
-        let words = read_block0(&mut b, 0x6000_7000, false).unwrap();
+        let (words, fields) = read_fuses(&mut b, 0x6000_7000, "ESP32-S3", false).unwrap();
         assert_eq!(words, block0_addrs(0x6000_7000));
+        assert_eq!(fields, Some(s3_fields_from_addresses()));
         let mut want = lines_of(classic_reset);
         want.push(('S', true));
         want.extend([('G', true); EFUSE_BLOCK0_WORDS]);
+        want.extend(vec![('G', true); about]);
         want.extend([('R', false), ('D', false)]);
         assert_eq!(b.log, want);
         assert_left_in_rom(&b.log);
     }
 
     #[test]
+    fn a_rom_that_goes_quiet_in_the_about_reads_keeps_the_verdict_and_stays_in_the_rom() {
+        // Block 0 answers, then the first About word: the second goes quiet.
+        // The six words still reach the verdict, the About fields are left out
+        // whole (no half set), nothing more is asked, and the park follows.
+        let mut b = Bench {
+            syncs: vec![true],
+            reads: EFUSE_BLOCK0_WORDS + 1,
+            ..Bench::default()
+        };
+        let (words, fields) = read_fuses(&mut b, 0x6000_7000, "ESP32-S3", false).unwrap();
+        assert_eq!(words, block0_addrs(0x6000_7000));
+        assert_eq!(fields, None);
+        let mut want = lines_of(classic_reset);
+        want.push(('S', true));
+        want.extend([('G', true); EFUSE_BLOCK0_WORDS]);
+        want.extend([('G', true), ('G', false)]);
+        want.extend([('R', false), ('D', false)]);
+        assert_eq!(b.log, want);
+        assert_left_in_rom(&b.log);
+
+        // A chip with no About allowlist asks for nothing past block 0.
+        let mut b = Bench {
+            syncs: vec![true],
+            reads: EFUSE_BLOCK0_WORDS + 4,
+            ..Bench::default()
+        };
+        let (_, fields) = read_fuses(&mut b, 0x6000_7000, "ESP32", false).unwrap();
+        assert_eq!(fields, None);
+        assert_eq!(
+            b.log.iter().filter(|e| e.0 == 'G').count(),
+            EFUSE_BLOCK0_WORDS
+        );
+        assert_left_in_rom(&b.log);
+    }
+
+    #[test]
     fn a_rom_that_never_syncs_is_not_reset_into_its_firmware() {
         let mut b = Bench::default();
-        let err = read_block0(&mut b, 0x6000_7000, false).unwrap_err();
+        let err = read_fuses(&mut b, 0x6000_7000, "ESP32-S3", false).unwrap_err();
         assert!(err.contains("did NOT run"), "{err}");
         let mut want = lines_of(classic_reset);
         want.push(('S', false));
@@ -907,7 +1178,7 @@ mod tests {
             reads: 2,
             ..Bench::default()
         };
-        let err = read_block0(&mut b, 0x6000_7000, false).unwrap_err();
+        let err = read_fuses(&mut b, 0x6000_7000, "ESP32-S3", false).unwrap_err();
         assert!(err.contains("0x60007034"), "{err}");
         let mut want = lines_of(classic_reset);
         want.push(('S', false));
@@ -944,15 +1215,18 @@ mod tests {
         // The hazard: classic's first moves are exactly that early reset.
         assert!(resets_before_io0(&lines_of(classic_reset)));
 
+        let about = chip_fuse_words("ESP32-S3").len();
         let mut b = Bench {
             syncs: vec![true],
-            reads: EFUSE_BLOCK0_WORDS,
+            reads: EFUSE_BLOCK0_WORDS + about,
             ..Bench::default()
         };
-        read_block0(&mut b, 0x6000_7000, true).unwrap();
+        let (_, fields) = read_fuses(&mut b, 0x6000_7000, "ESP32-S3", true).unwrap();
+        assert_eq!(fields, Some(s3_fields_from_addresses()));
         let mut want = lines_of(usb_jtag_serial_reset);
         want.push(('S', true));
         want.extend([('G', true); EFUSE_BLOCK0_WORDS]);
+        want.extend(vec![('G', true); about]);
         want.extend([('R', false), ('D', false)]);
         assert_eq!(b.log, want);
         assert!(!resets_before_io0(&b.log));
@@ -960,7 +1234,7 @@ mod tests {
 
         // A ROM that never answers gets the same sequence again, then the park.
         let mut b = Bench::default();
-        read_block0(&mut b, 0x6000_7000, true).unwrap_err();
+        read_fuses(&mut b, 0x6000_7000, "ESP32-S3", true).unwrap_err();
         let mut want = lines_of(usb_jtag_serial_reset);
         want.push(('S', false));
         want.extend(lines_of(usb_jtag_serial_reset));
