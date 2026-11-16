@@ -927,10 +927,10 @@ static httpd_handle_t g_https_server = nullptr;
 static bool g_tls_enabled = false;
 // The certificate the next boot will RELOAD: loaded from NVS, or generated
 // and stored with the store confirmed. A cert generated this boot whose
-// store failed is this boot's alone — its fingerprint must never be handed
-// out as a pin (the setup door's receipt is kept for the life of the
-// pairing, and the next boot would mint a different cert; see
-// tls_after_setup()).
+// store failed is not this unit's certificate: init_tls_cert() frees it and
+// answers false, so it is neither served nor pinned (the setup door's
+// receipt is kept for the life of the pairing, and no later boot would
+// serve that cert; see tls_after_setup()).
 static bool g_tls_cert_persisted = false;
 
 // TLS certificate (DER-encoded, stored in NVS)
@@ -952,9 +952,11 @@ static char     g_tls_cert_fp_hex[65] = {0};  // SHA256 of cert for pinning
 // this is the scheme's fact. False when an HTTPS start failed in steady
 // state (that unit is not TLS later either), in a build with no HTTPS
 // server at all, and when the certificate did NOT persist to NVS
-// (g_tls_cert_persisted): a cert generated this boot whose store failed
-// is replaced on the next boot, so a pin on it would reject the WAP for
-// the life of the pairing — better an unpinned address than a wrong pin.
+// (g_tls_cert_persisted): no later boot serves a cert generated this boot
+// whose store failed, so a pin on it would reject the WAP for the life of
+// the pairing — better an unpinned address than a wrong pin. This is the
+// one question every answer that hands out a pin asks: the setup door's
+// claim, the receipt and the pairing QR.
 static inline bool tls_after_setup() {
 #if SECURACV_HAS_HTTPS_SERVER
   if (!g_tls_cert_persisted || g_tls_cert_fp_hex[0] == '\0') return false;
@@ -2588,14 +2590,20 @@ static bool init_tls_cert() {
   if (!tls_compute_cert_fingerprint()) return tls_refuse_unpinned_cert();
 
   // Store in NVS for reuse across reboots. Only a confirmed store makes
-  // this cert the one the next boot reloads; a failed store leaves it this
-  // boot's alone (g_tls_cert_persisted false), so nothing pins it.
-  if (tls_store_to_nvs()) {
-    g_tls_cert_persisted = true;
-  } else {
+  // this cert the one the next boot reloads. One whose store failed is not
+  // served either: freed like a certificate whose pin did not compute, with
+  // no pin left to hand out, and false, so setup() leaves HTTPS off this
+  // boot. Before, it answered true: HTTPS ran on it for this boot, and the
+  // pairing QR and the bearer and BOOT-tap receipt handed out its pin,
+  // which no later boot's certificate matches.
+  if (!tls_store_to_nvs()) {
+    tls_free_buffers();
     g_tls_cert_persisted = false;
-    Serial.println("[TLS] WARNING: Failed to store cert in NVS — this boot's cert only; no pin will be handed out");
+    g_tls_cert_fp_hex[0] = '\0';
+    Serial.println("[TLS] Certificate not stored in NVS - HTTPS off this boot, no pin handed out");
+    return false;
   }
+  g_tls_cert_persisted = true;
 
   Serial.printf("[TLS] CN: securacv-%s\n", g_device.fingerprint_hex);
   Serial.printf("[TLS] Cert fingerprint: %.16s...\n", g_tls_cert_fp_hex);
@@ -4145,8 +4153,10 @@ static esp_err_t send_gzip_html(httpd_req_t* req, const uint8_t* gz, size_t gz_l
 // browser: SameSite=Strict compares sites, and only a browser that counts
 // the scheme in the site (Chromium does) keeps the session cookie off its
 // requests; in one that does not, it can still write blind with the owner's
-// session (any write a session may make, of which since F361 only the
-// firmware install restarts the unit, and only into a newer signed image).
+// session (any write a session may make, which since 2.4.20 no longer
+// includes the firmware install or the update settings; the one restart
+// left to a session is an install sent from a broker it re-pointed the MQTT
+// bridge at, and only into a newer signed image).
 // F15 narrows nothing for a page served over https at that name whose
 // certificate warning the owner accepted, nor for any page during the
 // first-boot setup or on a unit whose HTTPS start failed.
@@ -7364,6 +7374,35 @@ static void wifi_scan_cache_fill(int n, uint32_t now) {
   g_wifi_scan_in_progress = false;
 }
 
+// A sweep and the link state machine (provisioning_logic.h has the rule).
+// Starting a sweep marks the state SCANNING only while no home link is
+// held: a joined unit stays CONNECTED, so wifi_check_connection() keeps
+// watching its link whether or not the asker comes back to harvest. A sweep
+// that did take the state hands it back from the live link; a station first
+// seen up here starts its AP grace window here. Both callers hold the cache
+// lock.
+static void wifi_scan_mark_state() {
+  if (provisioning_logic::scan_takes_link_state(g_wifi_status.state == WIFI_PROV_CONNECTED)) {
+    g_wifi_status.state = WIFI_PROV_SCANNING;
+  }
+}
+
+static void wifi_scan_restore_state() {
+  if (g_wifi_status.state != WIFI_PROV_SCANNING) return;
+  switch (provisioning_logic::state_after_scan(WiFi.isConnected(), g_wifi_creds.configured)) {
+    case provisioning_logic::AfterScan::Connected:
+      g_wifi_status.state = WIFI_PROV_CONNECTED;
+      g_wifi_status.connected_since_ms = millis();
+      break;
+    case provisioning_logic::AfterScan::Idle:
+      g_wifi_status.state = WIFI_PROV_IDLE;
+      break;
+    case provisioning_logic::AfterScan::ApOnly:
+      g_wifi_status.state = WIFI_PROV_AP_ONLY;
+      break;
+  }
+}
+
 // The cache as JSON, composed by the caller UNDER scan_cache_lock (the
 // cache is the loop task's too) and sent by the caller AFTER giving it: a
 // socket send can block on a slow client, and the loop task's door must
@@ -7518,7 +7557,7 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
   if (scanResult == WIFI_SCAN_FAILED || (!g_wifi_scan_in_progress && scanResult < 0)) {
     // No scan running - start async scan (non-blocking)
     g_wifi_scan_in_progress = true;
-    g_wifi_status.state = WIFI_PROV_SCANNING;
+    wifi_scan_mark_state();
     WiFi.scanNetworks(true, false, false, 300);  // async=true
     scan_cache_give();
 
@@ -7531,9 +7570,7 @@ static esp_err_t handle_wifi_scan(httpd_req_t* req) {
   }
 
   // Scan complete — refill the cache and serve from it.
-  if (g_wifi_status.state == WIFI_PROV_SCANNING) {
-    g_wifi_status.state = g_wifi_creds.configured ? WIFI_PROV_IDLE : WIFI_PROV_AP_ONLY;
-  }
+  wifi_scan_restore_state();
   wifi_scan_cache_fill(scanResult, now);
   const String response = scan_cache_json(false, now);
   scan_cache_give();
@@ -8229,10 +8266,10 @@ int ble_improv_scan_request() {
   if (!fresh && !g_wifi_scan_in_progress && rc != WIFI_SCAN_RUNNING) {
     if (rc >= 0) WiFi.scanDelete();   // a finished sweep nobody harvested: swept again, fresh
     g_wifi_scan_in_progress = true;
-    g_wifi_status.state = WIFI_PROV_SCANNING;
+    wifi_scan_mark_state();
     if (WiFi.scanNetworks(true, false, false, 300) != WIFI_SCAN_RUNNING) {
       g_wifi_scan_in_progress = false;
-      g_wifi_status.state = g_wifi_creds.configured ? WIFI_PROV_IDLE : WIFI_PROV_AP_ONLY;
+      wifi_scan_restore_state();
       ok = -1;
     }
   }
@@ -8255,18 +8292,14 @@ int ble_improv_scan_poll() {
     verdict = 0;
   } else {
     if (rc >= 0) {
-      if (g_wifi_status.state == WIFI_PROV_SCANNING) {
-        g_wifi_status.state = g_wifi_creds.configured ? WIFI_PROV_IDLE : WIFI_PROV_AP_ONLY;
-      }
+      wifi_scan_restore_state();
       wifi_scan_cache_fill(rc, now);
     } else if (g_wifi_scan_in_progress) {
       // Gone without a result: the radio refused, or the wizard's handler
       // (or a join's WiFi.begin) harvested or dropped it first — the cache
       // below is the answer either way.
       g_wifi_scan_in_progress = false;
-      if (g_wifi_status.state == WIFI_PROV_SCANNING) {
-        g_wifi_status.state = g_wifi_creds.configured ? WIFI_PROV_IDLE : WIFI_PROV_AP_ONLY;
-      }
+      wifi_scan_restore_state();
     }
     verdict = provisioning_logic::scan_cache_fresh(now, g_scan_cache_at_ms,
                                                    g_scan_cache_count > 0,
@@ -8785,9 +8818,12 @@ static esp_err_t handle_pairing_qr(httpd_req_t* req) {
   // 35-char token) is ~250 bytes: within QR version 12 at ECC M (287),
   // which send_qr_svg allows; the encoder still picks the smallest version
   // that fits, so a plain-http device's QR is as small as before.
+  // The pin, and the https address it belongs to, under the one rule every
+  // pin is handed out by (tls_after_setup()): the certificate is the one
+  // the next boot reloads.
   char payload[320];
   int n;
-  if (g_tls_enabled && g_tls_cert_fp_hex[0] != '\0') {
+  if (tls_after_setup()) {
     n = snprintf(payload, sizeof(payload),
       "{\"device_id\":\"%s\",\"base_url\":\"https://%s\",\"token\":\"%s\","
       "\"tls_cert_fp\":\"%s\"}",
@@ -9594,10 +9630,13 @@ static esp_err_t send_provisioning_receipt(httpd_req_t* req, receipt_authority::
   // after setup (tls_after_setup()). The door joins inside the first-boot
   // wizard, where the HTTPS server is held off; the WAP reboots into https
   // a short runway after this answer leaves (loop(),
-  // g_improv_claim_spent_at_ms). The bearer and BOOT-tap answers name the
-  // servers up now.
-  const bool tls = (grant == receipt_authority::Grant::SETUP_DOOR_CLAIM) ? tls_after_setup()
-                                                                      : g_tls_enabled;
+  // g_improv_claim_spent_at_ms). A bearer or BOOT-tap answer made during
+  // setup is kept the same way (the wizard's recovery kit), so it names the
+  // same steady-state address and pin as the claim; after setup those two
+  // name the servers up now.
+  const bool tls = (grant == receipt_authority::Grant::SETUP_DOOR_CLAIM || setup_wizard::is_active())
+                       ? tls_after_setup()
+                       : g_tls_enabled;
   in.tls_enabled = tls;
   in.ap_ip       = authority;
   in.token       = g_device.api_token_str;
@@ -12918,6 +12957,14 @@ static bool ota_can_install(char* reason, size_t reason_len) {
     return false;
   }
 #endif
+#if FEATURE_USB_EVIDENCE_DRIVE
+  // The USB drop-zone installs into the same slot; it refuses while this
+  // engine is busy (usb_evidence_drive.cpp), and this defers while it is open.
+  if (usb_evidence_drive::mode() == usb_evidence_drive::Mode::UPDATE) {
+    snprintf(reason, reason_len, "a USB update drop-zone is open");
+    return false;
+  }
+#endif
 #if FEATURE_POWER_MONITOR
   if (__atomic_load_n(&g_ota_battery_low, __ATOMIC_RELAXED)) {
     snprintf(reason, reason_len, "the battery is low and not charging; plug it in to update");
@@ -12982,6 +13029,20 @@ static void ota_publish_update_state() {
       char summary[161];  // keep the whole payload inside csi_mqtt's 512-byte cache
       strncpy(summary, m->release_notes, sizeof(summary) - 1);
       summary[sizeof(summary) - 1] = '\0';
+      // A cut notes string ends between two characters: a multibyte
+      // character the cut split is dropped whole, or the retained payload is
+      // not UTF-8 and Home Assistant refuses it.
+      size_t n = strlen(summary);
+      if (n < strlen(m->release_notes)) {
+        size_t lead = n;
+        while (lead > 0 && ((uint8_t)summary[lead - 1] & 0xC0) == 0x80) lead--;
+        if (lead > 0 && ((uint8_t)summary[lead - 1] & 0xC0) == 0xC0) {
+          const uint8_t b = (uint8_t)summary[lead - 1];
+          const size_t need = (b >= 0xF0) ? 4 : (b >= 0xE0) ? 3 : 2;
+          if (n - (lead - 1) < need) n = lead - 1;
+        }
+        summary[n] = '\0';
+      }
       doc["release_summary"] = summary;
     }
   } else {
@@ -13064,8 +13125,10 @@ static esp_err_t handle_ota_check(httpd_req_t* req) {
 
 // POST /api/ota/install — full signed install pipeline (download, verify
 // SHA-256 + Ed25519, flash inactive slot, reboot, self-test or roll back).
+// The bearer alone, as the reboot routes (F361): the install restarts the
+// unit, and a session is minted for any host that loads the landing page.
 static esp_err_t handle_ota_install(httpd_req_t* req) {
-  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
   g_health.http_requests++;
 
   log_health(SCV_LOG_NOTICE, SCV_CAT_SYSTEM,
@@ -13093,8 +13156,12 @@ static esp_err_t handle_ota_install(httpd_req_t* req) {
 // stored. Before, local_http_allowed was stored and THEN the URL refused, so
 // a refused request still changed a setting; and a field of the wrong type
 // was skipped without a word.
+//
+// The bearer alone: these settings choose the server every later update is
+// fetched from and whether the unit installs by itself, so a session the
+// landing page mints for any LAN host does not stand in for the token.
 static esp_err_t handle_ota_config(httpd_req_t* req) {
-  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;
+  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;
   g_health.http_requests++;
 
   char body[512];

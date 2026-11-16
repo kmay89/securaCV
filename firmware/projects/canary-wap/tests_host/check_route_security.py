@@ -44,6 +44,12 @@ to a fixed point, every function that calls one). What it reads:
     for the rest of the save stays: the dashboard's.
   - Each bearer gate is defined once, in its BEARER_GATES home, and names no
     any-session gate.
+  - The writes whose answer carries no secret but which a session must not
+    make (BEARER_ONLY_WRITES: the firmware install and the update settings,
+    POST /api/ota/install and /api/ota/config): each handler is a registered
+    route's, is defined once, opens with the bearer refusal as its first
+    statement, `if (!api_auth_check_bearer(req, g_device.api_token_str))
+    return ESP_OK;`, and names no any-session gate anywhere in its body.
   - Every bearer compare is accounted (sweep F339): the raw compares
     (RAW_COMPARES: api_auth_bearer_valid(), constant_time_compare()) are
     called only in RAW_COMPARE_HOME, api_auth.h, under its accounted grants.
@@ -94,7 +100,7 @@ an object or a pointer) passes it. Whether a gate decides right, whether the
 receipt's tap and claim are right, and what the move gate counts as a move
 are the host suites' (test_receipt_grant, test_receipt_authority,
 test_mqtt_reinit, test_session_cookie). Its fixtures (_assert_secret_rules)
-run first, every run: a clean sketch that passes and fifty-seven plants
+run first, every run: a clean sketch that passes and sixty plants
 that each fail it, through the same text_rule_problems() main() runs over
 the tree, so a rule dropped from that list fails the plants that need it.
 
@@ -119,7 +125,9 @@ AUTH_MARKERS = (
                                   # F334/F345: connect and ap-only after
                                   # setup, disconnect and forget always;
                                   # F361: the reboots; F335: the vault key;
-                                  # F346: the two pair confirms)
+                                  # F346: the two pair confirms; the
+                                  # firmware install and the update
+                                  # settings, BEARER_ONLY_WRITES)
     "api_auth_check_or_query(",   # + ?token= for <img>/stream tags
     "api_auth_check_optional(",   # the cookie or the accounted grant, nothing
                                   # sent (caller enforces)
@@ -220,7 +228,8 @@ BEARER_GATES = {
     # lockout + 401/403/429, for the routes api_auth.h names: the pairing
     # QR, the vault key, the two pair confirms, the four network moves
     # (Connect and AP-only after setup) and the two reboots (the receipt on
-    # SECURITY_MODEL.md's list takes api_auth_bearer_grant instead)
+    # SECURITY_MODEL.md's list takes api_auth_bearer_grant instead); and the
+    # firmware install and the update settings (BEARER_ONLY_WRITES)
     "api_auth_check_bearer": "api_auth.h",
 }
 # The raw compares (sweep F339): each compares a presented token against the
@@ -248,6 +257,18 @@ ANY_SESSION_GATES = (
     "pair_token_valid",         # the pair token the landing mints for any caller
     "pair_token_consume",
 )
+# The writes a landing session must not make though their answer carries no
+# secret: handler -> the route and why. bearer_only_write_problems() holds
+# each to the bearer refusal as its first statement and to no any-session
+# gate in its body.
+BEARER_ONLY_WRITES = {
+    "handle_ota_install": "POST /api/ota/install: the install restarts the unit, as the "
+        "two reboot routes do (F361)",
+    "handle_ota_config": "POST /api/ota/config: it chooses the server every later update "
+        "is fetched from and whether the unit installs by itself",
+}
+# The refusal each opens with, whitespace folded.
+BEARER_REFUSAL = "if(!api_auth_check_bearer(req,g_device.api_token_str))returnESP_OK;"
 
 # The secrets, as canary_wap.ino reads them: a member of that name on any
 # object, or the pin's global. An emptiness test of the pin is not a read.
@@ -838,6 +859,37 @@ def bearer_gate_problems(sources: dict, any_session: set) -> list:
     return problems
 
 
+def bearer_only_write_problems(sources: dict, handlers: set, any_session: set,
+                               writes: dict) -> list:
+    """Each BEARER_ONLY_WRITES handler is a registered route's, is defined
+    once, opens with the bearer refusal (BEARER_REFUSAL) as the first
+    statement of its body, and names no gate in the any-session class."""
+    problems = []
+    for h, why in sorted(writes.items()):
+        if h not in handlers:
+            problems.append(f"BEARER_ONLY_WRITES names {h}(), which is no registered route "
+                            f"handler ({why})")
+            continue
+        defs = [(fname, b, e) for fname, text in sorted(sources.items())
+                for name, _p, _h, b, e in functions(text, indented=True) if name == h]
+        if len(defs) != 1:
+            where = ", ".join(fname for fname, _b, _e in defs) or "no file the check reads"
+            problems.append(f"{h}() is defined in {where}; a bearer-only write is defined once")
+            continue
+        fname, b, e = defs[0]
+        body = _blank(sources[fname])[b:e]
+        if not _squash(body).startswith(BEARER_REFUSAL):
+            problems.append(f"{fname}: {h}() does not open with the bearer refusal, `if "
+                            f"(!api_auth_check_bearer(req, g_device.api_token_str)) return "
+                            f"ESP_OK;`: a session must not make this write ({why})")
+        took = sorted(_names(body) & any_session)
+        if took:
+            problems.append(f"{fname}: {h}() names {', '.join(took)}, a gate a landing-page "
+                            f"caller passes: a bearer-only write takes the Authorization "
+                            f"header only ({why})")
+    return problems
+
+
 def secret_carriers(ino: str, hands: dict, local: dict):
     """(reads, carried, calls) for canary_wap.ino's column-0 functions: the
     secrets each body reads (SECRET_READS, the compared token aside; a call
@@ -1394,12 +1446,16 @@ def mint_site_problems(sources: dict, sites=None) -> list:
 # alert on every run (#1832's CodeQL check). Keep the words out of these
 # three names.
 def answer_gate_rule_problems(sources: dict, handlers: set, answers=None, local=None, hands=None,
-                         grants=None, broker_uses=None, token_copies=None) -> list:
+                         grants=None, broker_uses=None, token_copies=None,
+                         bearer_only=None) -> list:
     """The whole secret rule over `sources` (file name -> comment-stripped
     text) and the registered handler names; the tables default to the ones
     above (the fixtures pass their own)."""
     any_session = any_session_gates(sources)
     return (bearer_gate_problems(sources, any_session)
+            + bearer_only_write_problems(
+                sources, handlers, any_session,
+                BEARER_ONLY_WRITES if bearer_only is None else bearer_only)
             + gated_answer_problems(
                 sources, handlers, any_session,
                 SECRET_ANSWERS if answers is None else answers,
@@ -1468,6 +1524,11 @@ _FIX_INO = (
     "}\n"
     "static esp_err_t handle_status(httpd_req_t* req) {\n"
     "  if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;\n"
+    "  return httpd_resp_sendstr(req, \"{}\");\n"
+    "}\n"
+    "static esp_err_t handle_install(httpd_req_t* req) {\n"
+    "  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;\n"
+    "  start_install();\n"
     "  return httpd_resp_sendstr(req, \"{}\");\n"
     "}\n"
     "static esp_err_t handle_landing(httpd_req_t* req) {\n"
@@ -1561,6 +1622,7 @@ _FIX_TABLES = {
     "grants": {"handle_kit": {"refusal": "!claimed && !gate_take()", "flag": "claimed",
                               "writes": ("bool claimed = false;", "claimed = claim_take(")}},
     "broker_uses": {"write_row": "fixture", "handle_config_post": "fixture"},
+    "bearer_only": {"handle_install": "fixture"},
     "token_copies": {
         "csi_integration.cpp": {"copy": r"\bg_api_token\b", "keep": ("CSI_AUTH_OR_RETURN", "init"),
                                 "decl": ("const char* g_api_token = nullptr;",), "read": ()},
@@ -1581,10 +1643,27 @@ _FIX_MINT_SITES = {
     },
     ("csi_integration.cpp", "send_pair_landing"): {"pair_token_issue": None},
 }
-_FIX_HANDLERS = {"handle_qr", "handle_kit", "handle_status", "handle_config_get",
-                 "handle_config_post"}
+_FIX_HANDLERS = {"handle_qr", "handle_kit", "handle_status", "handle_install",
+                 "handle_config_get", "handle_config_post"}
 # (what the plant is, file, text replaced, replacement, a word the failure names)
 _FIX_PLANTS = (
+    ("the install behind a gate a session passes", "canary_wap.ino",
+     "if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;\n"
+     "  start_install();",
+     "if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;\n"
+     "  start_install();", "handle_install() does not open with the bearer refusal"),
+    ("the install's refusal also taking the cookie", "canary_wap.ino",
+     "if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;\n"
+     "  start_install();",
+     "if (!api_auth_check_bearer(req, g_device.api_token_str) && !cv_session_validate(req)) "
+     "return ESP_OK;\n"
+     "  start_install();", "handle_install() names cv_session_validate,"),
+    ("the install started above its refusal", "canary_wap.ino",
+     "  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;\n"
+     "  start_install();",
+     "  start_install();\n"
+     "  if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;",
+     "handle_install() does not open with the bearer refusal"),
     ("the QR behind a gate a session passes", "canary_wap.ino",
      "if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;\n"
      "  return httpd_resp_sendstr(req, g_device.api_token_str);",
@@ -1884,7 +1963,7 @@ def _assert_secret_rules() -> None:
     assert raw_compare_problems(quiet) == [], (
         "the raw compare rule read a comment or a string as a call: "
         + "; ".join(raw_compare_problems(quiet)))
-    assert len(_FIX_PLANTS) == 57, "the module docstring counts the plants: update it"
+    assert len(_FIX_PLANTS) == 60, "the module docstring counts the plants: update it"
 
 
 def main() -> int:

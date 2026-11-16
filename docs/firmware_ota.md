@@ -362,19 +362,27 @@ python mock_ota_server.py serve            # https://<host>:8443
 ```
 
 Point the device at it: Settings → Software Update → Advanced → update
-server address (or `POST /api/ota/config {"manifest_url": "..."}`). For a
-plain-HTTP LAN server, also enable the local-server option. The mock server
+server address (or `POST /api/ota/config {"manifest_url": "..."}`; on a
+canary-wap since 2.4.20 either way takes the API token, see Device API
+below). For a plain-HTTP LAN server, also enable the local-server option. The mock server
 auto-creates a development signing key on first use and prints the command
 that embeds its public half into a dev build.
 
 ## Device API
 
 All endpoints are bearer-token gated on canary. On canary-wap they take
-`api_auth_check()`, which passes the bearer token or the landing session the
-dashboard's landing page mints for any host on the network (ledger F346), so
-any LAN host can start an install of the signed release or point the device
-at another update server (it still installs only an image the release key
-signed). Since 2026-08
+two gates: since 2.4.20 `install` and `config` take the bearer token alone
+(`api_auth_check_bearer()`), and a session-only dashboard raises its sign-in
+for them; `status` and `check` take `api_auth_check()`, which passes the bearer
+token or the landing session the dashboard's landing page mints for any host
+on the network (ledger F346), so any LAN host can read the update status
+and ask for a check. Before 2.4.20 `install` and `config` took the session
+too, so any LAN host could start an install of the signed release or point
+the device at another update server. The MQTT topics below are a separate
+road: the WAP acts on `update/cmd` and `update/auto/cmd` from whatever
+broker its bridge points at
+([`SECURITY_MODEL.md`](security/SECURITY_MODEL.md) says who can re-point
+it). Since 2026-08
 canary-display serves `status`/`check`/`install` under the same contract —
 same routes, statuses, and body shapes, so the desktop Flasher's one-click
 update works on displays too — but LAN-open like the rest of the glass web
