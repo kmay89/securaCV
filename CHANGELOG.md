@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### Device details: the design is on main, and each of its 24 privacy findings has a home: an open backlog item, or the PRs that fixed it
+### Device details: the design is on main, and each of its 24 privacy findings has a home: an open backlog item, or the PRs that fixed it (#1987)
 
 - **`docs/design/device_details.md` is the design for showing every chip,
   radio and sensor fact a Canary can honestly report, in every app.** One
