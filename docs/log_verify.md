@@ -58,6 +58,29 @@ For export receipts, `log_verify`:
    - verify the Ed25519 signature over `entry_hash`
 2) Report success/failure.
 
+For the clock-provenance ledger (`docs/timestamping.md`, "Clock
+provenance"), `log_verify`:
+1) Iterates `clock_provenance` in ascending id:
+   - verify each `prev_hash` matches the running expected chain head
+   - recompute `entry_hash = SHA256(prev_hash || payload_json)` over the
+     stored literal (never a re-serialization)
+   - verify the device's Ed25519 signature over `entry_hash` in the
+     `securacv:pwk:clock-provenance:v1` domain, under any key of the
+     validated lineage
+2) Report success/failure. A broken link or signature fails the verdict as
+   the `clock_provenance` ledger ("clock-provenance ledger" in the
+   diagnosis). The human report prints a `=== Clock Provenance ===` section
+   after `=== Export Receipts ===`: `verified N clock-provenance record(s)
+   (device clock vs TSA genTime, one per anchor; assessment: log_anchor --db
+   <db> verify)`, or `no clock-provenance records`; on a failed report it
+   never claims the ledger is empty — `clock-provenance ledger FAILED (see
+   Diagnosis)` when that ledger failed, `not reported: verification failed
+   (see Diagnosis)` when another one did; `--verbose` lists each
+   as `clock-provenance record <id>: hash=<16 hex> OK`. The JSON report gains
+   `clock_provenance_verified`, omitted while the ledger has no rows (so a
+   database that never recorded one reports byte-identically to before) and
+   on a failed report.
+
 For RFC 3161 anchors (when the database has a `tsa_anchors` table),
 `log_verify` then walks every anchor row — see the next section.
 
@@ -77,7 +100,8 @@ contains fails the verdict:
    message imprint equals the hash the row claims. A token that does not
    parse, or covers a different hash, is a **warning**.
 3. **Ledger membership (head kinds only).** `chain_head`,
-   `export_receipt_head`, `break_glass_receipt_head` and `policy_head` rows
+   `export_receipt_head`, `break_glass_receipt_head`, `policy_head` and
+   `clock_provenance_head` rows
    must name a hash in the history of the ledger the row *declares*: a live
    row, or — chain head only — a retention checkpoint whose device signature
    verifies under a genesis-anchored lineage key. A hash in neither is an
@@ -98,6 +122,27 @@ log_anchor --db <db> verify --ca <tsa-ca.pem>)`; the JSON report gains
 report from such a database is byte-identical to before; on a failed report
 it counts the rows checked before the failing one). Warnings about damaged
 rows print under `=== Anchor Audit ===`, apart from the timeline audit.
+
+**Clock-provenance records against the anchors table.** After the anchor
+rows, every clock-provenance record is cross-checked against them, as
+warnings only (the ledger itself already verified):
+
+```
+clock provenance orphan: record #1 names anchor #4, which is no longer in the anchors table (deleted, or the table was rebuilt); run log_anchor verify
+clock provenance orphan: record #1 binds anchor #4 to token sha256 <16 hex>… but the row now holds <16 hex>… (the token was replaced); run log_anchor verify
+clock offset: record #2 measured the device clock -900 s from anchor #5's TSA time — beyond one bucket (600 s); run log_anchor verify
+```
+
+The offset warning fires for a prompt record, or a negative offset on a
+delayed import, beyond one bucket. An anchor with no record is never a
+warning — anchors that predate the ledger have none. The orphan check runs
+even with no anchors table, and skips a record whose anchor row exists but
+is malformed (that row is already warned about). No warning carries a time
+or a full hash. They print under `=== Anchor Audit ===` after the sentence
+`The clock-provenance ledger verified; these records contradict the anchors
+table or read the device clock far from the TSA's time:`, and count as
+`anchor` warnings under `--strict`. `log_anchor verify` prints the full
+per-anchor assessment.
 
 **Structural only.** The TSA's CMS countersignature is *not* checked here:
 the kernel never links an X.509 / CMS implementation, and the delegated

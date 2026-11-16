@@ -5,8 +5,8 @@ use serde::Serialize;
 
 use crate::crypto::signatures::{
     verify_rotation_attestation, verify_rotation_authorization, PqPublicKey, SignatureMode,
-    SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_CHECKPOINT, DOMAIN_EXPORT_RECEIPT,
-    DOMAIN_POLICY_CHANGE_RECORD, DOMAIN_SEALED_LOG_ENTRY,
+    SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_CHECKPOINT, DOMAIN_CLOCK_PROVENANCE,
+    DOMAIN_EXPORT_RECEIPT, DOMAIN_POLICY_CHANGE_RECORD, DOMAIN_SEALED_LOG_ENTRY,
 };
 use crate::{
     approvals_commitment, hash_entry, verify_approval, verify_entry_signature, Approval,
@@ -26,6 +26,9 @@ pub enum FailedLedger {
     HighWaterMark,
     /// The RFC 3161 anchor table (auxiliary evidence about the ledgers, checked structurally).
     Anchors,
+    /// The clock-provenance ledger (device clock vs TSA `genTime`, one
+    /// device-signed record per anchor row; `src/clock_provenance.rs`).
+    ClockProvenance,
 }
 
 /// What kind of check failed. Drives the plain-language diagnosis the CLIs
@@ -957,6 +960,102 @@ where
     Ok(count)
 }
 
+/// Walk the clock-provenance ledger (`src/clock_provenance.rs`) from genesis:
+/// every row's `prev_hash` links to the previous entry hash, its entry hash
+/// re-derives from the stored `payload_json` literal (never re-serialized),
+/// and its device signature verifies under one of `trusted_signers` in the
+/// [`DOMAIN_CLOCK_PROVENANCE`] domain. A database without the table (one no
+/// upgraded `Kernel::open` has touched) walks as zero rows. Failure details
+/// name the row id and at most a 16-hex prefix of a hash: the report that
+/// carries them is published retained over MQTT.
+pub fn verify_clock_provenance_with<F>(
+    conn: &Connection,
+    trusted_signers: &[VerifyingKey],
+    mode: SignatureMode,
+    pq_public_key: Option<&PqPublicKey>,
+    mut on_row: F,
+) -> Result<u64>
+where
+    F: FnMut(i64, [u8; 32]),
+{
+    if !crate::clock_provenance::table_exists(conn)? {
+        return Ok(0);
+    }
+    let mut stmt = conn.prepare(
+        "SELECT id, payload_json, prev_hash, entry_hash, signature, pq_signature, pq_scheme \
+         FROM clock_provenance ORDER BY id ASC",
+    )?;
+    let mut rows = stmt.query([])?;
+    let mut expected_prev = [0u8; 32];
+    let mut count = 0u64;
+    let mut last_ok_signer = 0usize;
+    let prefix = |h: &[u8; 32]| hex::encode(&h[..8]);
+
+    while let Some(row) = rows.next()? {
+        let id: i64 = row.get(0)?;
+        let payload: String = row.get(1)?;
+        let prev_hash = blob32(row, 2)?;
+        let entry_hash = blob32(row, 3)?;
+        let signature: Vec<u8> = row.get(4)?;
+        let pq_signature: Option<Vec<u8>> = row.get(5)?;
+        let pq_scheme: Option<String> = row.get(6)?;
+        let signature_set = SignatureSet::from_storage(&signature, pq_signature, pq_scheme)?;
+
+        if prev_hash != expected_prev {
+            return Err(fail(
+                FailedLedger::ClockProvenance,
+                Some(id),
+                FailureKind::PrevHashMismatch,
+                format!(
+                    "integrity check failed at clock-provenance record id {id}: prev_hash={}…, \
+                     expected_prev={}…",
+                    prefix(&prev_hash),
+                    prefix(&expected_prev)
+                ),
+            ));
+        }
+        let computed = hash_entry(&expected_prev, payload.as_bytes());
+        if computed != entry_hash {
+            return Err(fail(
+                FailedLedger::ClockProvenance,
+                Some(id),
+                FailureKind::EntryHashMismatch,
+                format!(
+                    "integrity check failed at clock-provenance record id {id}: \
+                     computed_hash={}…, stored_hash={}…",
+                    prefix(&computed),
+                    prefix(&entry_hash)
+                ),
+            ));
+        }
+        if verify_entry_signature_any(
+            trusted_signers,
+            &mut last_ok_signer,
+            &entry_hash,
+            &signature_set,
+            mode,
+            pq_public_key,
+            DOMAIN_CLOCK_PROVENANCE,
+        )
+        .is_err()
+        {
+            return Err(fail(
+                FailedLedger::ClockProvenance,
+                Some(id),
+                FailureKind::SignatureMismatch,
+                format!(
+                    "integrity check failed at clock-provenance record id {id}: signature \
+                     mismatch under every device key in the lineage"
+                ),
+            ));
+        }
+        on_row(id, entry_hash);
+        expected_prev = entry_hash;
+        count += 1;
+    }
+    Ok(count)
+}
+
 /// Timeline/coverage audit over an already hash-valid chain.
 ///
 /// Hash-chain verification proves interior integrity but cannot see *tail
@@ -1157,6 +1256,10 @@ pub enum WarningKind {
     AuditUnavailable,
     /// An anchor row is malformed, or its stored token does not parse or does not cover the hash the row claims.
     AnchorAnomaly,
+    /// A clock-provenance record names an anchor that is gone or whose token
+    /// was replaced, or measured the device clock beyond one bucket from the
+    /// TSA's time (`clock provenance orphan: …` / `clock offset: …`).
+    ClockProvenance,
     Other,
 }
 
@@ -1175,6 +1278,8 @@ pub fn classify_warning(warning: &str) -> WarningKind {
         WarningKind::AuditUnavailable
     } else if warning.starts_with("anchor #") {
         WarningKind::AnchorAnomaly
+    } else if warning.starts_with("clock provenance ") || warning.starts_with("clock offset:") {
+        WarningKind::ClockProvenance
     } else {
         WarningKind::Other
     }

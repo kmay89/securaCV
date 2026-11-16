@@ -22,6 +22,8 @@ const {
   securityFieldsFor, readSecurityEfuses, looksUniform, flashAliasVerdict,
   macChecks, parseMac, duplicateMacCheck, shippedWith, intakeVerdict, efuseFindings,
   coldBootVerdict, isFirstContact, KNOWN_STOCK, oddParity, flashAliasCandidates,
+  EFUSE_BLOCK_RD_OFFSETS, CHIP_FUSE_FIELDS, chipFuseWords, chipFuseAddr, fieldsOfWord,
+  readChipFuses, decodeChipFuses,
   FLASH_ALIAS_WINDOW,
 } = mod;
 
@@ -504,4 +506,160 @@ test("every verdict level has a headline", () => {
   for (const lvl of ["clear", "inconclusive", "attention", "stop"]) {
     assert.ok(intakeVerdict([{ level: lvl }]).headline, `no headline for ${lvl}`);
   }
+});
+
+// ── blocks 1 and 2: what this chip is, by field, never by word ─────────────
+// The About-this-board rows read a handful of factory fields from eFuse blocks
+// 1 and 2 that share their 32-bit words with per-chip trims. These tests hold
+// the allowlist to espefuse 5.6.0's efuse_defs/<chip>.yaml (transcribed here
+// field by field, independently of intake.js), prove the reader asks the ROM
+// for no other word, and prove a word full of trim bits decodes exactly like a
+// word with none.
+
+const ESPEFUSE_560 = {
+  // name: [block, word, pos, len]
+  "ESP32-S3": {
+    WAFER_VERSION_MINOR_LO: [1, 3, 18, 3], PKG_VERSION: [1, 3, 21, 3], BLK_VERSION_MINOR: [1, 3, 24, 3],
+    FLASH_CAP: [1, 3, 27, 3], FLASH_TEMP: [1, 3, 30, 2], FLASH_VENDOR: [1, 4, 0, 3], PSRAM_CAP: [1, 4, 3, 2],
+    PSRAM_TEMP: [1, 4, 5, 2], PSRAM_VENDOR: [1, 4, 7, 2], PSRAM_CAP_3: [1, 5, 19, 1],
+    WAFER_VERSION_MINOR_HI: [1, 5, 23, 1], WAFER_VERSION_MAJOR: [1, 5, 24, 2], BLK_VERSION_MAJOR: [2, 4, 0, 2],
+  },
+  "ESP32-C3": {
+    WAFER_VERSION_MINOR_LO: [1, 3, 18, 3], PKG_VERSION: [1, 3, 21, 3], BLK_VERSION_MINOR: [1, 3, 24, 3],
+    FLASH_CAP: [1, 3, 27, 3], FLASH_TEMP: [1, 3, 30, 2], FLASH_VENDOR: [1, 4, 0, 3],
+    WAFER_VERSION_MINOR_HI: [1, 5, 23, 1], WAFER_VERSION_MAJOR: [1, 5, 24, 2], BLK_VERSION_MAJOR: [2, 4, 0, 2],
+  },
+  "ESP32-C6": {
+    WAFER_VERSION_MINOR: [1, 3, 18, 4], WAFER_VERSION_MAJOR: [1, 3, 22, 2], PKG_VERSION: [1, 3, 24, 3],
+    BLK_VERSION_MINOR: [1, 3, 27, 3], BLK_VERSION_MAJOR: [1, 3, 30, 2], FLASH_CAP: [1, 4, 0, 3],
+    FLASH_TEMP: [1, 4, 3, 2], FLASH_VENDOR: [1, 4, 5, 3],
+  },
+};
+const CHIP_BASES = { "ESP32-S3": 0x60007000, "ESP32-C3": 0x60008800, "ESP32-C6": 0x600b0800 };
+
+test("the chip-field allowlist is espefuse 5.6.0's, field by field", () => {
+  // espefuse efuse/<chip>/mem_definition.py: BLOCK1 at base + 0x044,
+  // BLOCK2 at base + 0x05C, on all three chips.
+  assert.deepEqual(EFUSE_BLOCK_RD_OFFSETS, { 1: 0x044, 2: 0x05c });
+  assert.deepEqual(Object.keys(CHIP_FUSE_FIELDS).sort(), Object.keys(ESPEFUSE_560).sort());
+  for (const [chip, want] of Object.entries(ESPEFUSE_560)) {
+    const got = Object.fromEntries(CHIP_FUSE_FIELDS[chip].map((f) => [f.key, [f.block, f.word, f.bit, f.width]]));
+    assert.deepEqual(got, want, `${chip} allowlist drifted from espefuse 5.6.0`);
+  }
+});
+
+test("the reader asks the ROM for the allowlisted words and nothing else", async () => {
+  for (const chip of Object.keys(ESPEFUSE_560)) {
+    const base = CHIP_BASES[chip];
+    const asked = [];
+    const scan = await readChipFuses(chip, base, async (addr) => { asked.push(addr); return 0; });
+    assert.equal(scan.supported, true);
+    const want = chipFuseWords(chip).map(({ block, word }) => base + EFUSE_BLOCK_RD_OFFSETS[block] + 4 * word);
+    assert.deepEqual(asked, want, `${chip} read a word outside its allowlist`);
+    for (const addr of asked) {
+      const off = addr - base;
+      // never: block 1 words 0-2 (the MAC, pad config), block 2 words 0-3
+      // (OPTIONAL_UNIQUE_ID) and 5-7 (ADC calibration), block 3 (0x07C on)
+      assert.ok(!(off >= 0x044 && off < 0x050), `${chip} read block 1 word ${(off - 0x44) / 4}`);
+      assert.ok(!(off >= 0x05c && off < 0x06c), `${chip} read the unique id (block 2 word ${(off - 0x5c) / 4})`);
+      assert.ok(!(off >= 0x070 && off < 0x07c), `${chip} read block 2 word ${(off - 0x5c) / 4}`);
+      assert.ok(off < 0x07c, `${chip} read block 3`);
+    }
+    assert.equal(chipFuseAddr(base, 1, 3), base + 0x050);
+  }
+  assert.ok(chipFuseWords("ESP32-C6").every((w) => w.block === 1), "the C6 reads nothing from block 2");
+  // No table, no read at all — never a guess.
+  let called = 0;
+  const none = await readChipFuses("ESP32", 0x3ff5a000, async () => { called++; return 0; });
+  assert.deepEqual(none, { supported: false, chip: "ESP32" });
+  assert.equal(called, 0);
+});
+
+test("a word full of trim and calibration bits decodes exactly like a word with none", async () => {
+  // Every bit the allowlist does not name set to 1, against all of them 0,
+  // with the same allowed values: the decode (rows, raw fields, everything the
+  // reader returns) must be byte-identical, on each chip.
+  for (const chip of Object.keys(ESPEFUSE_560)) {
+    const base = CHIP_BASES[chip];
+    const byAddr = new Map();
+    for (const { block, word } of chipFuseWords(chip)) {
+      let mask = 0, pattern = 0, i = 0;
+      for (const f of CHIP_FUSE_FIELDS[chip]) {
+        if (f.block !== block || f.word !== word) continue;
+        const m = ((1 << f.width) - 1) >>> 0;
+        mask = (mask | (m << f.bit)) >>> 0;
+        pattern = (pattern | ((++i & m) << f.bit)) >>> 0;
+      }
+      byAddr.set(base + EFUSE_BLOCK_RD_OFFSETS[block] + 4 * word, { mask, pattern });
+    }
+    const read = (trims) => readChipFuses(chip, base, async (addr) => {
+      const { mask, pattern } = byAddr.get(addr);
+      return trims ? (pattern | ~mask) >>> 0 : pattern;
+    });
+    const withTrims = await read(true);
+    const without = await read(false);
+    assert.equal(JSON.stringify(withTrims), JSON.stringify(without), `${chip}: a masked bit reached the decode`);
+    // and what comes back names only allowlisted fields
+    assert.deepEqual(Object.keys(withTrims.fields).sort(), Object.keys(ESPEFUSE_560[chip]).sort());
+    // a single word in, its own fields out — never another word's
+    for (const { block, word } of chipFuseWords(chip)) {
+      const keys = Object.keys(fieldsOfWord(chip, block, word, 0xffffffff)).sort();
+      const want = Object.entries(ESPEFUSE_560[chip]).filter(([, v]) => v[0] === block && v[1] === word).map(([k]) => k).sort();
+      assert.deepEqual(keys, want);
+    }
+  }
+});
+
+test("the decode names the package, the in-package parts and calibration the way esptool and IDF do", () => {
+  // An ESP32-S3R8 (QFN56, 8 MB AP Memory 3.3 V PSRAM in the package, no
+  // in-package flash), wafer v0.2, block version v1.3: calibration present
+  // (IDF esp32s3 esp_efuse_rtc_calib_get_ver: BLK_VERSION_MAJOR == 1).
+  const s3 = decodeChipFuses("ESP32-S3", {
+    WAFER_VERSION_MINOR_LO: 2, WAFER_VERSION_MINOR_HI: 0, WAFER_VERSION_MAJOR: 0, PKG_VERSION: 0,
+    BLK_VERSION_MINOR: 3, BLK_VERSION_MAJOR: 1, FLASH_CAP: 0, FLASH_TEMP: 0, FLASH_VENDOR: 0,
+    PSRAM_CAP: 1, PSRAM_CAP_3: 0, PSRAM_VENDOR: 1, PSRAM_TEMP: 1,
+  });
+  assert.equal(s3.package, "ESP32-S3 (QFN56)");
+  assert.equal(s3.wafer, "v0.2");
+  assert.deepEqual(s3.flash, { present: false });
+  assert.deepEqual(s3.psram, { present: true, bytes: 8 * 1024 * 1024, vendor: "AP Memory, 3.3 V", temp: "105 °C" });
+  assert.equal(s3.blockVersion, "v1.3");
+  assert.equal(s3.calibration, true);
+  // PSRAM_CAP_3 is the high bit: cap 0b100 is 4 MB.
+  assert.equal(decodeChipFuses("ESP32-S3", { PSRAM_CAP: 0, PSRAM_CAP_3: 1 }).psram.bytes, 4 * 1024 * 1024);
+  // esptool's eco0 rule: a v0.0 chip with block version v1.1 reads major 0.
+  assert.equal(decodeChipFuses("ESP32-S3", {
+    WAFER_VERSION_MINOR_LO: 0, WAFER_VERSION_MINOR_HI: 0, WAFER_VERSION_MAJOR: 1,
+    BLK_VERSION_MAJOR: 1, BLK_VERSION_MINOR: 1 }).wafer, "v0.0");
+  assert.equal(decodeChipFuses("ESP32-S3", { BLK_VERSION_MAJOR: 0 }).calibration, false);
+  // The S3 and C3 ask for major version 1 exactly, not the C6's "v0.1 or
+  // later": a block version of v0.3 or v2.0 is no calibration on either.
+  for (const chip of ["ESP32-S3", "ESP32-C3"]) {
+    for (const [major, minor] of [[0, 3], [2, 0]]) {
+      assert.equal(decodeChipFuses(chip, { BLK_VERSION_MAJOR: major, BLK_VERSION_MINOR: minor }).calibration, false,
+        `${chip} block v${major}.${minor}`);
+    }
+  }
+
+  // A C3 with 4 MB of GD flash in the package, rated to 85 °C; no PSRAM fields.
+  const c3 = decodeChipFuses("ESP32-C3", { PKG_VERSION: 0, FLASH_CAP: 1, FLASH_VENDOR: 2, FLASH_TEMP: 2,
+    WAFER_VERSION_MINOR_LO: 4, WAFER_VERSION_MINOR_HI: 0, WAFER_VERSION_MAJOR: 0, BLK_VERSION_MAJOR: 1 });
+  assert.equal(c3.package, "ESP32-C3 (QFN32)");
+  assert.equal(c3.wafer, "v0.4");
+  assert.deepEqual(c3.flash, { present: true, bytes: 4 * 1024 * 1024, vendor: "GD", temp: "85 °C" });
+  assert.equal(c3.psram, null);
+  assert.equal(c3.calibration, true);
+  assert.equal(decodeChipFuses("ESP32-C3", { PKG_VERSION: 1 }).package, "ESP8685 (QFN28)");
+
+  // The C6: its in-package-flash parts are told apart by FLASH_CAP (esptool),
+  // and calibration is a block version of v0.1 or later (IDF esp32c6).
+  assert.equal(decodeChipFuses("ESP32-C6", { PKG_VERSION: 1, FLASH_CAP: 2 }).package, "ESP32-C6FH8 (QFN32)");
+  assert.equal(decodeChipFuses("ESP32-C6", { PKG_VERSION: 0 }).package, "ESP32-C6 (QFN40)");
+  assert.equal(decodeChipFuses("ESP32-C6", { BLK_VERSION_MAJOR: 0, BLK_VERSION_MINOR: 1 }).calibration, true);
+  assert.equal(decodeChipFuses("ESP32-C6", { BLK_VERSION_MAJOR: 0, BLK_VERSION_MINOR: 0 }).calibration, false);
+  assert.equal(decodeChipFuses("ESP32-C6", { WAFER_VERSION_MAJOR: 0, WAFER_VERSION_MINOR: 9 }).wafer, "v0.9");
+  // A code with no name stays unnamed — never a guess.
+  assert.equal(decodeChipFuses("ESP32-S3", { PKG_VERSION: 6 }).package, null);
+  assert.equal(decodeChipFuses("ESP32-C6", { FLASH_CAP: 1, FLASH_VENDOR: 3 }).flash.vendor, null);
+  assert.deepEqual(decodeChipFuses("ESP32", {}), { supported: false, chip: "ESP32" });
 });

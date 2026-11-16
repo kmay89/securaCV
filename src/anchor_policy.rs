@@ -93,6 +93,18 @@ pub struct AnchorPolicy {
     /// `>= 1`, `<= tsas.len()`.
     #[serde(default = "two")]
     pub min_distinct_tsas: u32,
+    /// The largest device-clock-vs-`genTime` offset (whole seconds, either
+    /// way) a clock-provenance record may carry before `log_anchor verify
+    /// --policy` counts it against the policy; `>= 1`. Default: one kernel
+    /// bucket (600 s), the structural threshold `verify` applies without a
+    /// policy. Add this key only once every policy reader is upgraded — an
+    /// older `log_anchor` refuses a policy carrying an unknown key.
+    #[serde(default = "one_bucket")]
+    pub max_clock_offset_s: i64,
+}
+
+fn one_bucket() -> i64 {
+    crate::clock_provenance::ONE_BUCKET_S
 }
 
 fn all_heads() -> Vec<String> {
@@ -216,6 +228,12 @@ fn validate(policy: &mut AnchorPolicy, prefix: &str) -> Result<()> {
             policy.tsas.len()
         );
     }
+    if policy.max_clock_offset_s < 1 {
+        bail!(
+            "{prefix}max_clock_offset_s must be at least 1 (got {})",
+            policy.max_clock_offset_s
+        );
+    }
     // An explicit empty list would make `anchor-all` request nothing and
     // `verify --policy` vacuously SATISFIED — the two-TSA control turned into
     // a silent no-op by a typo. Refuse it, and refuse a repeated subject (it
@@ -228,7 +246,7 @@ fn validate(policy: &mut AnchorPolicy, prefix: &str) -> Result<()> {
         match AnchorSubject::parse(s) {
             Some(k) if k.is_head() => {}
             _ => bail!(
-                "{prefix}subject '{s}' is not a ledger head (allowed: chain_head, export_receipt_head, break_glass_receipt_head, policy_head)"
+                "{prefix}subject '{s}' is not a ledger head (allowed: chain_head, export_receipt_head, break_glass_receipt_head, policy_head, clock_provenance_head)"
             ),
         }
         if !seen_subjects.insert(s.as_str()) {
@@ -508,7 +526,7 @@ mod tests {
       "allow_http": false,
       "cert_sha256": ["fbf1c838f80923a01badb6030b9d708c5ef1a65b7d23f1f53a6aa274d1b99542"] }
   ],
-  "subjects": ["chain_head", "export_receipt_head", "break_glass_receipt_head", "policy_head"],
+  "subjects": ["chain_head", "export_receipt_head", "break_glass_receipt_head", "policy_head", "clock_provenance_head"],
   "require_roles": ["qualified", "independent"],
   "min_distinct_tsas": 2
 }"#;
@@ -555,6 +573,8 @@ mod tests {
         let d = load_text(&two_tsas("")).unwrap();
         assert_eq!(d.subjects, all_heads());
         assert_eq!(d.require_roles, both_roles());
+        assert_eq!(d.max_clock_offset_s, 600);
+        assert_eq!(p.max_clock_offset_s, 600);
         assert_eq!(d.min_distinct_tsas, 2);
     }
 
@@ -706,7 +726,7 @@ mod tests {
         let err = err_of(&two_tsas(r#","subjects":["chain_head","digest"]"#));
         assert!(
             err.ends_with(
-                "subject 'digest' is not a ledger head (allowed: chain_head, export_receipt_head, break_glass_receipt_head, policy_head)"
+                "subject 'digest' is not a ledger head (allowed: chain_head, export_receipt_head, break_glass_receipt_head, policy_head, clock_provenance_head)"
             ),
             "{err}"
         );
@@ -1122,5 +1142,35 @@ mod tests {
                 distinct: 0,
             }
         );
+    }
+
+    #[test]
+    fn max_clock_offset_s_defaults_to_one_bucket_and_must_be_positive() {
+        let p = load_text(&two_tsas(r#","max_clock_offset_s":30"#)).unwrap();
+        assert_eq!(p.max_clock_offset_s, 30);
+        let err = err_of(&two_tsas(r#","max_clock_offset_s":0"#));
+        assert!(
+            err.contains("max_clock_offset_s must be at least 1 (got 0)"),
+            "{err}"
+        );
+        let err = err_of(&two_tsas(r#","max_clock_offset_s":-5"#));
+        assert!(
+            err.contains("max_clock_offset_s must be at least 1 (got -5)"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn subject_error_lists_all_five_heads() {
+        let err = err_of(&two_tsas(r#","subjects":["clock_provenance_head","nope"]"#));
+        assert!(
+            err.ends_with(
+                "subject 'nope' is not a ledger head (allowed: chain_head, export_receipt_head, \
+                 break_glass_receipt_head, policy_head, clock_provenance_head)"
+            ),
+            "{err}"
+        );
+        let p = load_text(&two_tsas(r#","subjects":["clock_provenance_head"]"#)).unwrap();
+        assert_eq!(p.subject_kinds(), vec![AnchorSubject::ClockProvenanceHead]);
     }
 }

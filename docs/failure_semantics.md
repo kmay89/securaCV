@@ -100,6 +100,21 @@ monotonic history, so a clock that was already wrong at boot governs them by
 stamp alone; and a forward step larger than 14 days outruns the ring. Both
 are the host-clock trust assumption, stated rather than hidden.
 
+### `ClockSkew` and clock provenance
+
+`ClockSkew` is sealed by witnessd's clock monitor from its own
+monotonic-versus-wall-clock drift; that is unchanged. Clock provenance
+([`timestamping.md`](timestamping.md), "Clock provenance") is a separate,
+external measurement — the device clock against each RFC 3161 token's
+`genTime`, sealed into its own ledger — and it never seals a `ClockSkew`
+record: an offset is a reading, not a failure, and the monitor stays the one
+detector of this failure type. The two meet only in `log_anchor verify`,
+which names, beside every offset beyond the threshold and every step of more
+than one bucket between consecutive readings, whether a `ClockSkew` record is
+**retained** nearby. "Not retained" never means "never happened": retention
+prunes failure records. A failed clock-provenance append is a
+`StorageWriteFailed` record (`clock provenance append failed: …`).
+
 ### System trace records (not failures)
 
 - `lifecycle` (`start` / `shutdown_clean`): every daemon start and clean

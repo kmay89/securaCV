@@ -21,6 +21,7 @@ pub enum VerifiedItem {
     Event { id: i64, entry_hash: [u8; 32] },
     BreakGlassReceipt { id: i64, entry_hash: [u8; 32] },
     ExportReceipt { id: i64, entry_hash: [u8; 32] },
+    ClockProvenance { id: i64, entry_hash: [u8; 32] },
 }
 
 /// Outcome of a successful full verification. Timestamps are bucketed —
@@ -55,6 +56,15 @@ pub struct VerifyReport {
     /// retained over MQTT.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anchors_checked: Option<u64>,
+    /// Number of `clock_provenance` rows (device clock vs TSA `genTime`, one
+    /// device-signed record per anchor row; `src/clock_provenance.rs`) whose
+    /// hash chain and device signatures verified. `None` when the ledger has
+    /// no rows — table absent or empty, so a database that never recorded
+    /// one serializes exactly as before — and `None` on a failed report.
+    /// Additive; the assessment of each record (offset bands, orphans) is
+    /// warnings only, printed by `log_anchor verify` in full.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clock_provenance_verified: Option<u64>,
     pub events_verified: u64,
     pub break_glass_receipts_verified: u64,
     pub break_glass_granted: u64,
@@ -93,6 +103,7 @@ impl VerifyReport {
             identity_verified: false,
             high_water_mark_checked: false,
             anchors_checked: None,
+            clock_provenance_verified: None,
             events_verified: 0,
             break_glass_receipts_verified: 0,
             break_glass_granted: 0,
@@ -198,6 +209,8 @@ fn run_full_verify_impl(
             report.chain_valid = false;
             report.error = Some(format!("{err:#}"));
             report.failure = err.downcast_ref::<verify::VerifyFailure>().cloned();
+            // A count of verified records has no meaning on a failed report.
+            report.clock_provenance_verified = None;
         }
     }
     report.verdict = if report.chain_valid {
@@ -320,6 +333,20 @@ fn run_inner(
         pq_verifying_key.as_ref(),
         |id, entry_hash| on_item(VerifiedItem::ExportReceipt { id, entry_hash }),
     )?;
+
+    // The clock-provenance ledger (device clock vs TSA genTime, one
+    // device-signed record per anchor row). A chain or signature failure is
+    // a verdict failure like any other device-signed ledger's; what the
+    // records SAY is cross-checked against the anchors table below, as
+    // warnings only.
+    let clock_rows = verify::verify_clock_provenance_with(
+        conn,
+        &lineage_keys,
+        signature_mode,
+        pq_verifying_key.as_ref(),
+        |id, entry_hash| on_item(VerifiedItem::ClockProvenance { id, entry_hash }),
+    )?;
+    report.clock_provenance_verified = (clock_rows > 0).then_some(clock_rows);
 
     // Signed external high-water-mark (ENTERPRISE_CUSTODY §2): the interior
     // hash chain, now proven above, cannot bind its own length or head. If a
@@ -445,7 +472,17 @@ fn run_inner(
     // boot witnessd into safe mode. The TSA countersignature is never checked
     // here (`log_anchor verify --ca`, openssl). Runs after the high-water-mark
     // so an anchor failure reports on top of an otherwise-consistent chain.
+    // The anchors pass and the clock-provenance cross-check below read from
+    // ONE snapshot: a SAVEPOINT nests inside any transaction the caller
+    // holds, and outside one it is a deferred read transaction that blocks no
+    // WAL writer. witnessd may insert an anchor row and seal its record
+    // between two separate reads; read apart, that record would be an orphan.
+    let snapshot = ReadSnapshot::begin(conn, "verify_anchor_snapshot")?;
     let mut anchor_warnings = Vec::new();
+    // The rows that decoded, and the ids that did not, for the
+    // clock-provenance cross-check below.
+    let mut decoded_anchors: Vec<crate::tsa::AnchorRecord> = Vec::new();
+    let mut malformed_anchor_ids: Vec<i64> = Vec::new();
     if crate::tsa::anchor_table_exists(conn)? {
         report.anchors_checked = Some(0);
         for (id, row) in crate::tsa::list_anchors_lenient(conn)? {
@@ -456,9 +493,11 @@ fn run_inner(
                     anchor_warnings.push(format!(
                         "anchor #{id}: row is malformed ({reason}); run log_anchor verify"
                     ));
+                    malformed_anchor_ids.push(id);
                     continue;
                 }
             };
+            decoded_anchors.push(record.clone());
             let token = match crate::tsa::parse_token(&record.token_der) {
                 Ok(token) => token,
                 Err(_) => {
@@ -495,7 +534,130 @@ fn run_inner(
     }
     report.warnings.extend(anchor_warnings);
 
+    // Clock-provenance records against the anchors table as it stands now:
+    // warnings only (the ledger itself already passed above). A record whose
+    // anchor is gone, or whose anchor's token hashes differently, names a
+    // deleted or replaced anchor; a prompt-or-negative offset beyond one
+    // bucket names a device clock that disagreed with the TSA's. A missing
+    // record is never a warning (anchors predate the ledger). The check runs
+    // even with no anchors table (every record is then an orphan) and skips
+    // records whose anchor row exists but is malformed (already warned).
+    #[cfg(test)]
+    tests::between_the_anchor_and_clock_reads();
+    if clock_rows > 0 {
+        clock_provenance_warnings(
+            conn,
+            &decoded_anchors,
+            &malformed_anchor_ids,
+            &mut report.warnings,
+        );
+    }
+    snapshot.release()?;
+
     Ok(())
+}
+
+/// A read snapshot over several reads of one connection: `SAVEPOINT name`
+/// on begin, `RELEASE name` on release or drop. Nested inside a caller's
+/// transaction it is a plain savepoint; outside one it opens a deferred
+/// transaction whose first read fixes the snapshot every later read sees.
+struct ReadSnapshot<'a> {
+    conn: &'a Connection,
+    name: &'static str,
+    open: bool,
+}
+
+impl<'a> ReadSnapshot<'a> {
+    fn begin(conn: &'a Connection, name: &'static str) -> Result<Self> {
+        conn.execute_batch(&format!("SAVEPOINT {name};"))?;
+        Ok(Self {
+            conn,
+            name,
+            open: true,
+        })
+    }
+
+    fn release(mut self) -> Result<()> {
+        self.open = false;
+        self.conn
+            .execute_batch(&format!("RELEASE {};", self.name))?;
+        Ok(())
+    }
+}
+
+impl Drop for ReadSnapshot<'_> {
+    fn drop(&mut self) {
+        if self.open {
+            let _ = self.conn.execute_batch(&format!("RELEASE {};", self.name));
+        }
+    }
+}
+
+/// The clock-provenance cross-check warnings (see the call site). No
+/// `genTime`, no full hash: a 16-hex prefix of the two token hashes is all a
+/// replaced-token warning carries.
+fn clock_provenance_warnings(
+    conn: &Connection,
+    anchors: &[crate::tsa::AnchorRecord],
+    malformed_anchor_ids: &[i64],
+    warnings: &mut Vec<String>,
+) {
+    use crate::clock_provenance::{self, AnchorLink, ONE_BUCKET_S};
+    let rows = match clock_provenance::list_rows(conn) {
+        Ok(rows) => rows,
+        Err(err) => {
+            warnings.push(format!(
+                "clock provenance ledger could not be read for the anchor cross-check: {err:#}"
+            ));
+            return;
+        }
+    };
+    for row in &rows {
+        let record = &row.record;
+        match clock_provenance::link_to_anchor(record, anchors) {
+            AnchorLink::AnchorMissing => {
+                if malformed_anchor_ids.contains(&record.anchor_id) {
+                    continue;
+                }
+                warnings.push(format!(
+                    "clock provenance orphan: record #{} names anchor #{}, which is no longer \
+                     in the anchors table (deleted, or the table was rebuilt); run log_anchor \
+                     verify",
+                    row.id, record.anchor_id
+                ));
+            }
+            AnchorLink::TokenReplaced {
+                stored_token_sha256,
+            } => {
+                warnings.push(format!(
+                    "clock provenance orphan: record #{} binds anchor #{} to token sha256 {}… \
+                     but the row now holds {}… (the token was replaced); run log_anchor verify",
+                    row.id,
+                    record.anchor_id,
+                    record.token_sha256.chars().take(16).collect::<String>(),
+                    &stored_token_sha256[..16]
+                ));
+            }
+            AnchorLink::Matches => {
+                let Some(anchor) = anchors.iter().find(|a| a.id == record.anchor_id) else {
+                    continue;
+                };
+                let Some(assessment) = clock_provenance::assess(record, anchor) else {
+                    continue;
+                };
+                if clock_provenance::beyond(record, &assessment, ONE_BUCKET_S) {
+                    let offset = record.observed_offset_s.unwrap_or(0);
+                    warnings.push(format!(
+                        "clock offset: record #{} measured the device clock {} from anchor \
+                         #{}'s TSA time — beyond one bucket (600 s); run log_anchor verify",
+                        row.id,
+                        clock_provenance::format_offset(offset),
+                        record.anchor_id
+                    ));
+                }
+            }
+        }
+    }
 }
 
 /// `list_anchors_lenient` wraps a row's reason as `corrupt anchor {id}:
@@ -611,7 +773,22 @@ mod tests {
         derive_db_encryption_key, signing_key_from_seed, CandidateEvent, EventType,
         InferenceBackend, Kernel, KernelConfig, ModuleDescriptor, ZonePolicy,
     };
+    use std::cell::RefCell;
     use std::path::{Path, PathBuf};
+
+    thread_local! {
+        static BETWEEN_THE_ANCHOR_AND_CLOCK_READS: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
+    }
+
+    /// Test seam: runs between the anchors pass and the clock-provenance
+    /// cross-check, where a writer may land.
+    pub(super) fn between_the_anchor_and_clock_reads() {
+        BETWEEN_THE_ANCHOR_AND_CLOCK_READS.with(|hook| {
+            if let Some(f) = hook.borrow().as_ref() {
+                f();
+            }
+        });
+    }
 
     const TEST_SEED: &str = "devkey:test:runner1234567890abcdef1234567890";
 
@@ -834,6 +1011,7 @@ mod tests {
             identity_verified: true,
             high_water_mark_checked: false,
             anchors_checked: None,
+            clock_provenance_verified: None,
             events_verified: 3,
             break_glass_receipts_verified: 0,
             break_glass_granted: 0,
@@ -857,6 +1035,8 @@ mod tests {
         assert!(!json.contains("error"));
         // Empty warnings are omitted entirely (additive-field compat).
         assert!(!json.contains("warnings"));
+        // A ledger with no rows leaves the report byte-identical to before.
+        assert!(!json.contains("clock_provenance_verified"));
         // B3 labeling fields are always present.
         assert!(json.contains("\"verdict\":\"valid\""));
         assert!(json.contains("\"identity_verified\":true"));
@@ -2161,7 +2341,461 @@ mod tests {
         let conn = open_encrypted(db.path());
         let report = verify(&conn);
         assert!(report.chain_valid, "{:?}", report.error);
-        assert_eq!(report.anchors_checked, Some(4));
+        assert_eq!(
+            report.anchors_checked,
+            Some(AnchorSubject::HEADS.len() as u64)
+        );
+        assert_eq!(report.anchors_checked, Some(5));
         assert!(report.warnings.is_empty());
+    }
+
+    // ---------------- the clock-provenance ledger ----------------
+    // Every clock reading is injected, keyed to the fixture token's genTime.
+
+    const FIXTURE_GEN_TIME: u64 = 1_781_094_804;
+    const FIXTURE_BUCKET: i64 = 1_781_094_600;
+
+    fn observe(
+        kernel: &mut Kernel,
+        wall: u64,
+        gap: Option<u32>,
+    ) -> Vec<crate::SealedClockProvenance> {
+        kernel
+            .observe_anchors_for_clock_provenance(&crate::ClockObservation {
+                observed_wall_s: wall,
+                poll_gap_s: gap,
+                kernel_version: "0.0.0-test",
+            })
+            .expect("observe")
+    }
+
+    /// One event, the cursor initialized, then a chain-head anchor stored in
+    /// the fixture token's own bucket (a prompt row) and measured at
+    /// `genTime + offset_s` by a running daemon (gap 5 s). Returns the
+    /// anchor id and the anchored head.
+    fn clock_db(db: &TempDb, offset_s: i64) -> (i64, [u8; 32]) {
+        let mut kernel = open_kernel(db.path());
+        write_test_event(&mut kernel);
+        assert!(observe(&mut kernel, FIXTURE_GEN_TIME, None).is_empty());
+        let head = event_hash(&kernel.conn, 1);
+        let anchor_id = anchor(&kernel.conn, AnchorSubject::ChainHead, &head);
+        kernel
+            .conn
+            .execute(
+                "UPDATE tsa_anchors SET created_bucket_start = ?1 WHERE id = ?2",
+                rusqlite::params![FIXTURE_BUCKET, anchor_id],
+            )
+            .unwrap();
+        let sealed = observe(
+            &mut kernel,
+            (FIXTURE_GEN_TIME as i64 + offset_s) as u64,
+            Some(5),
+        );
+        assert_eq!(sealed.len(), 1);
+        (anchor_id, head)
+    }
+
+    /// No genTime (as text or as epoch seconds), no full hash.
+    fn assert_clock_hygiene(report: &VerifyReport, head: &[u8; 32]) {
+        for text in report
+            .warnings
+            .iter()
+            .chain(report.error.iter())
+            .chain(report.failure.iter().map(|f| &f.detail))
+        {
+            assert!(!has_64_hex(text), "full hash in report text: {text}");
+        }
+        let json = serde_json::to_string(report).unwrap();
+        assert!(
+            !json.contains(&hex::encode(head)),
+            "anchored hash leaked: {json}"
+        );
+        for needle in ["20260610123324", &FIXTURE_GEN_TIME.to_string()] {
+            assert!(!json.contains(needle), "genTime leaked: {json}");
+        }
+    }
+
+    #[test]
+    fn clock_provenance_walk_valid_tampered_and_off_lineage() {
+        let db = TempDb::new();
+        let (_, _) = clock_db(&db, 2);
+        let conn = open_encrypted(db.path());
+        let genesis = signing_key_from_seed(TEST_SEED).unwrap().verifying_key();
+        let mut seen = Vec::new();
+        let n = verify::verify_clock_provenance_with(
+            &conn,
+            &[genesis],
+            SignatureMode::Compat,
+            None,
+            |id, _| seen.push(id),
+        )
+        .unwrap();
+        assert_eq!((n, seen), (1, vec![1]));
+
+        // A key outside the lineage: the signature does not check.
+        let stranger = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]).verifying_key();
+        let err = verify::verify_clock_provenance_with(
+            &conn,
+            &[stranger],
+            SignatureMode::Compat,
+            None,
+            |_, _| {},
+        )
+        .unwrap_err();
+        let failure = err.downcast_ref::<verify::VerifyFailure>().unwrap();
+        assert_eq!(failure.ledger, verify::FailedLedger::ClockProvenance);
+        assert_eq!(failure.kind, verify::FailureKind::SignatureMismatch);
+        assert_eq!(failure.entry_id, Some(1));
+
+        // One byte of the stored payload literal changed: the entry hash no
+        // longer re-derives (the literal is hashed, never a re-serialization).
+        conn.execute(
+            "UPDATE clock_provenance SET payload_json = replace(payload_json, \
+             '\"observed_offset_s\":2', '\"observed_offset_s\":3')",
+            [],
+        )
+        .unwrap();
+        let err = verify::verify_clock_provenance_with(
+            &conn,
+            &[genesis],
+            SignatureMode::Compat,
+            None,
+            |_, _| {},
+        )
+        .unwrap_err();
+        let failure = err.downcast_ref::<verify::VerifyFailure>().unwrap();
+        assert_eq!(failure.kind, verify::FailureKind::EntryHashMismatch);
+        assert!(!has_64_hex(&failure.detail), "{}", failure.detail);
+
+        // A table with no rows, and no table at all, walk as zero.
+        conn.execute("DELETE FROM clock_provenance", []).unwrap();
+        assert_eq!(
+            verify::verify_clock_provenance_with(
+                &conn,
+                &[genesis],
+                SignatureMode::Compat,
+                None,
+                |_, _| {}
+            )
+            .unwrap(),
+            0
+        );
+        conn.execute_batch("DROP TABLE clock_provenance").unwrap();
+        assert_eq!(
+            verify::verify_clock_provenance_with(
+                &conn,
+                &[genesis],
+                SignatureMode::Compat,
+                None,
+                |_, _| {}
+            )
+            .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn clock_provenance_rows_are_counted_and_a_good_record_warns_nothing() {
+        // Zero rows (the table exists on every upgraded database): omitted.
+        let db = TempDb::new();
+        let mut kernel = open_kernel(db.path());
+        write_test_event(&mut kernel);
+        drop(kernel);
+        let report = verify(&open_encrypted(db.path()));
+        assert_eq!(report.clock_provenance_verified, None);
+        assert!(!serde_json::to_string(&report)
+            .unwrap()
+            .contains("clock_provenance_verified"));
+
+        let db = TempDb::new();
+        let (_, head) = clock_db(&db, 2);
+        let conn = open_encrypted(db.path());
+        let mut items = 0;
+        let report = run_full_verify(&conn, None, None, SignatureMode::Compat, |item| {
+            if matches!(item, VerifiedItem::ClockProvenance { .. }) {
+                items += 1;
+            }
+        })
+        .unwrap();
+        assert!(report.chain_valid, "{:?}", report.error);
+        assert_eq!(report.clock_provenance_verified, Some(1));
+        assert_eq!(items, 1);
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert!(serde_json::to_string(&report)
+            .unwrap()
+            .contains("\"clock_provenance_verified\":1"));
+        assert_clock_hygiene(&report, &head);
+    }
+
+    #[test]
+    fn clock_provenance_tampered_ledger_fails_the_verdict() {
+        let db = TempDb::new();
+        let (_, head) = clock_db(&db, 2);
+        let conn = open_encrypted(db.path());
+        conn.execute(
+            "UPDATE clock_provenance SET payload_json = replace(payload_json, \
+             '\"poll_gap_s\":5', '\"poll_gap_s\":1')",
+            [],
+        )
+        .unwrap();
+        let report = verify(&conn);
+        assert!(!report.chain_valid);
+        assert_eq!(report.verdict, "verification failed");
+        assert_eq!(report.clock_provenance_verified, None);
+        let failure = report.failure.clone().expect("structured failure");
+        assert_eq!(failure.ledger, verify::FailedLedger::ClockProvenance);
+        assert_eq!(failure.kind, verify::FailureKind::EntryHashMismatch);
+        assert_eq!(failure.entry_id, Some(1));
+        assert_eq!(
+            crate::verify_explain::ledger_name(failure.ledger),
+            "clock-provenance ledger"
+        );
+        assert_eq!(
+            serde_json::to_value(failure.ledger).unwrap(),
+            serde_json::json!("clock_provenance")
+        );
+        assert_clock_hygiene(&report, &head);
+    }
+
+    #[test]
+    fn clock_provenance_orphans_are_warnings() {
+        // The anchor row deleted.
+        let db = TempDb::new();
+        let (anchor_id, head) = clock_db(&db, 2);
+        let conn = open_encrypted(db.path());
+        conn.execute("DELETE FROM tsa_anchors WHERE id = ?1", [anchor_id])
+            .unwrap();
+        let report = verify(&conn);
+        assert!(report.chain_valid, "{:?}", report.error);
+        assert_eq!(report.clock_provenance_verified, Some(1));
+        assert_eq!(
+            report.warnings,
+            vec![format!(
+                "clock provenance orphan: record #1 names anchor #{anchor_id}, which is no \
+                 longer in the anchors table (deleted, or the table was rebuilt); run \
+                 log_anchor verify"
+            )]
+        );
+        assert_eq!(
+            verify::classify_warning(&report.warnings[0]),
+            verify::WarningKind::ClockProvenance
+        );
+        assert_clock_hygiene(&report, &head);
+
+        // The anchors table dropped altogether: still an orphan.
+        conn.execute_batch("DROP TABLE tsa_anchors").unwrap();
+        let report = verify(&conn);
+        assert_eq!(report.anchors_checked, None);
+        assert_eq!(report.warnings.len(), 1);
+        assert!(report.warnings[0].starts_with("clock provenance orphan: record #1"));
+
+        // The token replaced (here by one over another hash, which the
+        // anchor audit flags on its own as well).
+        let db = TempDb::new();
+        let (anchor_id, head) = clock_db(&db, 2);
+        let conn = open_encrypted(db.path());
+        conn.execute(
+            "UPDATE tsa_anchors SET token_der = ?1 WHERE id = ?2",
+            rusqlite::params![token_with_imprint(&[5u8; 32]), anchor_id],
+        )
+        .unwrap();
+        let report = verify(&conn);
+        assert!(report.chain_valid, "{:?}", report.error);
+        let orphan: Vec<&String> = report
+            .warnings
+            .iter()
+            .filter(|w| w.starts_with("clock provenance orphan:"))
+            .collect();
+        assert_eq!(orphan.len(), 1, "{:?}", report.warnings);
+        assert!(
+            orphan[0].starts_with(&format!(
+                "clock provenance orphan: record #1 binds anchor #{anchor_id} to token sha256 "
+            )),
+            "{}",
+            orphan[0]
+        );
+        assert!(orphan[0].ends_with("(the token was replaced); run log_anchor verify"));
+        assert_clock_hygiene(&report, &head);
+    }
+
+    #[test]
+    fn clock_provenance_offset_beyond_one_bucket_is_a_warning() {
+        let db = TempDb::new();
+        let (anchor_id, head) = clock_db(&db, 900);
+        let report = verify(&open_encrypted(db.path()));
+        assert!(report.chain_valid, "{:?}", report.error);
+        assert_eq!(
+            report.warnings,
+            vec![format!(
+                "clock offset: record #1 measured the device clock +900 s from anchor \
+                 #{anchor_id}'s TSA time — beyond one bucket (600 s); run log_anchor verify"
+            )]
+        );
+        assert_eq!(
+            verify::classify_warning(&report.warnings[0]),
+            verify::WarningKind::ClockProvenance
+        );
+        assert_clock_hygiene(&report, &head);
+
+        // Within one bucket either way: nothing.
+        let db = TempDb::new();
+        clock_db(&db, -600);
+        assert!(verify(&open_encrypted(db.path())).warnings.is_empty());
+
+        // A delayed import (row stored two days after issuance) with a
+        // positive offset is not a clock reading: not a warning. Negative is.
+        for (offset, warns) in [(3600, false), (-3600, true)] {
+            let db = TempDb::new();
+            let (anchor_id, _) = clock_db(&db, offset);
+            let conn = open_encrypted(db.path());
+            conn.execute(
+                "UPDATE tsa_anchors SET created_bucket_start = ?1 WHERE id = ?2",
+                rusqlite::params![FIXTURE_BUCKET + 2 * 86_400, anchor_id],
+            )
+            .unwrap();
+            let report = verify(&conn);
+            assert_eq!(
+                !report.warnings.is_empty(),
+                warns,
+                "{offset}: {:?}",
+                report.warnings
+            );
+            if warns {
+                assert!(report.warnings[0].contains("<= -3600 s (clamped)"));
+            }
+        }
+    }
+
+    #[test]
+    fn clock_provenance_missing_record_is_not_a_warning() {
+        // Anchors that predate the ledger have no record; one anchor has a
+        // record, the next one none: no warning about the missing one.
+        let db = TempDb::new();
+        let (_, _) = clock_db(&db, 2);
+        let kernel = open_kernel(db.path());
+        anchor(&kernel.conn, AnchorSubject::Digest, &[9u8; 32]);
+        drop(kernel);
+        let report = verify(&open_encrypted(db.path()));
+        assert!(report.chain_valid, "{:?}", report.error);
+        assert_eq!(report.anchors_checked, Some(2));
+        assert_eq!(report.clock_provenance_verified, Some(1));
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    }
+
+    fn clock_provenance_head(kernel: &mut Kernel) -> [u8; 32] {
+        let record = crate::ClockProvenanceRecord {
+            schema: crate::CLOCK_PROVENANCE_SCHEMA_V1.to_string(),
+            time_bucket: TimeBucket {
+                start_epoch_s: FIXTURE_BUCKET as u64,
+                size_s: 600,
+            },
+            anchor_id: 1,
+            token_sha256: crate::clock_provenance::token_sha256_hex(&fixture_token_der()),
+            observed_offset_s: None,
+            poll_gap_s: None,
+            kernel_version: "0.0.0-test".to_string(),
+        };
+        kernel.append_clock_provenance(&record).unwrap().entry_hash
+    }
+
+    #[test]
+    fn anchors_clock_provenance_head_present_then_absent() {
+        head_kind_round_trip(
+            AnchorSubject::ClockProvenanceHead,
+            clock_provenance_head,
+            "clock_provenance",
+        );
+    }
+
+    /// The anchors pass and the clock-provenance cross-check read from one
+    /// snapshot: a row anchored and its record sealed between them is not an
+    /// orphan. Without the savepoint the cross-check reads the new record
+    /// against an anchors list that never saw its row and warns
+    /// "clock provenance orphan".
+    #[test]
+    fn anchors_and_clock_records_are_read_from_one_snapshot() {
+        let db = TempDb::new();
+        let cfg = KernelConfig {
+            db_path: db.path().to_string_lossy().to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: env!("CARGO_PKG_VERSION").to_string(),
+            retention: std::time::Duration::from_secs(60),
+            device_key_seed: TEST_SEED.to_string(),
+            zone_policy: ZonePolicy::default(),
+        };
+        let fixture = crate::tsa::parse_response(
+            &std::fs::read(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/tsa/reply.tsr"
+            ))
+            .expect("reading the TSA fixture"),
+        )
+        .expect("the fixture token parses");
+        let gen_time = crate::tsa::gen_time_unix(&fixture.gen_time).expect("genTime");
+        let imprint: [u8; 32] = fixture.imprint.clone().try_into().expect("32-byte imprint");
+        let observe = |cfg: &KernelConfig, wall: i64, gap: Option<u32>| -> usize {
+            Kernel::open(cfg)
+                .expect("open kernel")
+                .observe_anchors_for_clock_provenance(&crate::ClockObservation {
+                    observed_wall_s: wall as u64,
+                    poll_gap_s: gap,
+                    kernel_version: "0.0.0-test",
+                })
+                .expect("observe")
+                .len()
+        };
+        let anchor_fixture = |cfg: &KernelConfig| {
+            let kernel = Kernel::open(cfg).expect("open kernel");
+            crate::tsa::ensure_anchor_table(&kernel.conn).expect("anchors table");
+            crate::tsa::insert_anchor(
+                &kernel.conn,
+                "digest",
+                &imprint,
+                "https://tsa.example/tsr",
+                &fixture,
+            )
+            .expect("insert anchor");
+        };
+        let mut kernel = open_kernel(db.path());
+        write_test_event(&mut kernel);
+        drop(kernel);
+        // The first poll only places the cursor; the next seals anchor #1's record.
+        assert_eq!(observe(&cfg, gen_time, None), 0);
+        anchor_fixture(&cfg);
+        assert_eq!(observe(&cfg, gen_time + 5, Some(5)), 1);
+
+        let writer_cfg = cfg.clone();
+        let writer_fixture = fixture.clone();
+        BETWEEN_THE_ANCHOR_AND_CLOCK_READS.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                let kernel = Kernel::open(&writer_cfg).expect("open kernel");
+                crate::tsa::ensure_anchor_table(&kernel.conn).expect("anchors table");
+                crate::tsa::insert_anchor(
+                    &kernel.conn,
+                    "digest",
+                    &imprint,
+                    "https://tsa.example/tsr",
+                    &writer_fixture,
+                )
+                .expect("insert anchor");
+                drop(kernel);
+                assert_eq!(observe(&writer_cfg, gen_time + 10, Some(5)), 1);
+            }));
+        });
+        let conn = open_encrypted(db.path());
+        let report = verify(&conn);
+        BETWEEN_THE_ANCHOR_AND_CLOCK_READS.with(|hook| *hook.borrow_mut() = None);
+        assert!(report.chain_valid, "{:?}", report.error);
+        assert_eq!(report.anchors_checked, Some(1));
+        assert_eq!(report.clock_provenance_verified, Some(1));
+        assert!(
+            report.warnings.iter().all(|w| !w.contains("orphan")),
+            "{:?}",
+            report.warnings
+        );
+        // Both rows and both records exist once the snapshot has ended.
+        assert_eq!(crate::tsa::list_anchors(&conn).unwrap().len(), 2);
+        assert_eq!(crate::clock_provenance::row_count(&conn).unwrap(), 2);
     }
 }

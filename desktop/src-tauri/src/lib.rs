@@ -929,30 +929,36 @@ async fn run_sidecar_streaming(
 }
 
 /// Where the automatic pre-flash safety copy lands: a per-app backups folder,
-/// named by the board's MAC + moment, created on demand. The frontend can't
-/// know the app-data dir, and the browser flasher's equivalent (an unasked
-/// download before every write) is the parity bar this path exists to meet —
-/// the reflash-with-no-undo gap was desktop-only. The name is the engine's
-/// `rescue::backup_filename` — the browser's `canary-…-backup.bin` scheme,
-/// with the moment in it because every safety copy shares this one folder.
+/// created on demand, named by the local date and a counter — never by
+/// anything of the board's (the MAC's tail used to name it, and the base MAC
+/// is the station address in every Wi-Fi frame). The frontend can't know the
+/// app-data dir, and the browser flasher's equivalent (an unasked download
+/// before every write) is the parity bar this path exists to meet — the
+/// reflash-with-no-undo gap was desktop-only. `day` is the frontend's local
+/// `YYYY-MM-DD` (Rust std has no local zone); the name is the engine's
+/// `rescue::next_backup_filename` — the browser's `canary-…-backup.bin`
+/// scheme, with the next free counter because every copy shares this folder.
 ///
 /// Not a command: this used to answer the webview, which handed the string
 /// straight back to `backup_flash` as its write target — so the "automatic"
 /// destination was whatever a script in the webview said it was.
-/// `backup_flash` now calls this itself (`dest: "auto"`), and `mac` only ever
-/// reaches a file NAME, reduced to hex digits by the engine's helper.
-fn auto_backup_path(app: &AppHandle, mac: String) -> Result<std::path::PathBuf, String> {
+/// `backup_flash` now calls this itself (`dest: "auto"`), and `day` only ever
+/// reaches a file NAME, which the engine's helper refuses unless it is a date.
+fn auto_backup_path(app: &AppHandle, day: &str) -> Result<std::path::PathBuf, String> {
     let dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("no app data dir: {e}"))?
         .join("backups");
     std::fs::create_dir_all(&dir).map_err(|e| format!("couldn't create backups dir: {e}"))?;
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    Ok(dir.join(rescue::backup_filename(&mac, &stamp.to_string())))
+    let taken: Vec<String> = std::fs::read_dir(&dir)
+        .map_err(|e| format!("couldn't read the backups dir: {e}"))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    let name = rescue::next_backup_filename(day, &taken)
+        .ok_or_else(|| format!("not a date the backup can be named by: {day:?}"))?;
+    Ok(dir.join(name))
 }
 
 /// Raise the OS save panel from HERE and answer the path it gave, validated
@@ -998,28 +1004,32 @@ async fn ask_save_path(
 /// There is no path argument. `dest` names one of two destinations this
 /// process works out for itself: `"ask"` raises the OS save panel (the rescue
 /// bench's Back up button) and `"auto"` is the app's own backups folder (the
-/// safety copy before an install; `auto_backup_path`). Answers the path
-/// written, for display and for the change map, or `None` when the user
-/// canceled the panel — nothing is read off the board in that case.
+/// safety copy before an install; `auto_backup_path`). `day` is the page's
+/// local date, which names the automatic copy; `name` is the file name the
+/// panel opens on (`suggested_file_name` holds it to one plain `.bin` name).
+/// Neither is a path. Answers the path written, for display and for the
+/// change map, or `None` when the user canceled the panel — nothing is read
+/// off the board in that case.
 #[tauri::command]
 async fn backup_flash(
     app: AppHandle,
     port: String,
     flash_size: u64,
     baud: u32,
-    mac: String,
+    day: String,
+    name: String,
     dest: String,
 ) -> Result<Option<String>, String> {
     if flash_size == 0 {
         return Err("couldn't read this chip's flash size — reconnect and try again".into());
     }
     let out = match dest.as_str() {
-        "auto" => validated_backup_path(&auto_backup_path(&app, mac)?)?,
+        "auto" => validated_backup_path(&auto_backup_path(&app, &day)?)?,
         "ask" => {
             let asked = ask_save_path(
                 &app,
                 "Save the flash backup",
-                rescue::backup_filename(&mac, ""),
+                suggested_file_name(&name, "bin")?,
                 "Flash backup",
                 "bin",
                 validated_backup_path,
@@ -1189,10 +1199,7 @@ async fn read_region(
     )
     .await?;
     if code != 0 {
-        return Err(format!(
-            "espflash exited with code {code} reading 0x{offset:x}: {}",
-            log.trim()
-        ));
+        return Err(rescue::read_failure(code, offset, &log));
     }
     let data = std::fs::read(tmp.path())
         .map_err(|e| format!("couldn't read back region 0x{offset:x}: {e}"))?;
@@ -1261,30 +1268,41 @@ fn validated_backup_path(path: &std::path::Path) -> Result<std::path::PathBuf, S
     validated_chosen_path(path, "bin", "a flash backup is saved as a .bin file")
 }
 
-/// The health report's suggested file name, `canary-<mac6>-report.json`: the
-/// engine's backup name (`rescue::backup_filename`, the one place the MAC is
-/// reduced to its last six hex digits) with the report's ending, so a
-/// board's backup and its report sort together and `mac` — the one value the
-/// webview supplies — can never carry a path separator into the panel.
-fn report_filename(mac: &str) -> String {
-    let backup = rescue::backup_filename(mac, "");
-    let stem = backup.strip_suffix("-backup.bin").unwrap_or("canary");
-    format!("{stem}-report.json")
+/// The file name a save panel opens on. The page suggests it (the browser
+/// flasher's own neutral names: the local date and a counter, never the
+/// board's address), and a suggestion is all it is: a person sees it in the
+/// panel and answers. Held to one plain file name with the expected ending,
+/// so nothing the page sends can carry a directory or a parent step into the
+/// panel's starting point.
+fn suggested_file_name(name: &str, ext: &str) -> Result<String, String> {
+    let ending = format!(".{ext}");
+    let plain = name.len() <= 80
+        && !name.starts_with('.')
+        && !name.contains("..")
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'));
+    if plain && name.len() > ending.len() && name.ends_with(&ending) {
+        Ok(name.to_string())
+    } else {
+        Err(format!("not a file name this app suggests: {name:?}"))
+    }
 }
 
 /// Save UTF-8 text — the health report's JSON export — to a file the user
 /// chooses in the OS save panel, which is raised from HERE (`ask_save_path`).
 /// No path argument, no FS plugin, no ambient access: a script in the webview
-/// can ask for the panel, and only a person can answer it. `.json` is a
+/// can ask for the panel and suggest a name (`suggested_file_name`), and only
+/// a person can answer it. `.json` is a
 /// config format other tools execute (editor settings, package manifests), so
 /// "any .json path the webview names" was a write primitive worth closing.
 /// `true` when the file was written, `false` when the user canceled.
 #[tauri::command]
-async fn save_text_file(app: AppHandle, mac: String, contents: String) -> Result<bool, String> {
+async fn save_text_file(app: AppHandle, name: String, contents: String) -> Result<bool, String> {
     let asked = ask_save_path(
         &app,
         "Save the health report",
-        report_filename(&mac),
+        suggested_file_name(&name, "json")?,
         "Health report",
         "json",
         validated_save_path,
@@ -1310,12 +1328,14 @@ fn verdict_json(v: &health::Verdict) -> Value {
 /// Read the connected board's health: partition map, the firmware in each slot,
 /// update history, crash dump, and the witness chain — read-only. Returns the
 /// same report shape the browser renders, plus a self-heal verdict.
+///
+/// The report carries no hardware address: the frontend shows the board's
+/// behind a reveal on screen and saves none of it (app.js onSaveHealthReport).
 #[tauri::command]
 async fn health_check(
     app: AppHandle,
     port: String,
     chip: String,
-    mac: Option<String>,
     flash_bytes: Option<u64>,
     baud: u32,
 ) -> Result<Value, String> {
@@ -1333,7 +1353,7 @@ async fn health_check(
         });
         emit("✓ read complete — the chip looks blank.");
         return Ok(json!({
-            "chip": chip, "mac": mac, "flashBytes": flash_bytes,
+            "chip": chip, "flashBytes": flash_bytes,
             "blank": true, "partitions": [], "verdict": verdict_json(&verdict),
         }));
     }
@@ -1494,7 +1514,7 @@ async fn health_check(
 
     emit("✓ health check complete.");
     Ok(json!({
-        "chip": chip, "mac": mac, "flashBytes": flash_bytes,
+        "chip": chip, "flashBytes": flash_bytes,
         "partitions": partitions,
         "slots": slots.into_iter().map(Value::Object).collect::<Vec<_>>(),
         "ota": ota_json, "coredump": coredump_json,
@@ -1519,8 +1539,18 @@ async fn health_check(
 /// layout with no coredump region, or a flaky cable degrades a field to null
 /// rather than failing the connect. A passport that cannot be read must never
 /// be reported as a blank board — missing evidence is its own answer.
+///
+/// `chip` (detect_chip's canonical name) places the bootloader's image
+/// header for the About-this-board rows: 32 bytes at 0x0, or 0x1000 on the
+/// classic ESP32. `bootloader` is null when no image is there and `false`
+/// when the read itself failed — two answers the rows keep apart.
 #[tauri::command]
-async fn board_passport(app: AppHandle, port: String, baud: u32) -> Result<Value, String> {
+async fn board_passport(
+    app: AppHandle,
+    port: String,
+    chip: Option<String>,
+    baud: u32,
+) -> Result<Value, String> {
     // Each region is its own espflash spawn (bootloader re-sync included), so
     // the whole read runs 8–25 s — long enough that a silent label reads as a
     // hang. `passport:log` narrates each step; the frontend shows the line in
@@ -1528,12 +1558,33 @@ async fn board_passport(app: AppHandle, port: String, baud: u32) -> Result<Value
     let narrate = |line: &str| {
         let _ = app.emit("passport:log", line.to_string());
     };
+    narrate("reading the bootloader's image header…");
+    let chip_name = chip.unwrap_or_default();
+    let bootloader = match read_region(
+        &app,
+        &port,
+        health::bootloader_offset(&chip_name),
+        0x20,
+        baud,
+    )
+    .await
+    {
+        Ok(hb) => match health::parse_bootloader_header(&hb, &chip_name) {
+            Some(h) => json!({
+                "flashMode": h.flash_mode, "flashMhz": h.flash_mhz,
+                "flashMhzEither": h.flash_mhz_either, "flashBytes": h.flash_bytes,
+                "codes": { "mode": h.mode_code, "size": h.size_code, "freq": h.freq_code },
+            }),
+            None => Value::Null,
+        },
+        Err(_) => json!(false),
+    };
     narrate("reading the partition table…");
     let pt = read_region(&app, &port, 0x8000, 0xc00, baud).await?;
     let entries = health::parse_partition_table(&pt);
     if entries.is_empty() {
         // Read fine, found no table: a genuinely blank (or fully erased) chip.
-        return Ok(json!({ "blank": true, "resident": Value::Null }));
+        return Ok(json!({ "blank": true, "resident": Value::Null, "bootloader": bootloader }));
     }
 
     let apps = health::app_partitions(&entries);
@@ -1578,6 +1629,8 @@ async fn board_passport(app: AppHandle, port: String, baud: u32) -> Result<Value
                     "version": d.version,
                     "projectName": d.project_name,
                     "idf": d.idf_ver,
+                    "secureVersion": d.secure_version,
+                    "elfSha256Prefix": d.elf_sha256_prefix,
                     "slot": booted.label,
                 });
             }
@@ -1614,6 +1667,7 @@ async fn board_passport(app: AppHandle, port: String, baud: u32) -> Result<Value
     Ok(json!({
         "blank": false,
         "resident": resident,
+        "bootloader": bootloader,
         "ota": ota_json,
         "coredump": coredump_json,
         "witness": witness_json,
@@ -1903,7 +1957,7 @@ mod catalog_derivation_tests {
 #[cfg(test)]
 mod webview_boundary_tests {
     use super::{
-        chosen_file_ok, report_filename, validated_backup_path, validated_save_path,
+        chosen_file_ok, suggested_file_name, validated_backup_path, validated_save_path,
         vision_model_size_ok, VISION_MODEL_MAX_BYTES,
     };
     use std::path::Path;
@@ -2062,23 +2116,35 @@ mod webview_boundary_tests {
     }
 
     #[test]
-    fn the_report_name_is_the_backup_names_stem_and_never_a_path() {
+    fn a_suggested_name_is_one_plain_file_name_with_the_expected_ending() {
+        // The browser's own names, which the page suggests.
         assert_eq!(
-            report_filename("AA:BB:CC:DD:EE:FF"),
-            "canary-ddeeff-report.json"
+            suggested_file_name("canary-2026-10-22-1-backup.bin", "bin").unwrap(),
+            "canary-2026-10-22-1-backup.bin"
         );
-        assert_eq!(report_filename(""), "canary-canary-report.json");
-        // The MAC is the one value the webview supplies: whatever it holds,
-        // the suggested name stays a bare file name.
-        for hostile in ["../../etc/passwd", "/abs/olute", "a\\b", "..", "x/../y"] {
-            let name = report_filename(hostile);
-            assert!(!name.contains('/') && !name.contains('\\'), "{name}");
-            assert!(!name.contains(".."), "{name}");
-            assert!(
-                name.starts_with("canary-") && name.ends_with("-report.json"),
-                "{name}"
-            );
+        assert_eq!(
+            suggested_file_name("canary-2026-10-22-2-report.json", "json").unwrap(),
+            "canary-2026-10-22-2-report.json"
+        );
+        // The name is the one value the webview supplies: a directory, a
+        // parent step, a hidden file, another ending or nothing is refused.
+        for hostile in [
+            "../../etc/passwd.json",
+            "/abs/olute.json",
+            "a\\b.json",
+            "..json",
+            "x/../y.json",
+            ".bashrc.json",
+            "report.json.sh",
+            "report",
+            ".json",
+            "",
+            "with space.json",
+        ] {
+            assert!(suggested_file_name(hostile, "json").is_err(), "{hostile}");
         }
+        assert!(suggested_file_name("canary-2026-10-22-1-backup.bin", "json").is_err());
+        assert!(suggested_file_name(&format!("{}.json", "a".repeat(90)), "json").is_err());
     }
 
     #[test]

@@ -598,8 +598,8 @@ parses the real source in each language and
 fails CI if any copy drifts. To change a vocabulary, edit the dictionary first.
 
 **Anchor subject** — What an RFC 3161 anchor row says it covers: `chain_head`,
-`export_receipt_head`, `break_glass_receipt_head`, `policy_head`, or a bare
-`digest`. A label the tools re-derive from the token and the ledgers, never
+`export_receipt_head`, `break_glass_receipt_head`, `policy_head`,
+`clock_provenance_head`, or a bare `digest`. A label the tools re-derive from the token and the ledgers, never
 trust — a court kit packages by hash, not by label.
 → [timestamping](timestamping.md)
 
@@ -608,6 +608,16 @@ trust — a court kit packages by hash, not by label.
 which declared role (`qualified` / `independent`); `log_anchor verify --policy`
 checks countersignatures, count and distinctness against it, never legal
 status. → [timestamping](timestamping.md)
+
+**Clock provenance** — The device's own clock measured against an RFC 3161
+token's `genTime`: `witnessd` seals one device-signed, hash-chained,
+never-pruned record per anchor row (whole seconds, clamped to ±3600, with the
+measured poll gap that bounds it, bound to the token by its SHA-256; a row
+already there when a daemon starts gets a *binding-only* record). The
+ledger's head is the anchor subject `clock_provenance_head`. It answers "the
+device's clock was wrong" with a signed measurement; it never makes an
+event's 10-minute bucket finer. → [timestamping](timestamping.md) ·
+[design](design/clock_provenance.md)
 
 **Empty-ledger sentinel** — The fixed per-subject digest `anchor-all` requests
 when a ledger has no head yet, so a scheduled run always sends the same number

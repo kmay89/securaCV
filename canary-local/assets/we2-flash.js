@@ -23,7 +23,7 @@
 // Same failure posture as the ESP32 flow: every error names the fix, and
 // nothing here can brick the module — the burn menu lives in mask ROM.
 
-import { WE2, We2Flasher, makeAtParser, atCommand, modelInfoJson,
+import { WE2, We2Flasher, makeAtParser, atCommand, burnCardBase64,
          stylizeDetections, meterModel, WE2_CLASSES } from "./we2-core.js";
 import { helpTopic, hatchMoment, isVisionBoard, verifyPinnedModelAsset,
          fetchReleaseAsset } from "./flash-core.js";
@@ -271,12 +271,14 @@ function phaseModuleConnected(ctx, s) {
   (async () => {
     const at = probe;
     at.start();
+    // VER? only. The module's ID? answer is treated as a per-unit identifier
+    // (device details design §2.2, the never-read "sscma_module_id" row), so
+    // this bench never asks for it, on either flasher.
     const ver = await at.cmd("VER?", { timeoutMs: 1600 });
-    const id = ver ? await at.cmd("ID?", { timeoutMs: 1200 }) : null;
     at.stop();
     if (ver && ver.data) {
       idLine.textContent = "It answered: SSCMA firmware " + (ver.data.software || "?") +
-        (id && id.data ? " · id " + id.data : "") + ". Ready to (re)load the model.";
+        ". Ready to (re)load the model.";
     } else {
       idLine.textContent = "No AT answer — fine: a model-less or mid-state module still " +
         "flashes through its ROM bootloader. If this is actually the XIAO’s port, the next " +
@@ -403,21 +405,60 @@ function phaseModuleFlash(ctx, s, job) {
   box.append(bar, log);
 
   (async () => {
+    const say = (l) => { log.textContent += "· " + l + "\n"; log.scrollTop = log.scrollHeight; };
     const f = new We2Flasher(s.t, {
-      onLog: (l) => { log.textContent += "· " + l + "\n"; log.scrollTop = log.scrollHeight; },
+      onLog: say,
       onProgress: (p) => { fill.style.width = Math.round(p * 100) + "%"; },
     });
+    // A file the person picked gets its card (the one that claims nothing,
+    // burnCardBase64) BEFORE the burn, while the module's SSCMA firmware can
+    // still answer AT. The card is that firmware's, not part of the model a
+    // burn writes, so a burn alone can leave whatever card an earlier one
+    // stored, SecuraCV's person card among them; if the module then never
+    // answers after the burn, that card would go on speaking for this file.
+    // The pinned model's card waits for its bytes (phaseModuleDone): before
+    // the burn it would describe a model the module does not carry yet.
+    let cardFirst = false;
+    if (job.pinned !== true) {
+      const at = makeAtClient(s.t);
+      at.start();
+      let answered = false;
+      try {
+        const ver = await at.cmd("VER?", { timeoutMs: 1200 });
+        answered = !!(ver && ver.code === 0);
+        const wrote = answered ? await at.cmd('INFO="' + burnCardBase64(job) + '"', { timeoutMs: 3000 }) : null;
+        cardFirst = !!(wrote && wrote.code === 0);
+      } catch { /* the burn below does not need it; phaseModuleDone tries again */ }
+      at.stop();
+      say(cardFirst ? "stored this file’s model card first (it names no model and lists no class)"
+        : answered ? "the module didn’t take this file’s model card before the burn — it goes on after it"
+          : "no AT answer before the burn — this file’s model card goes on after it");
+    }
+    // The card is on if this attempt or an earlier one at this same burn
+    // ("Reset and retry") put it there: a burn that failed inside the
+    // bootloader leaves the module answering no AT, so the retry cannot write
+    // it again, but the first attempt's card is still on.
+    const cardOn = cardFirst || job.cardFirst === true;
     try {
       await f.flashModel(job.bytes);
       // Two-port Vision: the camera module's model is now burned — record it
       // (once, here at the completion transition) so the done screen can insist
       // on both ports and celebrate only when both are in.
       visionSession.markDone("we2");
-      ctx.setPhase(phaseModuleDone(ctx, s, job));
+      ctx.setPhase(phaseModuleDone(ctx, s, { ...job, cardFirst: cardOn }));
     } catch (e) {
       log.textContent += "✗ " + e.message + "\n";
+      // The card went on, the model did not: the module keeps whatever model
+      // it held (an earlier pinned burn's, or part of this one) under a card
+      // that claims nothing, so a bench labels nothing "person" until a burn
+      // completes. Said here, where the person decides whether to retry.
+      if (cardOn) {
+        box.append(el("p", "fineprint", "This file’s model card went on before the burn, so until a burn " +
+          "completes, whatever model the module holds sits under a card that names no model and lists " +
+          "no class, and a bench labels its detections “object”."));
+      }
       const retry = el("button", "primary", "Reset and retry");
-      retry.addEventListener("click", () => ctx.setPhase(phaseModuleFlash(ctx, s, job)));
+      retry.addEventListener("click", () => ctx.setPhase(phaseModuleFlash(ctx, s, { ...job, cardFirst: cardOn })));
       const back = el("button", "ghost", "← start over");
       back.addEventListener("click", async () => { await s.t.close(); ctx.back(); });
       const row = el("div", "we2-btnrow");
@@ -468,7 +509,7 @@ function benchHelpDot(ctx, topicId) {
 function mountBench(ctx, at, opts = {}) {
   const m = ctx.catalog.we2_module;
   const guide = m.bench || { defaults: { tscore: 50, tiou: 45 }, steps: [], troubleshooting: [] };
-  const classes = opts.pinned ? WE2_CLASSES : [];
+  const classes = opts.personClass ? WE2_CLASSES : [];
 
   const bench = el("div", "we2-bench");
   bench.append(el("h3", "wap-col-h", "Bench check — see what it sees"));
@@ -626,7 +667,7 @@ function mountBench(ctx, at, opts = {}) {
     if (dets.length && !seen) {
       seen = true;
       chirp("seen");
-      seenBanner.textContent = opts.pinned
+      seenBanner.textContent = opts.personClass
         ? "👁 It sees you — the model is live and working ✓"
         : "👁 It sees something — the model is live and working ✓";
       seenBanner.classList.remove("flash-hidden");
@@ -711,22 +752,31 @@ function phaseModuleBench(ctx, s) {
         "refusing, burn the model first (one click back).";
       return;
     }
-    // What model is on it? Our stored model card answers — honesty decides the
-    // label map: only a card naming the person class earns "person" labels.
+    // What model is on it? This flasher cannot say: it wrote nothing here,
+    // and the stored model card is the module's own claim, not a check. The
+    // card decides only the label map (a card listing the person class earns
+    // "person" labels) and never names the model. Its text is never shown —
+    // the module's own catalog includes models that would name a capability
+    // this project refuses (grove_vision_ai_v2_guide.md). A model is NAMED
+    // only by this flasher, right after it wrote one whose SHA-256 matched
+    // the pinned release (phaseModuleDone).
     const info = await at.cmd("INFO?", { timeoutMs: 2000 });
-    let pinned = false, modelName = "";
+    let personClass = false, hasCard = false;
     try {
       // the reply's data is the base64 card — bare, or nested as data.info
       const raw = info && (typeof info.data === "string" ? info.data
         : info.data && typeof info.data.info === "string" ? info.data.info : null);
       const decoded = raw ? JSON.parse(atob(raw)) : null;
-      modelName = (decoded && decoded.name) || "";
-      pinned = !!(decoded && Array.isArray(decoded.classes) && decoded.classes.includes("person"));
+      hasCard = !!decoded;
+      personClass = !!(decoded && Array.isArray(decoded.classes) && decoded.classes.includes("person"));
     } catch { /* no card or not ours — generic labels */ }
     idLine.textContent = "SSCMA firmware " + ((ver.data && ver.data.software) || "?") +
-      (modelName ? " · model: " + modelName : " · no model card — labels will read “object”") +
+      (personClass
+        ? " · its model card lists a person class — labels will read “person” (the card is the module’s own claim; its text isn’t shown)"
+        : hasCard ? " · its model card lists no person class — labels will read “object”"
+          : " · no model card — labels will read “object”") +
       ". Start the preview below.";
-    bench = mountBench(ctx, at, { pinned });
+    bench = mountBench(ctx, at, { personClass });
     box.insertBefore(bench.node, backBtn);
   })();
 
@@ -783,26 +833,48 @@ function phaseModuleDone(ctx, s, job) {
     // from its burn is the normal case here, not a failure.
     await sleep(1200);
     const ver = await wakeModule(at, s.t, (line) => { proof.textContent = line; });
+    // A file the person picked whose card reached the module neither before
+    // the burn (phaseModuleFlash, in this attempt or an earlier one at this
+    // burn) nor after it: the module may still hold a card an earlier burn
+    // stored, and both benches take their labels from it.
+    const keptCard = (stored) => (job.pinned !== true && !job.cardFirst && !stored
+      ? " The module didn’t take this file’s model card, so it may still carry the model card an " +
+        "earlier burn stored, and a bench takes its labels from that card. Burn this file again " +
+        "once the module answers, and its card goes on first."
+      : "");
     if (ver) {
-      // store our model card on-device (what SenseCraft does after a flash),
-      // then a one-shot invoke as the "it actually runs" proof
-      const info = btoa(JSON.stringify(modelInfoJson({ version: job.version, sha256: job.sha256 })));
-      await at.cmd('INFO="' + info + '"', { timeoutMs: 3000 });
+      // store a model card on-device (what SenseCraft does after a flash),
+      // then a one-shot invoke as the "it actually runs" proof. Our card only
+      // for the pinned model; a local file's card names nothing and lists no
+      // class (burnCardBase64), so a bench that reads it labels nothing
+      // "person". The module stores it only if it acknowledges the write.
+      const info = burnCardBase64(job);
+      const wrote = await at.cmd('INFO="' + info + '"', { timeoutMs: 3000 });
+      const stored = !!(wrote && wrote.code === 0);
       const inv = await at.cmd("INVOKE=1,0,1", { timeoutMs: 8000 });
-      proof.textContent = inv && inv.code === 0
-        ? "✓ The module answered, carries our model card, and ran one inference. Done — the " +
+      // The one place a model is named: this flasher just wrote it, and its
+      // SHA-256 (and, once a release key is pinned, its signature) matched
+      // manifest-vision-model.json before a byte went out. A local file is
+      // the person's own, so it is never named for them.
+      const named = job.pinned === true
+        ? "SecuraCV person detection, installed and checked. The module answered" +
+          (stored ? ", carries our model card, " : " ")
+        : "Your model file, installed. The module answered ";
+      proof.textContent = (inv && inv.code === 0
+        ? "✓ " + named + "and ran one inference. Done — the " +
           "model persists across power cycles and every host reflash."
         : "The module answers AT but the test inference didn’t reply — power-cycle it once. " +
-          "If it keeps refusing: the module may be running non-SSCMA firmware; see the device guide §4.";
+          "If it keeps refusing: the module may be running non-SSCMA firmware; see the device guide §4.") +
+        keptCard(stored);
     } else {
       proof.textContent = "No AT answer after reboot, even after an automatic reset — unplug/" +
         "replug the module and it should come up with the new model. The burn itself completed — " +
-        "every block was acknowledged.";
+        "every block was acknowledged." + keptCard(false);
     }
   })();
 
   // ── the bench: shared with phaseModuleBench — video, boxes, meter, guide ──
-  const bench = mountBench(ctx, at, { pinned: job.pinned });
+  const bench = mountBench(ctx, at, { personClass: job.pinned === true });
   box.append(bench.node);
 
   const done = el("button", "ghost", "Disconnect — I’m done");
