@@ -41,7 +41,7 @@ FROM ghcr.io/home-assistant/aarch64-base:3.22@sha256:5f647e139079ca3d004d4e8e904
 # the cached dependency layer (and, with the buildx GHA cache wired in
 # .github/workflows/addon-image.yml, across CI runs too) — only the crate itself is
 # then recompiled.
-FROM docker.io/library/alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f AS chef
+FROM docker.io/library/alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS chef
 # TARGETARCH is provided automatically by buildx (amd64 / arm64); a stage
 # re-declares it to read it.
 ARG TARGETARCH
@@ -136,7 +136,7 @@ RUN cargo build --release --features rtsp-gstreamer
 # equal the app's (config.yaml): this layer refuses a mismatch, as
 # scripts/lint_version_sync.sh and the pwk-wizard-tests job do before any
 # image is built.
-FROM docker.io/library/alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f AS carry
+FROM docker.io/library/alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS carry
 COPY custom_components/securacv /carry/integration/securacv
 COPY docs/blueprints/ /carry/blueprints/
 COPY privacy_witness_kernel/config.yaml /carry/config.yaml
