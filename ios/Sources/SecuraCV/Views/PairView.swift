@@ -152,7 +152,11 @@ struct PairView: View {
                     // the grant, and only it.
                     let scoped = url.startAccessingSecurityScopedResource()
                     defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                    if let data = try? Data(contentsOf: url) {
+                    // A kit is a few hundred bytes: anything past 64 KB is
+                    // not one, and is refused before it is read.
+                    if let size = UnsealModel.fileSize(of: url), size > 64 * 1024 {
+                        error = "That file is too large to be a recovery kit."
+                    } else if let data = try? Data(contentsOf: url) {
                         pair(from: data)
                     } else {
                         error = "That file couldn't be read."
@@ -194,7 +198,8 @@ struct PairView: View {
         let ref = PairedDeviceRef(id: receipt.deviceID.isEmpty ? canary.deviceID : receipt.deviceID,
                                   name: canary.name, deviceType: canary.deviceType,
                                   baseURL: receipt.baseURL, pairedAt: Date(),
-                                  tlsCertFingerprint: receipt.tlsCertFingerprint)
+                                  tlsCertFingerprint: receipt.tlsCertFingerprint,
+                                  pubkeyFingerprint: receipt.pubkeyFingerprint)
         store.devices.add(ref, token: receipt.token)
         Task { await store.refreshOnce() }
         dismiss()

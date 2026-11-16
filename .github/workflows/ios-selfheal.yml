@@ -94,6 +94,9 @@ concurrency:
 
 jobs:
   selfheal:
+    # `branches: [main]` matches the triggering run's head branch NAME, a fork's
+    # pull request from a branch called main included; only a push to main compiles here.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.event == 'push'
     # macos-26 to match ios-release.yml: the release must build with the
     # iOS 26 SDK (ITMS-90725), so the first compiler must compile with it too.
     runs-on: macos-26

@@ -81,7 +81,10 @@ def parse_mqtt_json(payload: Any) -> dict[str, Any] | None:
             return None
     try:
         data = json.loads(payload)
-    except (json.JSONDecodeError, TypeError, ValueError):
+    except (json.JSONDecodeError, TypeError, ValueError, RecursionError):
+        # RecursionError: a payload nested past the interpreter's limit
+        # (64 KiB of `[` fits the cap) is junk, not a traceback out of
+        # every @callback that reads the topic.
         return None
     return data if isinstance(data, dict) else None
 

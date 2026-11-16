@@ -52,6 +52,55 @@ inline bool scan_cache_fresh(uint32_t now_ms, uint32_t scanned_at_ms,
   return have_results && (uint32_t)(now_ms - scanned_at_ms) < ttl_ms;
 }
 
+// A network sweep and the link state machine. The sweep is started by GET
+// /api/wifi/scan (no credential, on the home network too) and by the
+// Bluetooth setup door, and only those two harvest it, when the asker
+// comes back. So the sweep must never take a held link out of the state
+// machine's sight: it used to mark the state SCANNING from any state and
+// hand back IDLE on any unit with credentials, and in neither state does
+// wifi_check_connection() watch the link (no "connection lost", no rotation
+// to the next saved network, no management AP re-raised, no AP dropped
+// after its grace window), for the rest of the boot.
+//
+// scan_takes_link_state(): may starting a sweep mark the state SCANNING?
+// Not while the home link is held; the state stays CONNECTED through the
+// sweep and after it, harvested or not.
+inline bool scan_takes_link_state(bool link_held) {
+  return !link_held;
+}
+
+// state_after_scan(): what a sweep that did take the state hands back, from
+// the live link. A station that is up is CONNECTED, so the link is watched
+// from here; otherwise as before, IDLE with credentials stored and AP-only
+// without.
+enum class AfterScan : uint8_t { Connected, Idle, ApOnly };
+inline AfterScan state_after_scan(bool sta_connected, bool configured) {
+  if (sta_connected) return AfterScan::Connected;
+  return configured ? AfterScan::Idle : AfterScan::ApOnly;
+}
+
+// The authority a pair link may name: the landing page's paste-this
+// fallback and GET /api/pair/token's pair_url spell out a full address, and
+// the only address known to reach the device is the one this request came
+// in under, its Host. (Both used to print http://192.168.4.1, the setup
+// network's address, which a unit on its owner's network no longer answers
+// once its SoftAP is down.) The Host is the caller's text headed into HTML
+// and JSON, so it is used only when it can name this device (host_guard.h's
+// verdict, passed in so this header stays free of it) and every byte is in
+// the alphabet port 80's redirect forwards a Host from: letters, digits,
+// dots, dashes, and an IPv6 literal's brackets and colons (a port's colon
+// among them).
+inline bool pair_link_host_ok(const char* host, bool names_this_device) {
+  if (!names_this_device || !host || host[0] == '\0') return false;
+  for (const char* p = host; *p; ++p) {
+    const unsigned char c = (unsigned char)*p;
+    const bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                    c == '.' || c == '-' || c == ':' || c == '[' || c == ']';
+    if (!ok) return false;
+  }
+  return true;
+}
+
 // Should the firmware try to join home WiFi? Not in AP-only mode — the
 // device runs standalone on its own SoftAP by explicit user choice.
 inline bool sta_join_allowed(bool ap_only, bool configured, bool enabled) {

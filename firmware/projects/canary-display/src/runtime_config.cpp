@@ -346,15 +346,25 @@ const char* wifi_saved_pass(int idx) {
   return (idx >= 0 && idx < (int)g_ring.count) ? g_ring.nets[idx].pass : "";
 }
 
+bool wifi_saved_any_joined() {
+  get();
+  return wifi_store::any_joined(g_ring);
+}
+
 void wifi_saved_note_result(int idx, bool ok) {
   get();
   if (idx < 0 || idx >= (int)g_ring.count) return;
   const uint8_t was_good = g_ring.last_good;
+  const bool was_joined = (g_ring.nets[idx].flags & wifi_store::FLAG_JOINED) != 0;
   wifi_store::note_result(g_ring, idx, ok);
-  if (!ok || was_good == g_ring.last_good) return;
-  // A different network is on the air now: persist the ring and keep the
-  // legacy pair equal to it, so every reader of wifi_ssid (the settings page,
-  // the commission QR, the boot join) names the network actually in use.
+  // Persist when the pick moved, and the first time a seeded network joins:
+  // the joined bit is what wifi_wants_setup() reads back after a power cut,
+  // so it has to reach NVS once, not only when last_good moves.
+  if (!ok || (was_good == g_ring.last_good && was_joined)) return;
+  // A different network is on the air now (or the first join of this one):
+  // persist the ring and keep the legacy pair equal to it, so every reader
+  // of wifi_ssid (the settings page, the commission QR, the boot join)
+  // names the network actually in use.
   copy_str(g_cfg.wifi_ssid, sizeof(g_cfg.wifi_ssid), g_ring.nets[idx].ssid);
   copy_str(g_cfg.wifi_pass, sizeof(g_cfg.wifi_pass), g_ring.nets[idx].pass);
   Preferences prefs;

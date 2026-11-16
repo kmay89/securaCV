@@ -3,16 +3,19 @@ name = "witness-kernel"
 # Kept in lockstep with custom_components/securacv/manifest.json and
 # privacy_witness_kernel/config.yaml via scripts/bump_version.sh; CI fails
 # on drift (scripts/lint_version_sync.sh).
-version = "0.9.0"
+version = "0.9.1"
 edition = "2021"
 license = "Apache-2.0"
 description = "Privacy Witness Kernel (PWK) - witnessd + tools + break_glass"
 
 [dependencies]
 anyhow = "1.0"
-# default-features off: the other default, `ffi-sqlite-wasm-rs`, only adds
-# wasm-only crates to the lockfile that no shipped target builds.
-rusqlite = { version = "0.41", default-features = false, features = ["bundled-sqlcipher", "cache"] }
+# default-features off: the other default, `ffi-sqlite-wasm-rs`, turns on the
+# wasm-only SQLite crates, which no shipped target builds. Since rusqlite 0.42
+# they sit in Cargo.lock regardless (`bundled-sqlcipher` names the optional
+# `sqlite-wasm-rs?/sqlcipher`), but no target compiles them here:
+# `cargo tree --target all -i sqlite-wasm-rs` prints nothing.
+rusqlite = { version = "0.43", default-features = false, features = ["bundled-sqlcipher", "cache"] }
 hkdf = "0.13"
 # Memory-hard KDF for the optional `seed-argon2id:v1:` device-seed format
 # (a passphrase seed must not be brute-forceable through the fast SHA-256
@@ -139,6 +142,11 @@ pqc-tls = ["rustls", "webpki-roots", "rustls-pki-types"]
 # RFC 3161 trusted timestamping: enables log_anchor's online `request`
 # subcommand (the offline query/import flow needs no feature).
 tsa = ["ureq"]
+# OpenTimestamps calendar client for log_anchor's OTS leg of `anchor-all` and
+# `request --policy` (ureq: POST /digest, GET /timestamp/<hex>). The codec, every
+# verify path, list, import and the offline flow need no feature; no shipped image
+# enables this (docs/design/opentimestamps_leg.md).
+ots = ["ureq"]
 # The hub-side alert relay (docs/design/alert_relay.md): metadata-only pokes
 # over ntfy. Zero new crates — ureq (already vetted for tsa/ingest-esp32)
 # carries rustls, so network egress stays opt-in at build time.

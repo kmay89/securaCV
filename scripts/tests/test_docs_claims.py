@@ -3837,7 +3837,7 @@ MUST_PASS_IN = [
      '   signing scheme; the fuse steps are partly tooled (not the crypt counter or a\n'
      '   Secure Boot key digest, so the kit turns neither on yet), and NVS encryption, without'),
     ('docs/design/magic_pairing.md',
-     "| No credentials stored (first boot, or after a factory reset or Forget Wi-Fi) on a unit not set standalone (a WAP's AP-only choice, which Forget Wi-Fi leaves set and the hold clears), within **30 minutes** of power-on (after Forget Wi-Fi, of the credentials vanishing; after a WAP's hold, of the restart on release) | **Open** (`Door::NoCredentials`) | A device nobody owns yet — or, after a reset or a Forget Wi-Fi, a cleared unit that still has an owner (on a WAP Forget Wi-Fi takes the API token in every mode, ledger F345): the hold keeps the witness identity on a Sense, a Vision and a WAP, a WAP's hold and Forget Wi-Fi keep its token too, and the door goes to whichever client connects first (§2.2). The window is `IMPROV_FIRST_BOOT_WINDOW_MS` (`Timing::first_boot_window_ms`, half an hour by default); a power cycle re-arms it, and so does the credentials vanishing (Forget Wi-Fi re-arms it at that moment; a WAP's hold zeroes the carried record and restarts on release, so its fresh window runs from the restart); compile-time `0` makes the device tap-only. A **software restart does not** re-arm it: the spent time rides in RTC memory across `ESP.restart()` and watchdog resets and is cleared only by a power-on, a brownout, a power glitch or a reset a host asserted from the USB / JTAG port — the Flasher's, so a re-flashed unit never inherits the old image's spent window (the WAP's first-boot wizard restarts the unit every 15 idle minutes, which would otherwise have re-opened the door forever). |"),
+     "| No credentials stored (first boot, or after a factory reset or Forget Wi-Fi) on a unit not set standalone (a WAP's AP-only choice, which Forget Wi-Fi leaves set and the hold clears), within **30 minutes** of power-on (after Forget Wi-Fi, of the credentials vanishing; after a WAP's hold, of the restart on release) | **Open** (`Door::NoCredentials`) | A device nobody owns yet — or, after a reset or a Forget Wi-Fi, a cleared unit that still has an owner (on a WAP Forget Wi-Fi takes the API token in every mode, ledger F345): the hold keeps the witness identity on a Sense, a Vision and a WAP, a WAP's hold and Forget Wi-Fi keep its token too, and the door goes to whichever client connects first (§2.2). The window is `IMPROV_FIRST_BOOT_WINDOW_MS` (`Timing::first_boot_window_ms`, half an hour by default); a power cycle re-arms it, and so does the credentials vanishing on a unit that had them (a Sense or Vision that never had credentials stays spent across the hold's restart, until a power cycle or a tap; Forget Wi-Fi re-arms it at that moment; a WAP's hold zeroes the carried record and restarts on release, so its fresh window runs from the restart); compile-time `0` makes the device tap-only. A **software restart does not** re-arm it: the spent time rides in RTC memory across `ESP.restart()` and watchdog resets and is cleared only by a power-on, a brownout, a power glitch or a reset a host asserted from the USB / JTAG port — the Flasher's, so a re-flashed unit never inherits the old image's spent window (the WAP's first-boot wizard restarts the unit every 15 idle minutes, which would otherwise have re-opened the door forever). |"),
     ('docs/design/onboarding_shared_module.md',
      "- **No credentials stored** (first boot, or a factory reset: the owner's\n"
      '  act, which keeps the witness identity, so the unit still has an owner):'),
@@ -3900,7 +3900,7 @@ MUST_PASS_IN = [
     ('ios/Sources/SecuraCV/Views/FleetWiFiSheet.swift',
      '// never reaches a WAP today, ledger A65) — never the fleet. Progress is honest'),
     ('ios/README.md',
-     '  that lane stays empty until ledger A65 is settled), plain http is offered only when nothing encrypted reaches the'),
+     '  provisioning lane is never chosen: a console names its device by an id'),
     ('ios/Sources/SecuraCV/Transport/BLEConsole.swift',
      '    /// stranded. It never fills for a WAP today: the rescue uses only a'),
     ('docs/legal-audit-2026-07.md',
@@ -4783,9 +4783,7 @@ MUST_PASS_IN = [
     ('ios/Sources/SecuraCV/Transport/FleetWiFiRunner.swift',
      '            steps[candidate.id] = .failed(FleetWiFiRollout.unreachableReason)'),
     ('ios/Tests/SecuraCVTests/FleetWiFiRolloutTests.swift',
-     '    // Policy only: no WAP fills bleReachable today, since the app dials only\n'
-     '    // a peripheral advertising the console service (ledger A65).\n'
-     '    func testADarkCanaryOnTheBondedLaneRidesBLE() {'),
+     '    func testADarkCanaryHeardOnlyOverBluetoothIsUnreachable() {'),
     ('ios/Tests/SecuraCVTests/FleetWiFiRolloutTests.swift',
      '    func testADarkCanaryOffTheBondedLaneIsUnreachable() {'),
     ('ios/Sources/SecuraCV/Model/CanaryVoiceStage.swift',
@@ -4928,7 +4926,7 @@ MUST_PASS_IN = [
     ('docs/ble_protocol.md',
      "From `improv_core.h`: the door is open for a device with NO NETWORK SAVED (a new one nobody owns yet, or one whose network was cleared), and for an owner's own tap — never for a device that has an owner and a bad day."),
     ("docs/ble_protocol.md",
-     "- **No credentials stored** (first boot, or after they were cleared with the 10 s factory-reset hold or, on a WAP that does not run standalone, Forget Wi-Fi, which takes the API token in every mode, ledger F345; a Forget leaves a standalone WAP standalone, and its door stays shut): open for a first-boot window of **30 minutes** after power-on (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle re-arms it, and so does clearing the credentials; compile-time 0 = tap-only). A cleared unit still has an owner: the hold keeps the witness identity on a Sense, a Vision and a WAP, and a WAP's hold and Forget Wi-Fi keep its token too. The door still goes to whichever client connects first, so for that half hour a stranger in radio range can give it their network ([`design/magic_pairing.md`](design/magic_pairing.md) §2.2; on a WAP, ledger F345)."),
+     "- **No credentials stored** (first boot, or after they were cleared with the 10 s factory-reset hold or, on a WAP that does not run standalone, Forget Wi-Fi, which takes the API token in every mode, ledger F345; a Forget leaves a standalone WAP standalone, and its door stays shut): open for a first-boot window of **30 minutes** after power-on (`IMPROV_FIRST_BOOT_WINDOW_MS`; a power cycle re-arms it, and so does clearing the credentials on a unit that had them (a Sense or Vision that never had credentials and whose window ran out stays shut across the 10 s hold's restart, until a power cycle or a BOOT tap, and its boot log says so); compile-time 0 = tap-only). A cleared unit still has an owner: the hold keeps the witness identity on a Sense, a Vision and a WAP, and a WAP's hold and Forget Wi-Fi keep its token too. The door still goes to whichever client connects first, so for that half hour a stranger in radio range can give it their network ([`design/magic_pairing.md`](design/magic_pairing.md) §2.2; on a WAP, ledger F345)."),
     ('docs/GLOSSARY.md',
      'device with no network saved (a new one nobody owns yet, or one whose'),
     ('docs/GLOSSARY.md',
@@ -5171,22 +5169,28 @@ MUST_PASS_IN = [
     # The second review's replacements.
     ("firmware/projects/canary-wap/arduino/canary_wap/README.md",
      "it can still write blind with the owner's session (any write a session "
-    "may make, of which since F361 only the firmware install restarts the "
-    "unit, and only into a newer signed image)"),
+    "may make, which since 2.4.20 no longer includes the firmware install or "
+    "the update settings; the one restart left to a session is an install "
+    "sent from a broker it re-pointed the MQTT bridge at, and only into a "
+    "newer signed image)"),
     ("CHANGELOG.md",
      "owner's session: a reboot, or any other write a session may make "
     "*(amended 2026-10-27, the owner-authority PR, #1887, after 2.4.17: since "
     "F361 the two reboot routes take the bearer alone, and of a session's "
     "writes only the firmware install restarts the unit, and only into a newer "
     "signed image)*); a page"),
+    # 2.4.20 (G2-10): the firmware install and the update settings take the
+    # bearer alone, so the restart left to a session is the MQTT bridge's.
     ("docs/security/SECURITY_MODEL.md",
-     "owner's session: any write a session may make, of which since F361 only "
-    "the firmware install restarts the unit, and only into a newer signed "
-    "image); a page"),
+     "owner's session: any write a session may make, which since 2.4.20 no "
+    "longer includes the firmware install or the update settings; the one "
+    "restart left to a session is an install sent from a broker it re-pointed "
+    "the MQTT bridge at, and only into a newer signed image); a page"),
     ("docs/security/THREAT_MODEL.md",
-     "owner's session: any write a session may make, of which since F361 only "
-    "the firmware install restarts the unit, and only into a newer signed "
-    "image); a page"),
+     "owner's session: any write a session may make, which since 2.4.20 no "
+    "longer includes the firmware install or the update settings; the one "
+    "restart left to a session is an install sent from a broker it re-pointed "
+    "the MQTT bridge at, and only into a newer signed image); a page"),
     ("CHANGELOG.md",
      "the Wi-Fi, vault key, reboot and pairing-QR cards say beforehand that "
     "their action takes the token"),
@@ -8293,19 +8297,21 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
             self.assertIn("api_auth_check_bearer(req, g_device.api_token_str)", body)
             self.assertNotIn("api_auth_check(", body)
 
-    def test_the_firmware_install_is_the_one_restart_a_session_makes(self):
+    def test_a_session_restarts_the_unit_only_through_the_mqtt_bridge(self):
         # Since F361 POST /api/reboot and /api/safe-mode/retry take the bearer
-        # alone, but the dashboard's firmware install and its update settings
-        # still open with api_auth_check(), which takes the session cookie;
-        # the install task restarts the unit after a verified install, and
-        # the decision installs only a version above the running one and the
-        # NVS floor. So the security docs name that restart wherever they say
-        # what a session cannot do (the PR's review: "no longer a reboot").
+        # alone, and since 2.4.20 (G2-10) so do the dashboard's firmware
+        # install and its update settings: both open with
+        # api_auth_check_bearer(), which takes no session cookie. The install
+        # task restarts the unit after a verified install, and the decision
+        # installs only a version above the running one and the NVS floor.
+        # The restart a session can still cause is the MQTT bridge's, below,
+        # and the security docs name it wherever they say what a session
+        # cannot do.
         ino = (WAP / "canary_wap.ino").read_text(encoding="utf-8")
         for handler in ("handle_ota_install", "handle_ota_config"):
             body = body_after(ino, f"static esp_err_t {handler}(httpd_req_t* req) {{", r"\n}\n")
             code = [ln.strip() for ln in body.splitlines()[1:] if ln.strip() and not ln.strip().startswith("//")]
-            self.assertEqual(code[0], "if (!api_auth_check(req, g_device.api_token_str)) return ESP_OK;", handler)
+            self.assertEqual(code[0], "if (!api_auth_check_bearer(req, g_device.api_token_str)) return ESP_OK;", handler)
         self.assertIn("securacv_ota_check_and_install();",
                       body_after(ino, "static esp_err_t handle_ota_install(httpd_req_t* req) {", r"\n}\n"))
         ota = (WAP / "securacv_ota.cpp").read_text(encoding="utf-8")
@@ -8335,20 +8341,24 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
         self.assertIn("if (!bearer && !csi_integration::session_validate_cookie(req)) return send_refusal(req, held);", post)
         sec = normalized((REPO / "docs/security/SECURITY_MODEL.md").read_text(encoding="utf-8"))
         threat = normalized((REPO / "docs/security/THREAT_MODEL.md").read_text(encoding="utf-8"))
-        blind = ("any write a session may make, of which since F361 only the firmware "
-                 "install restarts the unit, and only into a newer signed image")
+        blind = ("any write a session may make, which since 2.4.20 no longer includes "
+                 "the firmware install or the update settings; the one restart left to "
+                 "a session is an install sent from a broker it re-pointed the MQTT "
+                 "bridge at, and only into a newer signed image")
         self.assertIn(blind, sec)
         self.assertIn(blind, threat)
-        self.assertIn("and of its writes only the firmware install restarts the unit "
-                      "(`POST /api/ota/install`, automatic updates turned on with "
-                      "`POST /api/ota/config`, or the MQTT update entity's Install or "
-                      "auto-update switch, sent from whatever broker the bridge points at, "
-                      "which a session may re-point with a password typed), which installs "
-                      "only a newer signed image.", sec)
-        self.assertIn("a session's firmware install restarts the unit only into a newer "
-                      "signed image", sec)
-        self.assertIn("the dashboard's firmware install, which a session may start, "
-                      "restarts the unit only into a newer signed image", threat)
+        self.assertIn("Since 2.4.20 it cannot start a firmware install or change the "
+                      "update settings over HTTP either: `POST /api/ota/install` and "
+                      "`POST /api/ota/config` (the update server's address, the plain-HTTP "
+                      "local server opt-in and automatic updates) take the bearer.", sec)
+        self.assertIn("The restart a session can still cause is an install sent from a "
+                      "broker it re-pointed the MQTT bridge at, and only into a newer "
+                      "signed image.", sec)
+        self.assertIn("since 2.4.20 so do the firmware install and the update settings "
+                      "(`POST /api/ota/install`, `POST /api/ota/config`); the restart a "
+                      "session can still cause is an install sent from a broker it "
+                      "re-pointed the MQTT bridge at, and only into a newer signed image.",
+                      threat)
 
     def test_a_network_saved_before_f334_stays_saved_and_the_docs_say_so(self):
         # F334's decision names a known limit: a network a session moved the
@@ -8736,8 +8746,10 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
         self.assertLess(load.index("if (!loaded) {"), load.index("derive_api_token(privkey"))
         core = (REPO / "canary-local/assets/flash-core.js").read_text(encoding="utf-8")
         self.assertIn("return { blobs: { api_token: bytes, api_tkn: bytes } };", core)
+        self.assertIn('return !!(product && product.wifi_nvs === "blob" && wifi);',
+                      body_after(core, "export function wantsApiToken(product, wifi) {", r"\n}\n"))
         js = (REPO / "canary-local/assets/flash.js").read_text(encoding="utf-8")
-        self.assertIn('const apiToken = opts.product && opts.product.wifi_nvs === "blob" && opts.wifi\n'
+        self.assertIn('const apiToken = core.wantsApiToken(opts.product, opts.wifi)\n'
                       '          ? core.mintApiToken(', js)
         rs = (REPO / "desktop/flash-engine/src/provisioning.rs").read_text(encoding="utf-8")
         self.assertIn('writer.blob("api_token", config.api_token.as_bytes())?;', rs)

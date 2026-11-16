@@ -66,6 +66,7 @@ pub mod ingest;
 pub mod inspect;
 pub mod log;
 pub mod module_runtime;
+pub mod ots;
 #[cfg(feature = "alert-relay")]
 pub mod relay;
 pub mod storage;
@@ -256,21 +257,103 @@ fn apply_sqlcipher_key(conn: &Connection, hex_key: &str) -> Result<()> {
 
 /// Check if a database file is unencrypted (plaintext SQLite header).
 fn is_unencrypted_db(db_path: &str) -> bool {
-    let path = std::path::Path::new(db_path);
-    if !path.exists() {
-        return false;
-    }
+    use std::io::Read;
     // SQLite databases start with "SQLite format 3\0" (16 bytes).
     // Encrypted databases have random-looking bytes at offset 0.
-    match std::fs::read(path) {
-        Ok(data) if data.len() >= 16 => data.starts_with(b"SQLite format 3\0"),
-        _ => false,
-    }
+    // Only those 16 bytes are read: this runs on every connection open and
+    // the file is the whole sealed log. A missing file, a file shorter than
+    // the header, or any I/O error is "not unencrypted".
+    let mut header = [0u8; 16];
+    std::fs::File::open(db_path)
+        .and_then(|mut file| file.read_exact(&mut header))
+        .map(|()| header == *b"SQLite format 3\0")
+        .unwrap_or(false)
 }
+
+/// Suffix of the migration lock file beside the database. It starts with `-`
+/// like SQLite's own sidecars (`-wal`, `-shm`, `-journal`), so a file policy
+/// written for those — the Home Assistant app's AppArmor profile allows
+/// `<db>-*`, with locking — already covers it.
+const DB_MIGRATION_LOCK_SUFFIX: &str = "-migrate-lock";
 
 /// Migrate an unencrypted SQLite database to SQLCipher encryption in-place.
 /// Uses ATTACH + sqlcipher_export() to re-encrypt all data.
+///
+/// More than one process opens the same database at start-up (the daemon or
+/// the API, and a bridge), and on a legacy plaintext file each of them gets
+/// here. The whole migration therefore runs under an exclusive cross-process
+/// lock (an `flock` on the sibling `<db>-migrate-lock`): without it the
+/// stale-target removal below deletes another process's in-progress export,
+/// that process's cleanup deletes this one's, and both opens fail with the
+/// database still plaintext.
 fn migrate_unencrypted_to_encrypted(db_path: &str, hex_key: &str) -> Result<()> {
+    let lock_path = format!("{}{}", db_path, DB_MIGRATION_LOCK_SUFFIX);
+    with_db_migration_lock(&lock_path, || {
+        // The caller saw a plaintext header before this open held the lock.
+        // Look again now that it does: an open that held the lock first has
+        // finished the migration, and there is nothing left to do.
+        if !is_unencrypted_db(db_path) {
+            eprintln!(
+                "[SECURITY] database '{}' no longer has a plaintext header after \
+                 waiting for the migration lock; not migrating it again",
+                db_path
+            );
+            return Ok(());
+        }
+        migrate_unencrypted_to_encrypted_locked(db_path, hex_key)
+    })
+}
+
+/// Run `f` while holding an exclusive advisory lock (`flock`) on `lock_path`,
+/// waiting for it as long as another open holds it. The shape is the
+/// high-water-mark lock's (`log::high_water_mark`). Closing the handle
+/// releases the lock, so a process killed mid-migration does not strand it.
+/// The empty lock file stays in place: removing a lock file another process
+/// may be waiting on would let a third create a new one and run beside it.
+#[cfg(unix)]
+fn with_db_migration_lock<T>(lock_path: &str, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::io::AsRawFd;
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(lock_path)
+        .map_err(|e| anyhow!("opening database migration lock {}: {}", lock_path, e))?;
+    // SAFETY: `file` owns the fd for the duration of the call; `flock` on a
+    // valid fd has no memory-safety hazard. LOCK_EX blocks until the lock is
+    // granted; a signal that interrupts the wait is not a failure.
+    while unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        let err = std::io::Error::last_os_error();
+        if err.kind() != std::io::ErrorKind::Interrupted {
+            return Err(anyhow!(
+                "libc::flock(LOCK_EX) on database migration lock {}: {}",
+                lock_path,
+                err
+            ));
+        }
+    }
+    let result = f();
+    // Best-effort explicit unlock; dropping `file` below also releases it.
+    // SAFETY: as above.
+    unsafe {
+        libc::flock(file.as_raw_fd(), libc::LOCK_UN);
+    }
+    result
+}
+
+/// A build without `flock` has no cross-process lock: the migration runs
+/// unserialized, and two processes that migrate one database at the same
+/// moment can fail each other's migration.
+#[cfg(not(unix))]
+fn with_db_migration_lock<T>(_lock_path: &str, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    f()
+}
+
+/// The migration itself. The caller holds the migration lock and has seen
+/// the plaintext header while holding it.
+fn migrate_unencrypted_to_encrypted_locked(db_path: &str, hex_key: &str) -> Result<()> {
     eprintln!(
         "[SECURITY] Migrating unencrypted database '{}' to SQLCipher encryption",
         db_path
@@ -278,6 +361,49 @@ fn migrate_unencrypted_to_encrypted(db_path: &str, hex_key: &str) -> Result<()> 
 
     let encrypted_path = format!("{}.encrypted", db_path);
 
+    // A migration interrupted before the rename below (power cut, kill,
+    // full disk) leaves its target behind. The plaintext original is still
+    // whole — the header check under the lock just said so — and no other
+    // open is exporting (it would hold the lock), so the leftover holds
+    // nothing the original does not: remove it and export afresh, instead
+    // of failing this open and every later one on it.
+    match std::fs::remove_file(&encrypted_path) {
+        Ok(()) => eprintln!(
+            "[SECURITY] removed stale partial migration file '{}'",
+            encrypted_path
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
+
+    if let Err(e) = export_plaintext_into_encrypted(db_path, &encrypted_path, hex_key) {
+        // Never leave a partial target for the next open to trip over. Best
+        // effort: the caller must see the export's own failure.
+        let _ = std::fs::remove_file(&encrypted_path);
+        return Err(e);
+    }
+
+    // Replace the original file with the encrypted one
+    std::fs::rename(&encrypted_path, db_path)?;
+    enforce_db_file_permissions(db_path);
+
+    eprintln!(
+        "[SECURITY] Database migration to SQLCipher complete: '{}'",
+        db_path
+    );
+
+    Ok(())
+}
+
+/// The export step of [`migrate_unencrypted_to_encrypted`]: copy every table
+/// of the plaintext database at `db_path` into a new SQLCipher database at
+/// `encrypted_path`. The connection is closed before this returns, on
+/// success and on error, so the caller may remove a partial target.
+fn export_plaintext_into_encrypted(
+    db_path: &str,
+    encrypted_path: &str,
+    hex_key: &str,
+) -> Result<()> {
     // Open the unencrypted database (no key)
     ensure_sqlcipher_ready()?;
     let plain_conn = Connection::open(db_path)?;
@@ -293,17 +419,6 @@ fn migrate_unencrypted_to_encrypted(db_path: &str, hex_key: &str) -> Result<()> 
 
     // Detach and close
     plain_conn.execute_batch("DETACH DATABASE encrypted;")?;
-    drop(plain_conn);
-
-    // Replace the original file with the encrypted one
-    std::fs::rename(&encrypted_path, db_path)?;
-    enforce_db_file_permissions(db_path);
-
-    eprintln!(
-        "[SECURITY] Database migration to SQLCipher complete: '{}'",
-        db_path
-    );
-
     Ok(())
 }
 
@@ -2322,6 +2437,43 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         }
     }
 
+    /// Whether the previous witnessing run ended without sealing a clean
+    /// shutdown — the boot-time question behind the `PowerLoss` record.
+    ///
+    /// `true` when the newest lifecycle record is `start`, and also when no
+    /// lifecycle record is live but the log holds a checkpoint. The second
+    /// arm is what retention requires. A daemon that runs past its
+    /// retention window prunes its own `start` row, and the prune writes
+    /// its checkpoint in the same transaction — retention is the only
+    /// thing that deletes a sealed row — so "a checkpoint and no lifecycle
+    /// record" is exactly "this log's last `start` was pruned and nothing
+    /// was sealed after it". Only the running daemon prunes, so a clean
+    /// stop always leaves its `shutdown_clean` row live at the next boot.
+    /// [`Self::last_lifecycle_phase`] alone answers `None` there, and the
+    /// outage went unwitnessed on every hub that had been up longer than
+    /// retention (seven days by default).
+    ///
+    /// Residuals, stated rather than hidden: a log with no checkpoint and no
+    /// lifecycle record — empty, or holding only rows some tool sealed
+    /// before a daemon ever started on it — cannot distinguish a first boot
+    /// from a loss and answers `false`; a database a tool both seeded and
+    /// pruned (a checkpoint, never a lifecycle record) yields one
+    /// `PowerLoss` on the daemon's first boot over it.
+    pub fn previous_run_ended_uncleanly(&self) -> Result<bool> {
+        match self.last_lifecycle_phase()? {
+            Some(LifecyclePhase::Start) => Ok(true),
+            Some(LifecyclePhase::ShutdownClean) => Ok(false),
+            None => {
+                let pruned: bool =
+                    self.conn
+                        .query_row("SELECT EXISTS(SELECT 1 FROM checkpoints)", [], |row| {
+                            row.get(0)
+                        })?;
+                Ok(pruned)
+            }
+        }
+    }
+
     /// Attempts to record a failure event with graceful degradation.
     ///
     /// When the primary storage fails, this method:
@@ -2532,107 +2684,177 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         }
     }
 
+    /// Run `f` with the database write lock held on this handle's
+    /// connection: `BEGIN IMMEDIATE` when the connection is in autocommit,
+    /// a savepoint named `name` when a caller's transaction is already open
+    /// (the [`Self::set_break_glass_policy_gated`] pattern). COMMIT /
+    /// RELEASE on `Ok`, ROLLBACK on `Err`. A receipt chain's head read and
+    /// the insert that extends it must share this lock: two writers that
+    /// read the same head — an operator's `court_export` beside the API's
+    /// hourly bundle — otherwise fork the chain, and every later verify
+    /// (and witnessd's boot check) fails closed on the fork.
+    fn in_immediate_write_tx<T>(
+        &mut self,
+        name: &str,
+        f: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        let own_tx = self.conn.is_autocommit();
+        if own_tx {
+            self.conn.execute_batch("BEGIN IMMEDIATE;")?;
+        } else {
+            self.conn.execute_batch(&format!("SAVEPOINT {name};"))?;
+        }
+        let applied = f(self).and_then(|value| {
+            if own_tx {
+                self.conn.execute_batch("COMMIT;")?;
+            } else {
+                self.conn.execute_batch(&format!("RELEASE {name};"))?;
+            }
+            Ok(value)
+        });
+        if applied.is_err() {
+            // Best-effort: the caller must see the original failure.
+            let _ = if own_tx {
+                self.conn.execute_batch("ROLLBACK;")
+            } else {
+                self.conn
+                    .execute_batch(&format!("ROLLBACK TO {name}; RELEASE {name};"))
+            };
+        }
+        applied
+    }
+
+    /// Append a break-glass receipt to its hash chain. The head read, the
+    /// signing and the insert run under one write lock (`BEGIN IMMEDIATE`,
+    /// or a savepoint inside a caller's transaction), so a second writer
+    /// extends this row instead of forking from the head it read.
     pub fn append_break_glass_receipt(
         &mut self,
         receipt: &crate::break_glass::BreakGlassReceipt,
         approvals: &[crate::break_glass::Approval],
     ) -> Result<[u8; 32]> {
-        let created_at = now_s()? as i64;
-        let prev_hash = self.last_break_glass_hash_or_zero()?;
-        let payload_json = serde_json::to_string(receipt)?;
-        let approvals_json = serde_json::to_string(approvals)?;
+        self.in_immediate_write_tx("break_glass_receipt", |kernel| {
+            let created_at = now_s()? as i64;
+            let prev_hash = kernel.last_break_glass_hash_or_zero()?;
+            let payload_json = serde_json::to_string(receipt)?;
+            let approvals_json = serde_json::to_string(approvals)?;
 
-        let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
-        let key_material = self.signature_key_material();
-        let signature_set = sign_entry(
-            &key_material.signature_keys(),
-            &entry_hash,
-            DOMAIN_BREAK_GLASS_RECEIPT,
-        )?;
-        let pq_signature = signature_set
-            .pq_signature
-            .as_ref()
-            .map(|sig| sig.signature.clone());
-        let pq_scheme = signature_set
-            .pq_signature
-            .as_ref()
-            .map(|sig| sig.scheme_id.clone());
+            let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
+            let key_material = kernel.signature_key_material();
+            let signature_set = sign_entry(
+                &key_material.signature_keys(),
+                &entry_hash,
+                DOMAIN_BREAK_GLASS_RECEIPT,
+            )?;
+            let pq_signature = signature_set
+                .pq_signature
+                .as_ref()
+                .map(|sig| sig.signature.clone());
+            let pq_scheme = signature_set
+                .pq_signature
+                .as_ref()
+                .map(|sig| sig.scheme_id.clone());
 
-        self.conn.execute(
-            r#"
-            INSERT INTO break_glass_receipts(
-                created_at,
-                payload_json,
-                approvals_json,
-                prev_hash,
-                entry_hash,
-                signature,
-                pq_signature,
-                pq_scheme
-            )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-            "#,
-            params![
-                created_at,
-                payload_json,
-                approvals_json,
-                prev_hash.to_vec(),
-                entry_hash.to_vec(),
-                signature_set.ed25519_signature,
-                pq_signature,
-                pq_scheme,
-            ],
-        )?;
+            kernel.conn.execute(
+                r#"
+                INSERT INTO break_glass_receipts(
+                    created_at,
+                    payload_json,
+                    approvals_json,
+                    prev_hash,
+                    entry_hash,
+                    signature,
+                    pq_signature,
+                    pq_scheme
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                "#,
+                params![
+                    created_at,
+                    payload_json,
+                    approvals_json,
+                    prev_hash.to_vec(),
+                    entry_hash.to_vec(),
+                    signature_set.ed25519_signature,
+                    pq_signature,
+                    pq_scheme,
+                ],
+            )?;
 
-        Ok(entry_hash)
+            Ok(entry_hash)
+        })
     }
 
+    /// Append an export receipt to its hash chain and return its entry
+    /// hash. The head read, the signing and the insert run under one write
+    /// lock, so a second writer extends this row instead of forking from
+    /// the head it read.
     pub fn append_export_receipt(&mut self, receipt: &ExportReceipt) -> Result<[u8; 32]> {
-        let created_at = now_s()? as i64;
-        let prev_hash = self.last_export_receipt_hash_or_zero()?;
-        let payload_json = serde_json::to_string(receipt)?;
+        Ok(self.append_export_receipt_entry(receipt)?.entry_hash)
+    }
 
-        let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
-        let key_material = self.signature_key_material();
-        let signature_set = sign_entry(
-            &key_material.signature_keys(),
-            &entry_hash,
-            DOMAIN_EXPORT_RECEIPT,
-        )?;
-        let pq_signature = signature_set
-            .pq_signature
-            .as_ref()
-            .map(|sig| sig.signature.clone());
-        let pq_scheme = signature_set
-            .pq_signature
-            .as_ref()
-            .map(|sig| sig.scheme_id.clone());
+    /// Append an export receipt and hand back the row written. The head
+    /// read, the signing and the insert run under one write lock
+    /// ([`Self::in_immediate_write_tx`]), so a second writer extends this
+    /// row instead of forking from the head it read; and the bundle
+    /// builders carry THIS entry, not whichever receipt happened to be the
+    /// newest when they read the ledger back.
+    fn append_export_receipt_entry(
+        &mut self,
+        receipt: &ExportReceipt,
+    ) -> Result<ExportReceiptEntry> {
+        self.in_immediate_write_tx("export_receipt", |kernel| {
+            let created_at = now_s()? as i64;
+            let prev_hash = kernel.last_export_receipt_hash_or_zero()?;
+            let payload_json = serde_json::to_string(receipt)?;
 
-        self.conn.execute(
-            r#"
-            INSERT INTO export_receipts(
-                created_at,
-                payload_json,
+            let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
+            let key_material = kernel.signature_key_material();
+            let signature_set = sign_entry(
+                &key_material.signature_keys(),
+                &entry_hash,
+                DOMAIN_EXPORT_RECEIPT,
+            )?;
+            let pq_signature = signature_set
+                .pq_signature
+                .as_ref()
+                .map(|sig| sig.signature.clone());
+            let pq_scheme = signature_set
+                .pq_signature
+                .as_ref()
+                .map(|sig| sig.scheme_id.clone());
+
+            kernel.conn.execute(
+                r#"
+                INSERT INTO export_receipts(
+                    created_at,
+                    payload_json,
+                    prev_hash,
+                    entry_hash,
+                    signature,
+                    pq_signature,
+                    pq_scheme
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "#,
+                params![
+                    created_at,
+                    payload_json,
+                    prev_hash.to_vec(),
+                    entry_hash.to_vec(),
+                    signature_set.ed25519_signature.clone(),
+                    pq_signature,
+                    pq_scheme,
+                ],
+            )?;
+
+            Ok(ExportReceiptEntry {
+                receipt: receipt.clone(),
                 prev_hash,
                 entry_hash,
-                signature,
-                pq_signature,
-                pq_scheme
-            )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-            "#,
-            params![
-                created_at,
-                payload_json,
-                prev_hash.to_vec(),
-                entry_hash.to_vec(),
-                signature_set.ed25519_signature,
-                pq_signature,
-                pq_scheme,
-            ],
-        )?;
-
-        Ok(entry_hash)
+                signatures: signature_set,
+            })
+        })
     }
 
     /// Seal one clock-provenance record into the never-pruned
@@ -3132,6 +3354,19 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         options: ExportOptions,
         token: &mut break_glass::BreakGlassToken,
     ) -> Result<ExportArtifact> {
+        Ok(self
+            .export_events_authorized_receipted(expected_ruleset_hash, options, token)?
+            .0)
+    }
+
+    /// [`Self::export_events_authorized`] handing back the receipt row it
+    /// sealed beside the artifact, for the bundle builder.
+    fn export_events_authorized_receipted(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        token: &mut break_glass::BreakGlassToken,
+    ) -> Result<(ExportArtifact, ExportReceiptEntry)> {
         Self::validate_export_options(&options)?;
         let now_bucket = TimeBucket::now(600)?;
         break_glass::BreakGlass::assert_token_valid(
@@ -3154,13 +3389,13 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         // The same call appends the signed redemption row, so a deleted
         // burn row does not reopen the token either.
         self.redeem_token_durably(token)?;
-        let artifact = self.export_events_sequential_unchecked(
+        let receipted = self.export_events_sequential_unchecked(
             expected_ruleset_hash,
             options,
             ExportAuthMode::BreakGlass,
         )?;
         token.consume()?;
-        Ok(artifact)
+        Ok(receipted)
     }
 
     /// Export events sequentially for local-only API access (no break-glass).
@@ -3183,20 +3418,33 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         options: ExportOptions,
         credential: ApiCredential,
     ) -> Result<ExportArtifact> {
+        Ok(self
+            .export_events_for_api_receipted(expected_ruleset_hash, options, credential)?
+            .0)
+    }
+
+    /// [`Self::export_events_for_api_with`] handing back the receipt row it
+    /// sealed beside the artifact, for the bundle and envelope builders.
+    fn export_events_for_api_receipted(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        credential: ApiCredential,
+    ) -> Result<(ExportArtifact, ExportReceiptEntry)> {
         Self::validate_export_options(&options)?;
         let (auth_mode, token_id) = match credential {
             ApiCredential::Capability => (ExportAuthMode::Api, None),
             ApiCredential::Paired { token_id } => (ExportAuthMode::Paired, Some(token_id)),
         };
         let artifact = self.build_export_artifact(expected_ruleset_hash, options, None, false)?;
-        self.receipt_export(
+        let receipt_entry = self.receipt_export(
             expected_ruleset_hash,
             &options,
             &artifact,
             auth_mode,
             token_id,
         )?;
-        Ok(artifact)
+        Ok((artifact, receipt_entry))
     }
 
     /// A receipt-less READ of the privacy-filtered event view — the same
@@ -3239,6 +3487,18 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         expected_ruleset_hash: [u8; 32],
         options: ExportOptions,
     ) -> Result<ExportArtifact> {
+        Ok(self
+            .export_events_self_receipted(expected_ruleset_hash, options)?
+            .0)
+    }
+
+    /// [`Self::export_events_self`] handing back the receipt row it sealed
+    /// beside the artifact, for the bundle builder.
+    fn export_events_self_receipted(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+    ) -> Result<(ExportArtifact, ExportReceiptEntry)> {
         Self::validate_export_options(&options)?;
         self.export_events_sequential_unchecked(
             expected_ruleset_hash,
@@ -3253,8 +3513,9 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         options: ExportOptions,
         token: &mut break_glass::BreakGlassToken,
     ) -> Result<ExportBundle> {
-        let artifact = self.export_events_authorized(expected_ruleset_hash, options, token)?;
-        self.bundle_from_artifact(artifact)
+        let (artifact, receipt_entry) =
+            self.export_events_authorized_receipted(expected_ruleset_hash, options, token)?;
+        self.bundle_from_artifact(artifact, receipt_entry)
     }
 
     /// Owner self-export bundle (artifact + signed receipt + verifying keys).
@@ -3265,8 +3526,9 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         expected_ruleset_hash: [u8; 32],
         options: ExportOptions,
     ) -> Result<ExportBundle> {
-        let artifact = self.export_events_self(expected_ruleset_hash, options)?;
-        self.bundle_from_artifact(artifact)
+        let (artifact, receipt_entry) =
+            self.export_events_self_receipted(expected_ruleset_hash, options)?;
+        self.bundle_from_artifact(artifact, receipt_entry)
     }
 
     /// Bundle for local-only API access (no break-glass): same shape as the
@@ -3292,13 +3554,19 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         options: ExportOptions,
         credential: ApiCredential,
     ) -> Result<ExportBundle> {
-        let artifact =
-            self.export_events_for_api_with(expected_ruleset_hash, options, credential)?;
-        self.bundle_from_artifact(artifact)
+        let (artifact, receipt_entry) =
+            self.export_events_for_api_receipted(expected_ruleset_hash, options, credential)?;
+        self.bundle_from_artifact(artifact, receipt_entry)
     }
 
-    fn bundle_from_artifact(&self, artifact: ExportArtifact) -> Result<ExportBundle> {
-        let receipt_entry = self.latest_export_receipt_entry()?;
+    /// The bundle for `artifact` and the receipt row sealed for it — the
+    /// row the export itself wrote, never re-read from the ledger, where a
+    /// concurrent export's receipt could have landed in between.
+    fn bundle_from_artifact(
+        &self,
+        artifact: ExportArtifact,
+        receipt_entry: ExportReceiptEntry,
+    ) -> Result<ExportBundle> {
         let artifact_bytes = serde_json::to_vec(&artifact)?;
         let artifact_hash: [u8; 32] = Sha256::digest(&artifact_bytes).into();
         if artifact_hash != receipt_entry.receipt.artifact_hash {
@@ -3395,6 +3663,23 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     /// names the whole log's newest row, so "nothing new" and "rolled
     /// back" are both visible against the cursor.
     pub fn sealed_log_document_from(&self, from_seq: Option<u64>) -> Result<SealedLogDocument> {
+        // One read transaction across the head, the checkpoint and the
+        // entries. The retention writer (`enforce_retention_with_checkpoint`,
+        // which witnessd runs every few minutes on its own connection)
+        // commits a new checkpoint and the prune behind it as one unit; as
+        // three autocommit statements, a commit landing after the checkpoint
+        // read served the OLD anchor over the NEW tail — an anchor the first
+        // entry does not link to, which a walker reports as a broken chain.
+        // Inside one transaction every read sees the same snapshot, so the
+        // first entry's `prev_hash` is the anchor served with it. The
+        // function takes `&self`, hence `unchecked_transaction`; it ends
+        // (read-only, nothing to roll back) when the guard drops on any
+        // return path. A caller already inside a transaction keeps its own.
+        let _snapshot = if self.conn.is_autocommit() {
+            Some(self.conn.unchecked_transaction()?)
+        } else {
+            None
+        };
         let head = self.sealed_log_head()?;
         let checkpoint = crate::verify::latest_checkpoint(&self.conn)?;
         let (checkpoint_head, cutoff_event_id) =
@@ -3402,6 +3687,13 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
                 (Some(head), Some(cutoff)) => (Some(head), cutoff),
                 _ => (None, 0),
             };
+
+        #[cfg(test)]
+        SEALED_LOG_DOCUMENT_BETWEEN_READS.with(|hook| {
+            if let Some(run) = hook.borrow_mut().as_mut() {
+                run();
+            }
+        });
 
         let mut stmt = self.conn.prepare(
             "SELECT id, payload_json, prev_hash, entry_hash, signature \
@@ -3544,8 +3836,11 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         ruleset_id: &str,
         kernel_version: &str,
     ) -> Result<EvidenceEnvelope> {
-        let artifact = self.export_events_for_api(expected_ruleset_hash, options)?;
-        let receipt_entry = self.latest_export_receipt_entry()?;
+        let (artifact, receipt_entry) = self.export_events_for_api_receipted(
+            expected_ruleset_hash,
+            options,
+            ApiCredential::Capability,
+        )?;
         let bundle = ExportBundle {
             artifact,
             receipt_entry,
@@ -3586,11 +3881,12 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         expected_ruleset_hash: [u8; 32],
         options: ExportOptions,
         auth_mode: ExportAuthMode,
-    ) -> Result<ExportArtifact> {
+    ) -> Result<(ExportArtifact, ExportReceiptEntry)> {
         Self::validate_export_options(&options)?;
         let artifact = self.build_export_artifact(expected_ruleset_hash, options, None, false)?;
-        self.receipt_export(expected_ruleset_hash, &options, &artifact, auth_mode, None)?;
-        Ok(artifact)
+        let receipt_entry =
+            self.receipt_export(expected_ruleset_hash, &options, &artifact, auth_mode, None)?;
+        Ok((artifact, receipt_entry))
     }
 
     /// Append the signed, hash-chained export receipt for `artifact`
@@ -3603,7 +3899,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         artifact: &ExportArtifact,
         auth_mode: ExportAuthMode,
         token_id: Option<String>,
-    ) -> Result<()> {
+    ) -> Result<ExportReceiptEntry> {
         let artifact_bytes = serde_json::to_vec(artifact)?;
         let artifact_hash: [u8; 32] = Sha256::digest(&artifact_bytes).into();
         let receipt = ExportReceipt {
@@ -3615,8 +3911,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             window: options.window,
             token_id,
         };
-        self.log_export_receipt(&receipt)?;
-        Ok(())
+        self.append_export_receipt_entry(&receipt)
     }
 
     /// The pure projection every export and state view is built from:
@@ -4562,6 +4857,16 @@ fn now_s() -> Result<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Test seam for [`Kernel::sealed_log_document_from`]: runs on the
+    /// calling thread between the checkpoint read and the entries read, so
+    /// a test can commit a retention pass from a second connection exactly
+    /// where the race it guards against would land.
+    static SEALED_LOG_DOCUMENT_BETWEEN_READS: std::cell::RefCell<Option<Box<dyn FnMut()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// Test helper. A row stamped with the current 10-minute bucket is still
 /// inside a zero retention during that bucket's first second, when its start
 /// equals the cutoff. Wait that second out before a test prunes with
@@ -5505,7 +5810,7 @@ mod tests {
             cfg.ruleset_hash,
         )?;
 
-        let artifact = kernel.export_events_sequential_unchecked(
+        let (artifact, _receipt) = kernel.export_events_sequential_unchecked(
             cfg.ruleset_hash,
             ExportOptions {
                 jitter_s: 0,
@@ -6646,7 +6951,7 @@ mod tests {
             cfg.ruleset_hash,
         )?;
 
-        let artifact = kernel.export_events_sequential_unchecked(
+        let (artifact, _receipt) = kernel.export_events_sequential_unchecked(
             cfg.ruleset_hash,
             ExportOptions {
                 jitter_s: 0,
@@ -6835,6 +7140,76 @@ mod tests {
     }
 
     #[test]
+    fn unclean_shutdown_detected_after_retention_pruned_the_start_row() -> Result<()> {
+        // A daemon that runs longer than its retention window prunes its
+        // own `start` row behind a checkpoint. If it then dies, the phase
+        // read alone finds no lifecycle row and the loss went unwitnessed
+        // (the normal case: retention is 7 days, uptime is longer).
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("lifecycle_pruned.db");
+        let cfg = KernelConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            zone_policy: ZonePolicy::default(),
+        };
+
+        let mut kernel = Kernel::open(&cfg)?;
+        assert!(
+            !kernel.previous_run_ended_uncleanly()?,
+            "an empty log is a first boot, not a loss"
+        );
+        // Rows a tool sealed before any daemon started here are not a run
+        // that died: nothing was pruned, so no `PowerLoss` is owed.
+        seal_failure_at(&mut kernel, &cfg, TimeBucket::now_10min()?.start_epoch_s)?;
+        assert!(
+            !kernel.previous_run_ended_uncleanly()?,
+            "sealed rows with no lifecycle record and no checkpoint are a seeded log"
+        );
+        kernel.append_lifecycle(
+            LifecyclePhase::Start,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+        assert!(kernel.previous_run_ended_uncleanly()?);
+
+        // The run outlives its retention: the prune takes the start row.
+        wait_out_bucket_first_second();
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(0))?;
+        assert_eq!(kernel.last_lifecycle_phase()?, None, "start row pruned");
+        drop(kernel);
+
+        // Reopen without a clean shutdown.
+        let mut kernel = Kernel::open(&cfg)?;
+        assert_eq!(
+            kernel.last_lifecycle_phase()?,
+            None,
+            "the phase read alone no longer sees the loss"
+        );
+        assert!(
+            kernel.previous_run_ended_uncleanly()?,
+            "a checkpoint with no live lifecycle row is a run that never sealed its shutdown"
+        );
+
+        // A clean stop still reads clean: only the running daemon prunes,
+        // so its shutdown row is always live at the next boot.
+        kernel.append_lifecycle(
+            LifecyclePhase::ShutdownClean,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+        drop(kernel);
+        let kernel = Kernel::open(&cfg)?;
+        assert!(!kernel.previous_run_ended_uncleanly()?);
+        Ok(())
+    }
+
+    #[test]
     fn export_skips_system_records() -> Result<()> {
         let (mut kernel, cfg) = setup_test_kernel()?;
         kernel.append_lifecycle(
@@ -6856,7 +7231,7 @@ mod tests {
             cfg.ruleset_hash,
         )?;
 
-        let artifact = kernel.export_events_sequential_unchecked(
+        let (artifact, _receipt) = kernel.export_events_sequential_unchecked(
             cfg.ruleset_hash,
             ExportOptions {
                 jitter_s: 0,
@@ -7855,7 +8230,7 @@ mod tests {
         );
 
         // Verify failure event was recorded in sealed log
-        let artifact = kernel.export_events_sequential_unchecked(
+        let (artifact, _receipt) = kernel.export_events_sequential_unchecked(
             cfg.ruleset_hash,
             ExportOptions {
                 jitter_s: 0,
@@ -7893,7 +8268,7 @@ mod tests {
         );
 
         // Verify failure event was recorded in sealed log
-        let artifact = kernel.export_events_sequential_unchecked(
+        let (artifact, _receipt) = kernel.export_events_sequential_unchecked(
             cfg.ruleset_hash,
             ExportOptions {
                 jitter_s: 0,
@@ -7956,6 +8331,115 @@ mod tests {
         Ok(())
     }
 
+    /// A keyed kernel database in a temporary directory, for the two
+    /// SQLCipher pins below.
+    fn keyed_kernel_for_sqlcipher_pins() -> Result<(tempfile::TempDir, Kernel)> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("pin.db").to_string_lossy().to_string();
+        let kernel = Kernel::open(&KernelConfig {
+            db_path,
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            zone_policy: ZonePolicy::default(),
+        })?;
+        Ok((dir, kernel))
+    }
+
+    /// The SQLite the kernel runs is at least 3.54.0, the release that fixed
+    /// CVE-2026-119375 (the WAL page-size read; RUSTSEC-2026-0502 against
+    /// `sqlcipher-src`, earlier RUSTSEC-2026-0459; SECURITY.md, Group 5).
+    /// The fix lives in the SQLite that SQLCipher bundles, not in a Rust
+    /// crate, so this asks the library a kernel connection actually runs.
+    /// A floor, not an equality: a later SQLite passes without an edit.
+    #[test]
+    fn linked_sqlite_is_at_least_3_54_0() -> Result<()> {
+        let (_dir, kernel) = keyed_kernel_for_sqlcipher_pins()?;
+        let version: String = kernel
+            .conn
+            .query_row("SELECT sqlite_version()", [], |row| row.get(0))?;
+        let parts = version
+            .split('.')
+            .map(str::parse::<u32>)
+            .collect::<std::result::Result<Vec<u32>, _>>()
+            .map_err(|e| anyhow!("unparsable sqlite_version() {version:?}: {e}"))?;
+        assert!(
+            parts.len() >= 2,
+            "sqlite_version() {version:?} has no minor version"
+        );
+        let linked = (
+            parts[0],
+            parts[1],
+            parts.get(2).copied().unwrap_or_default(),
+        );
+        assert!(
+            linked >= (3, 54, 0),
+            "linked SQLite {version} is older than 3.54.0 and carries CVE-2026-119375 \
+             (SECURITY.md, Group 5)"
+        );
+        Ok(())
+    }
+
+    /// The SQLCipher defaults a kernel database is written with, as far as
+    /// SQLCipher reports them. The kernel sets none of them, and SQLCipher
+    /// does not record them in the file, so a release that changed one would
+    /// write databases older builds cannot open and could not open the
+    /// existing ones. Pinned here: the six rows of `PRAGMA cipher_settings`,
+    /// plus four values that list leaves out and that also decide whether a
+    /// file opens: the cipher, the PBKDF2 iteration count that derives the
+    /// HMAC key (`fast_kdf_iter`), the page-number byte order inside the
+    /// HMAC (`cipher_hmac_pgno`) and the mask applied to the HMAC salt
+    /// (`cipher_hmac_salt_mask`). Read without an argument, none of these
+    /// pragmas changes anything.
+    ///
+    /// Not pinned, because no pragma reports them: the 16-byte salt header,
+    /// the key and IV sizes. A release that changed one of those passes this
+    /// test. The kernel's own keys are 32-byte HKDF outputs passed as
+    /// `x'<64 hex>'`, which SQLCipher takes as a raw key without the PBKDF2
+    /// pass that `kdf_iter` sets, so that row matters only for a key in
+    /// another form; it is pinned so that a change is looked at. A new
+    /// `cipher_settings` row fails here too.
+    ///
+    /// Pinned to what SQLCipher 4.19.0 (rusqlite 0.41) reported; 4.20.0
+    /// reports the same.
+    #[test]
+    fn kernel_database_cipher_settings_are_pinned() -> Result<()> {
+        let (_dir, kernel) = keyed_kernel_for_sqlcipher_pins()?;
+        let mut stmt = kernel.conn.prepare("PRAGMA cipher_settings")?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<String>, _>>()?;
+        assert_eq!(
+            rows,
+            [
+                "PRAGMA kdf_iter = 256000;",
+                "PRAGMA cipher_page_size = 4096;",
+                "PRAGMA cipher_use_hmac = 1;",
+                "PRAGMA cipher_plaintext_header_size = 0;",
+                "PRAGMA cipher_hmac_algorithm = HMAC_SHA512;",
+                "PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA512;",
+            ],
+            "SQLCipher's settings for a new kernel database changed"
+        );
+        for (pragma, expected) in [
+            ("cipher", "AES-256-CBC"),
+            ("fast_kdf_iter", "2"),
+            ("cipher_hmac_pgno", "le"),
+            ("cipher_hmac_salt_mask", "3a"),
+        ] {
+            let value: String = kernel
+                .conn
+                .query_row(&format!("PRAGMA {pragma}"), [], |row| row.get(0))?;
+            assert_eq!(
+                value, expected,
+                "SQLCipher's `PRAGMA {pragma}` for a new kernel database changed"
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn sqlcipher_migration_from_unencrypted() -> Result<()> {
         let dir = tempfile::tempdir()?;
@@ -7997,6 +8481,185 @@ mod tests {
             "migrated database should be encrypted"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn sqlcipher_migration_recovers_from_an_interrupted_one() -> Result<()> {
+        // A migration cut off before its final rename leaves `<db>.encrypted`
+        // beside the still-plaintext original. The next open exported into
+        // that leftover and failed — and so did every open after it, until
+        // someone deleted the file by hand.
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("interrupted.db");
+        let db_path_str = db_path.to_string_lossy().to_string();
+        {
+            let conn = Connection::open(&db_path)?;
+            conn.execute_batch(
+                "CREATE TABLE test_data (id INTEGER PRIMARY KEY, val TEXT);
+                 INSERT INTO test_data (val) VALUES ('migration_sentinel');",
+            )?;
+        }
+        let stale = dir.path().join("interrupted.db.encrypted");
+        std::fs::copy(&db_path, &stale)?;
+        assert!(std::fs::metadata(&stale)?.len() > 0);
+        // The killed export's rollback journal may be there too. SQLite
+        // discards a journal it finds beside a brand-new, empty database.
+        let stale_journal = dir.path().join("interrupted.db.encrypted-journal");
+        std::fs::write(&stale_journal, b"journal of an export that never finished")?;
+
+        let signing_key = signing_key_from_seed("devkey:test:a1b2c3d4e5f6a7b8c9d0")?;
+        let db_key = derive_db_encryption_key(&signing_key);
+        let conn = open_db_connection_with_key(&db_path_str, Some(&db_key))?;
+        let val: String = conn.query_row("SELECT val FROM test_data WHERE id = 1", [], |row| {
+            row.get(0)
+        })?;
+        assert_eq!(val, "migration_sentinel");
+        drop(conn);
+
+        assert!(
+            !is_unencrypted_db(&db_path_str),
+            "migrated database should be encrypted"
+        );
+        assert!(!stale.exists(), "the stale target was replaced, not kept");
+        assert!(!stale_journal.exists(), "and its journal went with it");
+        Ok(())
+    }
+
+    #[test]
+    fn sqlcipher_migration_that_fails_leaves_no_partial_target() -> Result<()> {
+        // A plaintext database with a damaged page deep in a table: the
+        // export starts, creates its target, and fails part-way. The target
+        // must not outlive the failure, or the next open starts from a
+        // leftover.
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("damaged.db");
+        let db_path_str = db_path.to_string_lossy().to_string();
+        {
+            let conn = Connection::open(&db_path)?;
+            conn.execute_batch("CREATE TABLE test_data (id INTEGER PRIMARY KEY, val TEXT);")?;
+            let filler = "x".repeat(512);
+            for _ in 0..512 {
+                conn.execute("INSERT INTO test_data (val) VALUES (?1)", params![filler])?;
+            }
+        }
+        let mut bytes = std::fs::read(&db_path)?;
+        assert!(bytes.starts_with(b"SQLite format 3\0"));
+        let middle = bytes.len() / 2;
+        let damaged_until = (middle + 4096).min(bytes.len());
+        bytes[middle..damaged_until].fill(0xFF);
+        std::fs::write(&db_path, &bytes)?;
+
+        let signing_key = signing_key_from_seed("devkey:test:a1b2c3d4e5f6a7b8c9d0")?;
+        let db_key = derive_db_encryption_key(&signing_key);
+        assert!(open_db_connection_with_key(&db_path_str, Some(&db_key)).is_err());
+        assert!(
+            !dir.path().join("damaged.db.encrypted").exists(),
+            "a failed migration must clean up its partial target"
+        );
+        assert_eq!(
+            std::fs::read(&db_path)?,
+            bytes,
+            "and must leave the original as it was"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sqlcipher_migration_is_serialized_across_concurrent_opens() -> Result<()> {
+        // Two services that start together (the Home Assistant app's API and
+        // its Frigate bridge) both open the kernel, and on a legacy plaintext
+        // database both reach the migration. Unserialized, each took the
+        // other's in-progress target for a stale one and removed it: both
+        // opens failed and the database stayed plaintext. Each opener here
+        // uses its own lock-file handle, as two processes do.
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("shared.db");
+        let db_path_str = db_path.to_string_lossy().to_string();
+        {
+            let mut conn = Connection::open(&db_path)?;
+            conn.execute_batch(
+                "CREATE TABLE test_data (id INTEGER PRIMARY KEY, val TEXT);
+                 INSERT INTO test_data (val) VALUES ('migration_sentinel');",
+            )?;
+            // Enough rows that one export is still running when the other
+            // opener arrives.
+            let filler = "x".repeat(512);
+            let tx = conn.transaction()?;
+            for _ in 0..4096 {
+                tx.execute("INSERT INTO test_data (val) VALUES (?1)", params![filler])?;
+            }
+            tx.commit()?;
+        }
+        assert!(is_unencrypted_db(&db_path_str));
+
+        let signing_key = signing_key_from_seed("devkey:test:a1b2c3d4e5f6a7b8c9d0")?;
+        let db_key = derive_db_encryption_key(&signing_key);
+        let barrier = std::sync::Barrier::new(2);
+        let open_and_read = || -> Result<String> {
+            barrier.wait();
+            let conn = open_db_connection_with_key(&db_path_str, Some(&db_key))?;
+            Ok(
+                conn.query_row("SELECT val FROM test_data WHERE id = 1", [], |row| {
+                    row.get(0)
+                })?,
+            )
+        };
+        let (first, second) = std::thread::scope(|scope| {
+            let first = scope.spawn(open_and_read);
+            let second = scope.spawn(open_and_read);
+            (
+                first.join().expect("first opener panicked"),
+                second.join().expect("second opener panicked"),
+            )
+        });
+        assert_eq!(first?, "migration_sentinel");
+        assert_eq!(second?, "migration_sentinel");
+
+        assert!(
+            !is_unencrypted_db(&db_path_str),
+            "the database is encrypted after both opens"
+        );
+        assert!(
+            !dir.path().join("shared.db.encrypted").exists(),
+            "no migration target is left behind"
+        );
+        // The lock file is named like a SQLite sidecar (`<db>-...`) on
+        // purpose: a file policy that allows `<db>-*` beside the database
+        // (the Home Assistant app's AppArmor profile) covers it.
+        assert!(
+            dir.path().join("shared.db-migrate-lock").exists(),
+            "the migration lock is the `<db>-migrate-lock` sibling"
+        );
+        let conn = open_db_connection_with_key(&db_path_str, Some(&db_key))?;
+        let rows: i64 = conn.query_row("SELECT count(*) FROM test_data", [], |row| row.get(0))?;
+        assert_eq!(rows, 4097, "every row survived the migration");
+        Ok(())
+    }
+
+    #[test]
+    fn unencrypted_db_check_reads_the_header_only() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path_of = |name: &str| dir.path().join(name).to_string_lossy().to_string();
+
+        // The plaintext SQLite header, and nothing else, says "unencrypted".
+        let plain = path_of("plain.db");
+        std::fs::write(&plain, b"SQLite format 3\0then anything at all")?;
+        assert!(is_unencrypted_db(&plain));
+
+        // Sixteen or more bytes that are not the header: an encrypted file.
+        let opaque = path_of("opaque.db");
+        std::fs::write(&opaque, [0x5Au8; 64])?;
+        assert!(!is_unencrypted_db(&opaque));
+
+        // Shorter than the header, empty, or absent: not unencrypted.
+        let short = path_of("short.db");
+        std::fs::write(&short, b"SQLite format")?;
+        assert!(!is_unencrypted_db(&short));
+        let empty = path_of("empty.db");
+        std::fs::write(&empty, b"")?;
+        assert!(!is_unencrypted_db(&empty));
+        assert!(!is_unencrypted_db(&path_of("absent.db")));
         Ok(())
     }
 
@@ -8093,6 +8756,155 @@ mod tests {
             count += 1;
         }
         assert_eq!(count, baseline + 50);
+        Ok(())
+    }
+
+    /// A file-backed config for the receipt-ledger race tests: the writers
+    /// are separate connections to one database, as two processes are.
+    fn file_backed_test_cfg(dir: &tempfile::TempDir, name: &str) -> KernelConfig {
+        KernelConfig {
+            db_path: dir.path().join(name).to_string_lossy().to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(3600),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            zone_policy: ZonePolicy::default(),
+        }
+    }
+
+    #[test]
+    fn concurrent_exports_cannot_fork_the_export_receipt_chain() -> Result<()> {
+        // An operator's `court_export` beside the API's hourly bundle: two
+        // writers, one ledger. Each receipt append is a read-modify-write of
+        // the chain head; unlocked, both read the same head and the ledger
+        // forks — after which every verify, and witnessd's boot check, fails
+        // closed until someone edits the database by hand.
+        const EXPORTS_PER_WRITER: usize = 25;
+        let dir = tempfile::tempdir()?;
+        let cfg = file_backed_test_cfg(&dir, "export_receipts.db");
+        // Create the DB (schema, key) before the race.
+        drop(Kernel::open(&cfg)?);
+
+        let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let mut handles = Vec::new();
+        for _writer in 0..2 {
+            let cfg = cfg.clone();
+            let start = std::sync::Arc::clone(&start);
+            handles.push(std::thread::spawn(move || -> Result<()> {
+                let mut kernel = Kernel::open(&cfg)?;
+                start.wait();
+                for _ in 0..EXPORTS_PER_WRITER {
+                    // The bundle carries the receipt its own export sealed:
+                    // the builder refuses a receipt whose artifact hash is
+                    // not this artifact's.
+                    let bundle = kernel.export_events_bundle_self(
+                        cfg.ruleset_hash,
+                        ExportOptions {
+                            jitter_s: 0,
+                            ..ExportOptions::default()
+                        },
+                    )?;
+                    let artifact_hash: [u8; 32] =
+                        Sha256::digest(serde_json::to_vec(&bundle.artifact)?).into();
+                    assert_eq!(bundle.receipt_entry.receipt.artifact_hash, artifact_hash);
+                }
+                Ok(())
+            }));
+        }
+        for handle in handles {
+            handle.join().expect("export thread panicked")?;
+        }
+
+        let kernel = Kernel::open(&cfg)?;
+        let walked = crate::verify::verify_export_receipts_with(
+            &kernel.conn,
+            &[kernel.device_verifying_key()],
+            SignatureMode::Compat,
+            kernel.device_pq_public_key_ref(),
+            |_, _| {},
+        )?;
+        assert_eq!(
+            walked,
+            2 * EXPORTS_PER_WRITER as u64,
+            "every receipt extends the one before it"
+        );
+        let report = kernel.verify_sealed_log_with_hwm_path(None)?;
+        assert!(report.chain_valid, "{:?}", report.error);
+        Ok(())
+    }
+
+    #[test]
+    fn concurrent_writers_cannot_fork_the_break_glass_receipt_chain() -> Result<()> {
+        // The same race on the break-glass ledger: two CLI invocations (or a
+        // CLI beside the backend) each record an authorization outcome.
+        const RECEIPTS_PER_WRITER: usize = 25;
+        let dir = tempfile::tempdir()?;
+        let cfg = file_backed_test_cfg(&dir, "break_glass_receipts.db");
+        let alice = SigningKey::from_bytes(&[33u8; 32]);
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: alice.verifying_key().to_bytes(),
+            }],
+        )?;
+        {
+            let mut kernel = Kernel::open(&cfg)?;
+            kernel.set_break_glass_policy(&policy)?;
+        }
+
+        let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let mut handles = Vec::new();
+        for writer in 0..2 {
+            let cfg = cfg.clone();
+            let policy = policy.clone();
+            let alice = alice.clone();
+            let start = std::sync::Arc::clone(&start);
+            handles.push(std::thread::spawn(move || -> Result<()> {
+                let mut kernel = Kernel::open(&cfg)?;
+                let bucket = TimeBucket::now(600)?;
+                start.wait();
+                for n in 0..RECEIPTS_PER_WRITER {
+                    let request = UnlockRequest::new(
+                        &format!("vault:{writer}-{n}"),
+                        cfg.ruleset_hash,
+                        "incident",
+                        bucket,
+                    )?;
+                    let approval =
+                        Approval::signed(TrusteeId::new("alice"), request.request_hash(), &alice);
+                    let (_token, receipt) = BreakGlass::authorize(
+                        &policy,
+                        &request,
+                        std::slice::from_ref(&approval),
+                        bucket,
+                    );
+                    kernel.append_break_glass_receipt(&receipt, std::slice::from_ref(&approval))?;
+                }
+                Ok(())
+            }));
+        }
+        for handle in handles {
+            handle.join().expect("receipt thread panicked")?;
+        }
+
+        let kernel = Kernel::open(&cfg)?;
+        let counts = crate::verify::verify_break_glass_receipts_with(
+            &kernel.conn,
+            &[kernel.device_verifying_key()],
+            Some(&policy),
+            SignatureMode::Compat,
+            kernel.device_pq_public_key_ref(),
+            |_, _| {},
+        )?;
+        assert_eq!(
+            counts.total,
+            2 * RECEIPTS_PER_WRITER as u64,
+            "every receipt extends the one before it"
+        );
+        let report = kernel.verify_sealed_log_with_hwm_path(None)?;
+        assert!(report.chain_valid, "{:?}", report.error);
         Ok(())
     }
 
@@ -8720,6 +9532,100 @@ mod tests {
         Ok(())
     }
 
+    /// An OpenTimestamps proof over `hash`, built from the fixture calendar
+    /// body (a calendar's ops apply to any commitment).
+    fn ots_fixture_proof(hash: &[u8; 32]) -> crate::ots::Proof {
+        let body = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/ots/response-bob.otsr"
+        ))
+        .unwrap();
+        // Random like the kernel's own, never a literal.
+        let nonce = crate::ots::random_nonce();
+        let c = crate::ots::commitment(hash, &nonce);
+        let node = crate::ots::parse_timestamp(&body, &c).unwrap();
+        crate::ots::Proof::compose(hash, &nonce, node).unwrap()
+    }
+
+    #[test]
+    fn retention_checkpoints_ots_anchored_heads() -> Result<()> {
+        // A chain head anchored ONLY on the OpenTimestamps leg (pending, even)
+        // survives pruning as a signed checkpoint, exactly as a TSA-anchored one.
+        let bucket = TimeBucket {
+            start_epoch_s: 600,
+            size_s: TEN_MINUTES_S,
+        };
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        for z in ["zone:a", "zone:b", "zone:c"] {
+            seal_one_event(&mut kernel, &cfg, z)?;
+        }
+        let events = sealed_event_hashes(&kernel)?;
+        let (h1, h2, h3) = (events[0].1, events[1].1, events[2].1);
+        crate::ots::insert_ots_anchor(
+            &kernel.conn,
+            bucket,
+            crate::tsa::AnchorSubject::ChainHead,
+            &h2,
+            "https://bob.btc.calendar.opentimestamps.org",
+            &ots_fixture_proof(&h2),
+        )?;
+        assert!(!crate::tsa::anchor_table_exists(&kernel.conn)?);
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(0))?;
+        let checkpoints = checkpoint_rows(&kernel)?;
+        assert_eq!(
+            checkpoints.len(),
+            2,
+            "one OTS-anchored head + the real cutoff"
+        );
+        assert_eq!((checkpoints[0].1, checkpoints[0].2), (2, h2));
+        assert_eq!((checkpoints[1].1, checkpoints[1].2), (3, h3));
+        assert!(!crate::tsa::hash_in_history(&kernel.conn, &h1)?);
+        let report = crate::verify_runner::run_full_verify(
+            &kernel.conn,
+            None,
+            None,
+            SignatureMode::Compat,
+            |_| {},
+        )?;
+        assert!(report.chain_valid, "{:?}", report.error);
+
+        // Both tables present: the union holds (h1 by TSA, h3 by OTS).
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        for z in ["zone:a", "zone:b", "zone:c", "zone:d"] {
+            seal_one_event(&mut kernel, &cfg, z)?;
+        }
+        let events = sealed_event_hashes(&kernel)?;
+        let (h1, h3, h4) = (events[0].1, events[2].1, events[3].1);
+        crate::tsa::ensure_anchor_table(&kernel.conn)?;
+        crate::tsa::insert_anchor(
+            &kernel.conn,
+            "chain_head",
+            &h1,
+            "(offline)",
+            &tsa_fixture_token(),
+        )?;
+        crate::ots::insert_ots_anchor(
+            &kernel.conn,
+            bucket,
+            crate::tsa::AnchorSubject::Digest,
+            &h3,
+            "https://bob.btc.calendar.opentimestamps.org",
+            &ots_fixture_proof(&h3),
+        )?;
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(0))?;
+        let checkpoints = checkpoint_rows(&kernel)?;
+        let kept: Vec<(i64, [u8; 32])> = checkpoints.iter().map(|c| (c.1, c.2)).collect();
+        assert_eq!(kept, vec![(1, h1), (3, h3), (4, h4)]);
+
+        // Neither table: only the real cutoff checkpoint, as before.
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        seal_one_event(&mut kernel, &cfg, "zone:a")?;
+        seal_one_event(&mut kernel, &cfg, "zone:b")?;
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(0))?;
+        assert_eq!(checkpoint_rows(&kernel)?.len(), 1);
+        Ok(())
+    }
+
     /// A failure record stamped with an explicit bucket: the one append path
     /// that lets a test seal a row with a chosen `created_at`.
     fn seal_failure_at(kernel: &mut Kernel, cfg: &KernelConfig, start_epoch_s: u64) -> Result<()> {
@@ -8795,6 +9701,67 @@ mod tests {
             |_| {},
         )?;
         assert!(report.chain_valid, "{:?}", report.error);
+        Ok(())
+    }
+
+    #[test]
+    fn sealed_log_document_reads_its_anchor_and_entries_in_one_snapshot() -> Result<()> {
+        // The retention writer commits a new checkpoint and the prune behind
+        // it between the document's checkpoint read and its entries read.
+        // Read as separate autocommit statements, the document then paired
+        // the OLD anchor with the NEW tail: a first entry that links to
+        // nothing served — a false broken-chain alarm on the Witness Wall.
+        let dir = tempfile::tempdir()?;
+        let cfg = KernelConfig {
+            db_path: dir.path().join("snapshot.db").to_string_lossy().to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(86_400),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            zone_policy: ZonePolicy::default(),
+        };
+        // `daemon` is the retention writer; `api` is the Event API's own
+        // kernel handle — a second connection to the same database.
+        let mut daemon = Kernel::open(&cfg)?;
+        let now = TimeBucket::now_10min()?.start_epoch_s;
+        seal_failure_at(&mut daemon, &cfg, now - 3 * 86_400)?;
+        seal_failure_at(&mut daemon, &cfg, now - 3 * 86_400)?;
+        seal_failure_at(&mut daemon, &cfg, now)?;
+        seal_failure_at(&mut daemon, &cfg, now)?;
+        let api = Kernel::open(&cfg)?;
+        let anchor_of = |doc: &SealedLogDocument| {
+            doc.checkpoint_head
+                .clone()
+                .unwrap_or_else(|| hex::encode([0u8; 32]))
+        };
+
+        SEALED_LOG_DOCUMENT_BETWEEN_READS.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                daemon
+                    .enforce_retention_with_checkpoint(Duration::from_secs(86_400))
+                    .expect("retention pass commits beside the reader");
+            }));
+        });
+        let raced = api.sealed_log_document();
+        SEALED_LOG_DOCUMENT_BETWEEN_READS.with(|hook| hook.borrow_mut().take());
+        let raced = raced?;
+        assert_eq!(
+            raced.entries[0].prev_hash,
+            anchor_of(&raced),
+            "the first served entry links to the anchor served with it"
+        );
+        assert_eq!(raced.entries.len(), 4, "the snapshot predates the prune");
+
+        // The prune did commit: the next document is the pruned tail on the
+        // new checkpoint, and it links too.
+        let after = api.sealed_log_document()?;
+        assert_eq!(
+            after.entries.iter().map(|e| e.id).collect::<Vec<_>>(),
+            vec![3, 4]
+        );
+        assert!(after.checkpoint_head.is_some());
+        assert_eq!(after.entries[0].prev_hash, anchor_of(&after));
         Ok(())
     }
 

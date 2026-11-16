@@ -282,7 +282,7 @@ scene, and they are excluded from event exports.
 | `record_type` | Cadence | Purpose |
 |---|---|---|
 | `heartbeat` | One per 10-minute time bucket while the daemon runs | Anchors the tail of the hash chain (tail truncation becomes a detectable missing-heartbeat gap) and records coarse system health |
-| `lifecycle` | One `start` per daemon boot; one `shutdown_clean` per deliberate stop | Makes restarts auditable; a boot that finds a trailing `start` seals a `PowerLoss` failure record (unclean-shutdown proxy) |
+| `lifecycle` | One `start` per daemon boot; one `shutdown_clean` per deliberate stop | Makes restarts auditable; a boot that finds no `shutdown_clean` for the previous run (a trailing `start`, or a checkpoint with no live lifecycle record) seals a `PowerLoss` failure record (unclean-shutdown proxy) |
 
 ### Permitted content
 

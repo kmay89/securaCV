@@ -668,8 +668,9 @@ impl SealedLogStore for SqliteSealedLogStore {
     /// written for every anchored hash `H` at event `e` inside the prune
     /// range, in ascending id order, before the real cutoff checkpoint, all
     /// inside the one transaction. Only hashes that already have an anchor
-    /// row are preserved (an offline query with no response yet is not). The
-    /// store never creates `tsa_anchors`; its absence means no anchors. The
+    /// row in `tsa_anchors` or `ots_anchors` are preserved (an offline query
+    /// with no response yet is not; a pending OpenTimestamps row is). The
+    /// store creates neither table; an absent table means no anchors there. The
     /// pruner never consults anchors to decide *whether* to prune.
     fn enforce_retention_with_checkpoint(
         &mut self,
@@ -740,13 +741,29 @@ impl SealedLogStore for SqliteSealedLogStore {
             // over a chain head is still a countersigned head), ascending, so
             // the real cutoff checkpoint keeps the highest id and stays what
             // `latest_checkpoint` reads.
-            let anchored: Vec<(i64, [u8; 32])> = if table_exists(&store.conn, "tsa_anchors")? {
-                let mut stmt = store.conn.prepare(
+            // The union of both anchor tables (RFC 3161 tokens and
+            // OpenTimestamps proofs), each clause only when its table exists.
+            let mut clauses = Vec::new();
+            if table_exists(&store.conn, "tsa_anchors")? {
+                clauses.push(
+                    "EXISTS (SELECT 1 FROM tsa_anchors a WHERE a.subject_hash = e.entry_hash)",
+                );
+            }
+            if table_exists(&store.conn, crate::ots::OTS_ANCHORS_TABLE)? {
+                clauses.push(
+                    "EXISTS (SELECT 1 FROM ots_anchors o WHERE o.subject_hash = e.entry_hash)",
+                );
+            }
+            let anchored: Vec<(i64, [u8; 32])> = if clauses.is_empty() {
+                Vec::new()
+            } else {
+                let mut stmt = store.conn.prepare(&format!(
                     "SELECT DISTINCT e.id, e.entry_hash FROM sealed_events e
                  WHERE e.id < ?1
-                   AND EXISTS (SELECT 1 FROM tsa_anchors a WHERE a.subject_hash = e.entry_hash)
+                   AND ( {} )
                  ORDER BY e.id ASC",
-                )?;
+                    clauses.join("\n      OR ")
+                ))?;
                 let rows = stmt.query_map(params![cutoff_id], |row| {
                     Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
                 })?;
@@ -759,8 +776,6 @@ impl SealedLogStore for SqliteSealedLogStore {
                     out.push((id, hash));
                 }
                 out
-            } else {
-                Vec::new()
             };
             for (event_id, anchored_head) in anchored {
                 write_checkpoint(store, &anchored_head, event_id, created_at, signature_keys)?;

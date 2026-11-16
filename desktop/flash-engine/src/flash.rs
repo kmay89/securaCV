@@ -22,6 +22,53 @@ use crate::provisioning::Provisioning;
 use crate::{broker_receipt, changemap, intake, port_hint, provisioning, release, rescue, sidecar};
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// A count of operations in flight, with RAII membership: [`InFlight::begin`]
+/// counts one in and the guard it returns counts it out when dropped — on
+/// success, on every `?`, and when the future holding it is dropped.
+pub struct InFlight(AtomicUsize);
+
+/// One member of an [`InFlight`] count.
+pub struct InFlightGuard(&'static InFlight);
+
+impl InFlight {
+    /// An empty count.
+    pub const fn new() -> Self {
+        Self(AtomicUsize::new(0))
+    }
+
+    /// Count one operation in; it is counted out when the guard drops.
+    pub fn begin(&'static self) -> InFlightGuard {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        InFlightGuard(self)
+    }
+
+    /// Whether anything is in flight right now.
+    pub fn any(&self) -> bool {
+        self.0.load(Ordering::SeqCst) > 0
+    }
+}
+
+impl Default for InFlight {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        self.0 .0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Board writes in flight: held by [`flash`] for exactly as long as espflash
+/// is erasing or writing the board, and by an app's own writing commands (a
+/// local file, a restore, an erase). espflash also runs for reads — the chip
+/// probe, a backup, a health check — so "an espflash is running" does not
+/// mean "a board is being written"; an app that asks before quitting
+/// mid-write reads this to tell the two apart.
+pub static BOARD_WRITES: InFlight = InFlight::new();
 
 /// What a successful write reports — the ESP32 receipt the frontends render
 /// and keep. Field names and order are the wire contract of both apps.
@@ -340,6 +387,16 @@ pub async fn flash<H: FlashHost>(
         .and_then(Value::as_u64)
         .filter(|size| *size > 0)
         .ok_or_else(|| format!("{product_id} has an invalid release size"))?;
+    // `size` sizes the download's buffer and is only checked against the
+    // image once the whole body is in hand: refuse one no Canary's flash
+    // could hold before a byte is reserved or fetched.
+    if expected_size > crate::image::LOCAL_IMAGE_MAX_BYTES {
+        return Err(format!(
+            "{product_id} declares an implausible release size ({expected_size} bytes; no Canary \
+             carries more than {} bytes of flash)",
+            crate::image::LOCAL_IMAGE_MAX_BYTES
+        ));
+    }
     let expected_sha = entry
         .get("sha256")
         .and_then(Value::as_str)
@@ -570,6 +627,9 @@ pub async fn flash<H: FlashHost>(
     //     isFirstContact). The browser decides it by reading the board;
     //     espflash reports nothing about resident firmware, so here it comes
     //     from the step-1 checkbox.
+    // From here espflash changes the board: marked until this function
+    // returns, on every path.
+    let _writing = BOARD_WRITES.begin();
     if erase_first.unwrap_or(false) {
         emit("→ first contact with this board — erasing the whole chip before writing".into());
         let code = run_streaming(host, rescue::erase_flash_args(&port), "flash:log").await?;
@@ -745,6 +805,9 @@ mod tests {
         espflash: Vec<(i32, &'static str)>,
         /// Whether the staged image still existed while espflash "ran".
         staged_seen: Mutex<Vec<bool>>,
+        /// Whether BOARD_WRITES was up while espflash "ran" an erase or a
+        /// write.
+        write_marked: Mutex<Vec<bool>>,
         fetched: Mutex<Vec<String>>,
         manifest: Value,
         image: Vec<u8>,
@@ -757,6 +820,7 @@ mod tests {
                 espflash_calls: Mutex::new(Vec::new()),
                 espflash: Vec::new(),
                 staged_seen: Mutex::new(Vec::new()),
+                write_marked: Mutex::new(Vec::new()),
                 fetched: Mutex::new(Vec::new()),
                 manifest: fx.manifest.clone(),
                 image: fx.image.clone(),
@@ -802,6 +866,15 @@ mod tests {
             if args.first().map(String::as_str) == Some("write-bin") {
                 let exists = std::path::Path::new(&args[2]).exists();
                 self.staged_seen.lock().unwrap().push(exists);
+            }
+            if matches!(
+                args.first().map(String::as_str),
+                Some("write-bin" | "erase-flash")
+            ) {
+                self.write_marked
+                    .lock()
+                    .unwrap()
+                    .push(super::BOARD_WRITES.any());
             }
             let (code, out) = self.espflash.get(n).copied().unwrap_or((0, ""));
             on_output(out.as_bytes());
@@ -1070,6 +1143,66 @@ mod tests {
     }
 
     #[test]
+    fn in_flight_counts_every_member_in_and_out() {
+        // Its own count, so the tests that flash in parallel (and hold
+        // BOARD_WRITES while they do) cannot move it.
+        static COUNT: super::InFlight = super::InFlight::new();
+        assert!(!COUNT.any());
+        let a = COUNT.begin();
+        let b = COUNT.begin();
+        assert!(COUNT.any());
+        drop(a);
+        assert!(COUNT.any(), "one of two is still in flight");
+        drop(b);
+        assert!(!COUNT.any(), "the last guard dropped");
+        // A guard dropped by an early return counts out like any other.
+        let early = || -> Result<(), String> {
+            let _held = COUNT.begin();
+            Err("stopped".into())
+        };
+        assert!(early().is_err());
+        assert!(!COUNT.any());
+    }
+
+    #[test]
+    fn a_release_size_no_canary_could_hold_is_refused_before_download() {
+        // The manifest's `size` used to go straight into the download's
+        // Vec::with_capacity: 2^40 aborted the app at "resolving the
+        // release". One byte past the largest flash any Canary carries is
+        // already not a firmware image, and nothing is fetched to find out.
+        let fx = fixture();
+        for size in [
+            crate::image::LOCAL_IMAGE_MAX_BYTES + 1,
+            1u64 << 40,
+            u64::MAX,
+        ] {
+            let mut host = Recorder::new(&fx);
+            host.manifest["products"]["canary-s3"]["size"] = json!(size);
+            let err = block_on(flash(
+                &host,
+                fx.catalog,
+                request(&fx, "canary-s3", "ESP32-S3"),
+            ))
+            .err()
+            .unwrap();
+            assert!(
+                err.starts_with("canary-s3 declares an implausible release size"),
+                "{err}"
+            );
+            assert!(
+                err.contains(&crate::image::LOCAL_IMAGE_MAX_BYTES.to_string()),
+                "the limit is named: {err}"
+            );
+            assert_eq!(
+                host.fetched.lock().unwrap().len(),
+                1,
+                "manifest only, no download"
+            );
+            assert!(host.calls().is_empty());
+        }
+    }
+
+    #[test]
     fn bytes_that_do_not_match_the_release_are_never_written() {
         let fx = fixture();
         let mut host = Recorder::new(&fx);
@@ -1112,6 +1245,10 @@ mod tests {
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0], rescue::erase_flash_args("/dev/ttyACM0"));
         assert_eq!(calls[1][0], "write-bin");
+        // Both espflash runs changed the board, and the write marker was up
+        // for each: an app's quit guard reads it to ask before a quit that
+        // would leave the board half-written.
+        assert_eq!(*host.write_marked.lock().unwrap(), vec![true, true]);
 
         // An erase that fails stops everything: nothing is written.
         let mut host = Recorder::new(&fx);

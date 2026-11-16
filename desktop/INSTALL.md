@@ -120,8 +120,8 @@ the live boot receipt never arrives.
 
   ```sh
   sudo tee /etc/udev/rules.d/61-securacv-canary.rules >/dev/null <<'EOF'
-  ATTRS{idVendor}=="303a", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", MODE="0666", TAG+="uaccess"
-  ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", MODE="0666", TAG+="uaccess"
+  ATTRS{idVendor}=="303a", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", TAG+="uaccess"
+  ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", TAG+="uaccess"
   ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", TAG+="uaccess"
   ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", TAG+="uaccess"
   ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", TAG+="uaccess"
@@ -139,9 +139,13 @@ the live boot receipt never arrives.
   | `1a86:7523` | WCH CH340 | the ESP32-CAM's programmer board, and other WROOM DevKits |
   | `1a86:55d4` | WCH CH9102 | newer ESP32-WROOM DevKits |
 
-  The three bridge lines grant the logged-in user only (`uaccess`), never
-  `MODE="0666"`: those chips are generic parts other gadgets use too.
-  `lsusb` names the chip on yours if you're not sure.
+  Every line grants the logged-in (seated) user only (`uaccess`) — never
+  every account on the machine: a Canary's port carries its setup-network
+  key in the boot log and the ROM download mode that can dump or erase the
+  board, and the three bridge chips are generic parts other gadgets use too.
+  A session without a seat (SSH, a remote desktop) gets nothing from
+  `uaccess`; use the `dialout` fallback below for those. `lsusb` names the
+  chip on yours if you're not sure.
 
 - **Fallback for the permission half only:** add yourself to the `dialout`
   group and log back in — but note this does *not* stop ModemManager:
@@ -182,12 +186,13 @@ Writing the **Home Assistant hub card** opens the card's raw disk device
 (`/dev/sdX` behind a USB card reader or for an SSD, `/dev/mmcblkN` in a
 built-in slot), and on Linux an account outside the `disk` group can't open
 one: the node belongs to `root:disk`. macOS asks for your password
-at that moment (the `authopen` prompt); on Linux the Flasher can't ask yet,
-so once the image is downloaded the write stops with **"no permission to
+at that moment (the `authopen` prompt); on Linux the Flasher can't ask, so
+it checks instead — the moment you pick the card, and again when you type
+ERASE, before anything is downloaded — and stops with **"no permission to
 write /dev/…"** and the exact path. Pick one:
 
 - **For this card only (recommended):** give your account that one device
-  until it's unplugged, then type ERASE again:
+  until it's unplugged, then type ERASE:
 
   ```sh
   sudo chown "$USER" /dev/sdX   # the path from the error, or from the card picker

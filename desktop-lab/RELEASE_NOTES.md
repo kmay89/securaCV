@@ -16,6 +16,38 @@ version, newest first. Same contract as the Flasher's
 
 Heading grammar is `## <version> — <YYYY-MM-DD>`.
 
+## 0.4.2 — 2026-11-15
+
+**A flash in progress is no longer lost by accident, the status strip stops
+interrupting, and the flash bench says what it refuses.**
+
+- **Leaving a running flash asks first.** While a write or the boot monitor
+  runs on the bench on screen, a route change, Next or Back and Reload ask
+  before they go, and the bench bar's reload button is off.
+- **Quitting asks too.** Closing the window where that quits the app, Cmd-Q
+  and the tray's Quit ask "Quit while flashing?". The updater does not offer
+  a restart until the flash is done, and Settings says why.
+- **A quieter status strip.** The strip updates in place and speaks only
+  when the fleet, USB or hub summary changes. The Home and Your fleet no
+  longer redraw under the keyboard.
+- **Open goes to your network only.** A fleet row gets an Open link only for
+  an address on your own network, and the hub address field refuses any
+  other address instead of saving it.
+- **Flash bench.** Settings too long to fit on the board are named before
+  anything is written. A backup made for a different chip is refused. The
+  cards say when no safety copy could be taken.
+- **Less reach for a page.** The app's window is granted only what the Lab
+  uses: events and opening links.
+- **Linux serial access is narrower.** The packaged rule no longer opens a
+  Canary's serial port to every account on the computer. Over SSH or remote
+  desktop, add yourself to the `dialout` group once.
+- **Firmware 2.4.20** is the catalog this version carries.
+- **If you are coming from 0.3.4,** two versions arrive with this one. 0.4.0
+  opened the app on a Home with live cards, Your fleet, the status strip,
+  keyboard shortcuts and a first-run welcome. 0.4.1 added the setup list
+  that ticks itself, the bench bar's one-line descriptions, shortcuts inside
+  a bench and search. Their sections are below.
+
 ## 0.4.1 — 2026-11-06
 
 **Every workflow is easier to follow: a setup list on the Home that ticks

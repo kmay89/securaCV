@@ -466,6 +466,29 @@ log_anchor --db witness.db --device-key-seed "$DEVICE_KEY_SEED" anchor-all --pol
 log_anchor --db witness.db --device-key-seed "$DEVICE_KEY_SEED" import --policy anchor-policy.json --response out/*.tsr
 log_anchor --db witness.db --device-key-seed "$DEVICE_KEY_SEED" verify --policy anchor-policy.json
 ```
+**OpenTimestamps leg** (**CODE**; header source **PROC**): add an `ots`
+block to the policy — only once every policy reader, the observer's binary
+included, is upgraded:
+```json
+"ots": { "calendars": [ { "name": "alice", "url": "https://alice.btc.calendar.opentimestamps.org" },
+                        { "name": "bob",   "url": "https://bob.btc.calendar.opentimestamps.org" } ],
+         "required": false }
+```
+On the same cron (a build with `--features tsa,ots`), `anchor-all` submits
+`|subjects| × |calendars|` nonced commitments and polls earlier pending
+proofs; offline, `--offline-dir` also writes the `.ots-request.json` /
+`.ots-commitment` / `.ots-upgrade.json` files and the curl lines, and
+`import --policy anchor-policy.json --ots-dir out/` brings the `.otsr`
+answers back. The observer verifies with a header file from a node they run:
+```sh
+for h in <heights>; do echo "$h $(bitcoin-cli getblockheader $(bitcoin-cli getblockhash $h) false)"; done > headers.txt
+log_anchor --db witness.db --db-key "$SECURACV_DB_KEY" verify --policy anchor-policy.json --bitcoin-headers headers.txt
+```
+`confirmed in Bitcoin block N against the supplied header` is the only line
+that counts toward coverage; with `"required": true`, `verify --policy`
+refuses to run without `--bitcoin-headers`. The proof-of-work check on each
+header is a sanity check, not evidence of the real chain.
+
 Bring the responses back within the retention window (default 7 days); a
 head pruned before import can only be stored as `digest`. `import` labels the
 anchor by the ledger the response's imprint is found in: a hit in any ledger
@@ -537,7 +560,14 @@ deleted or replaced, and `--policy` counts offsets beyond
 `max_clock_offset_s` into `NOT SATISFIED` (`docs/timestamping.md`, "Clock
 provenance"). The anchoring host's clock still needs the NTP check above
 (**PROC**): a `note: host clock:` line names a disagreement, it does not fix
-one. An OpenTimestamps leg is **GAP** (§4). No shipped image enables the `tsa` feature: online
+one. The OpenTimestamps leg is **CODE** for per-device subjects (the fleet
+aggregate of §4 stays **GAP**): with an `ots` block in the policy,
+`anchor-all` also submits a nonced commitment of every subject to every
+declared calendar and upgrades earlier pending proofs (at most one fetch per
+pending row younger than 7 days), and `verify --bitcoin-headers headers.txt`
+says `confirmed` only against a header the observer supplied
+(`docs/timestamping.md`, "The OpenTimestamps leg"). The header source and the
+cadence are **PROC**: the observer brings `headers.txt` from a node they run. No shipped image enables the `tsa` feature: online
 `anchor-all` runs from an operator host (**PROC**). The Debian-based
 `witnessd` image carries the `openssl` CLI (via `ca-certificates`), so
 `verify --ca` / `--policy` can run inside it against a mounted CA or policy
@@ -688,7 +718,7 @@ rotate per bucket automatically.
 | Token file | `authorize` | nobody — record its SHA-256, then delete | — | that a token existed and was consumed |
 | Receipts | kernel database (authoritative); `receipts --verbose` capture | operator; capture in the record | life of the database; captures per legal hold | every attempt, its outcome, its context |
 | Policy history | kernel database; `policy history` capture | operator | life of the database | the roster's lineage |
-| Anchor tokens (`tsa_anchors.token_der`, `.tsq`, `.tsr`) | `log_anchor` | operator; exported with every backup | life of the deployment | that a state existed no later than a third party's time |
+| Anchor tokens (`tsa_anchors.token_der`, `.tsq`, `.tsr`) and OpenTimestamps proofs (`ots_anchors.proof`, `.ots`, `.otsr`, the request and upgrade files, the observer's `headers.txt`) | `log_anchor` | operator; exported with every backup; the observer keeps `headers.txt` | life of the deployment | that a state existed no later than a third party's time, or before a Bitcoin block |
 | High-water-mark copies | kernel (`SECURACV_HWM_PATH`) | operator, external media | rolling; snapshots at each ceremony | that the log was never shorter than this |
 | `doctor`, `log_verify`, drill outputs | the tools | ceremony record | per ceremony | the state of the system on the day |
 | `SCRIPT.md` + hash, `EXCEPTIONS.md`, `CLOSEOUT.md` + witness signature, `BUILD.md` | the ceremony | ceremony record | life of the deployment | what was supposed to happen, what did, who saw it |
@@ -714,6 +744,7 @@ rotate per bucket automatically.
 | Two-TSA distinctness, count, and declared roles | **CODE** (attribution by CA under openssl; pins for CA overlap) / **PROC** (legal qualification) | `log_anchor verify --policy` |
 | Receipt heads anchored as typed subjects | **CODE** | `--subject`, `anchor-all` |
 | Constant per-run anchor request count (no event-correlated egress) | **CODE** | `anchor-all`: subjects × TSAs, empty-ledger sentinel |
+| OpenTimestamps leg (nonced commitments; Bitcoin confirmation against an operator-supplied header file) | **CODE** / **PROC** (header source, cadence) | anchor-all, log_anchor verify --bitcoin-headers |
 | Verdict honesty | **CODE** | `valid` vs `self-consistent; identity unverified`; `receipts` / `policy history` print `Verifying key: pinned out of band` vs `read from the audited database` |
 | Observer verification without the signing seed | **CODE** | `--db-key` / `SECURACV_DB_KEY` on every verifier, including `policy history` / `policy show`; `break_glass db-key` derives it |
 | History verified under the rotation lineage | **CODE** | `policy history` checks each row against every validated lineage key |

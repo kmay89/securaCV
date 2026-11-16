@@ -133,16 +133,34 @@ fn main() -> Result<()> {
     // it does not verify, enter report-but-not-append safe mode: keep the read /
     // verify API up so an operator can inspect the damage, but seal nothing —
     // appending onto an untrusted tail would launder the tampering into the chain.
-    let safe_mode_reason: Option<String> = {
+    // The report itself is kept: it seeds the event API's last verify
+    // (`with_last_verify` below), so `/api/identity` and the `/api/fleet`
+    // self row carry the boot verdict instead of nothing until a client
+    // POSTs `/verify`. A verification that could not run at all has no
+    // report to serve; its reason still enters safe mode.
+    let (boot_report, safe_mode_reason): (
+        Option<witness_kernel::verify_runner::VerifyReport>,
+        Option<String>,
+    ) = {
         let _stage = ui.stage("Verify sealed-log tail");
         match kernel.verify_sealed_log() {
-            Ok(report) if report.chain_valid => None,
-            Ok(report) => Some(
-                report
-                    .error
-                    .unwrap_or_else(|| "sealed-log chain did not verify".to_string()),
+            Ok(report) => {
+                let reason = if report.chain_valid {
+                    None
+                } else {
+                    Some(
+                        report
+                            .error
+                            .clone()
+                            .unwrap_or_else(|| "sealed-log chain did not verify".to_string()),
+                    )
+                };
+                (Some(report), reason)
+            }
+            Err(e) => (
+                None,
+                Some(format!("sealed log could not be verified at boot: {e:#}")),
             ),
-            Err(e) => Some(format!("sealed log could not be verified at boot: {e:#}")),
         }
     };
     if let Some(reason) = &safe_mode_reason {
@@ -153,16 +171,17 @@ fn main() -> Result<()> {
         );
     }
 
-    // Witness the daemon lifecycle. If the previous run's last lifecycle record
-    // is `start` (no clean shutdown), it died uncleanly — seal a PowerLoss
-    // failure record (proxy for power loss, crash, or kill; see
+    // Witness the daemon lifecycle. If the previous run never sealed a clean
+    // shutdown — its last lifecycle record is `start`, or retention pruned
+    // that record and no `shutdown_clean` is live — it died uncleanly: seal
+    // a PowerLoss failure record (proxy for power loss, crash, or kill; see
     // docs/failure_semantics.md). Then seal this run's start record. Sealing
     // the start record is fail-closed: if we cannot witness our own startup we
     // must not run. Skipped in safe mode — an untrusted tail must not be extended.
     if safe_mode_reason.is_none() {
         let _stage = ui.stage("Seal lifecycle start");
-        match kernel.last_lifecycle_phase() {
-            Ok(Some(LifecyclePhase::Start)) => {
+        match kernel.previous_run_ended_uncleanly() {
+            Ok(true) => {
                 log::warn!(
                     "previous run did not shut down cleanly; sealing PowerLoss failure record"
                 );
@@ -177,8 +196,8 @@ fn main() -> Result<()> {
                     log::error!("failed to seal PowerLoss record: {e}");
                 }
             }
-            Ok(_) => {}
-            Err(e) => log::error!("could not determine previous lifecycle phase: {e}"),
+            Ok(false) => {}
+            Err(e) => log::error!("could not determine how the previous run ended: {e}"),
         }
         kernel.append_lifecycle(
             LifecyclePhase::Start,
@@ -234,6 +253,7 @@ fn main() -> Result<()> {
         let _stage = ui.stage("Start event API");
         ApiServer::new(api_config, cfg.clone())
             .with_storage_health(storage_health.clone())
+            .with_last_verify(boot_report)
             .spawn()?
     };
     log::info!("event api listening on {}", api_handle.addr);

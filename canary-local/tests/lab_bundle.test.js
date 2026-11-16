@@ -263,6 +263,31 @@ test("nothing a page loads is pruned from the bundle", () => {
     "the staged root must prove tools/hatchery/derive.mjs survived the prunes (a sentinel)");
 });
 
+// ── the webview's capability is exactly what the Lab's pages use ─────────────
+// core:default is a set: it carries the tray, menu, window and webview
+// permissions along with the event ones. The Lab's pages call core.invoke
+// (no core grant needed for the app's own commands), event.listen and
+// opener.openUrl — nothing that could remove or relabel the fleet tray or set
+// the app menu, which companion.rs drives from Rust. The grant says so now.
+// What this cannot prove: that invoke, listen and openUrl still work under
+// the narrowed grant. That is a run of the Lab on a desktop (listen is the
+// one that needs the event grant), named in the release checklist.
+test("the Lab webview is granted no tray, menu or core:default permission", () => {
+  const caps = JSON.parse(read(join(APP, "src-tauri/capabilities/default.json")));
+  const ids = (caps.permissions || []).map((p) => (typeof p === "string" ? p : p.identifier));
+  assert.deepStrictEqual(ids, ["core:event:default", "opener:default"],
+    "desktop-lab default.json must grant exactly the event and opener permissions the pages use");
+  for (const f of readdirSync(join(APP, "src-tauri/capabilities")).filter((n) => n.endsWith(".json"))) {
+    const perms = (JSON.parse(read(join(APP, "src-tauri/capabilities", f))).permissions || [])
+      .map((p) => (typeof p === "string" ? p : p.identifier));
+    for (const id of perms) {
+      assert.doesNotMatch(String(id), /^core:(default|tray|menu)/, `${f} grants ${id} — the tray and the menu are Rust's, never the webview's`);
+    }
+  }
+  assert.match(read(join(APP, "src-tauri/capabilities/desktop.json")), /ungranted to it, not ungateable/,
+    "desktop.json must describe the tray and menu as ungranted to the webview");
+});
+
 // ── the webview's IPC surface is exactly what the Lab's pages use ────────────
 // desktop-lab registered four commands no Lab page ever invoked — app_version
 // (app_info's older twin), list_serial_ports (list_ports under another name),

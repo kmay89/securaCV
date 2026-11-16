@@ -25,7 +25,7 @@ protocol FirmwareTransport: Sendable {
 /// A display, over plain http on the home network.
 struct GlassFirmwareTransport: FirmwareTransport {
     let base: URL
-    var session: URLSession = .shared
+    var session: URLSession = LANSession.plain
 
     func status() async throws -> FirmwareStatus? {
         guard DeviceAPI.isPrivate(base) else { throw DeviceError.notPrivateAddress }

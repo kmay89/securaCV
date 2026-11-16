@@ -293,10 +293,11 @@ def main() -> None:
             ),
             "why": (
                 "The broker refuses anonymous connections — every client must present a "
-                "username and password. Home Assistant is exempt in practice: it reaches "
-                "Mosquitto over the internal container network as the reserved "
-                "`homeassistant` account, which is why the connect step below needs no "
-                "credential. A Canary has no such exemption. It is an ordinary external "
+                "username and password. Home Assistant has its own: the add-on creates a "
+                "`homeassistant` service user and hands its password to the Supervisor "
+                "through add-on discovery, and the connect step below signs in with it — "
+                "which is why no credential for it is minted here. A Canary gets no such "
+                "hand-over. It is an ordinary external "
                 "client on your LAN, so without an account of its own a fully provisioned "
                 "hub reports success and then rejects the first device that ever tries to "
                 "publish — and on a screen the size of a matchbox that failure is "
@@ -341,12 +342,14 @@ def main() -> None:
                     # would point Core at itself and time out.
                     "broker": "core-mosquitto",
                     "port": 1883,
-                    # Mosquitto's add-on defaults to authenticating against Home
-                    # Assistant's own users, and Core reaches it over the
-                    # internal network, so no separate credential is minted here.
-                    # Deliberate: inventing a password would either commit a
-                    # secret to this repo or leave one the operator can't find.
-                    "discovery": True,
+                    # Only the fallback for a flow that opens without the
+                    # add-on menu. On a Supervisor host the executor answers
+                    # the menu with "addon", and Home Assistant signs in as
+                    # the add-on's `homeassistant` service user with the
+                    # password Mosquitto hands over through Supervisor
+                    # discovery — so no credential is minted or committed
+                    # here. No `discovery` key: the broker step's schema
+                    # rejects it, and discovery is on by default.
                 },
             },
             "start": False,

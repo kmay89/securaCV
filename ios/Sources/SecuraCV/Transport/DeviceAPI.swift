@@ -52,6 +52,22 @@ struct ProvisioningReceipt: Codable, Sendable {
     /// or an empty string (an http-only device). The pin an https base URL
     /// needs before DeviceAPI will dial it.
     var tlsCertFingerprint: String?
+    /// `pubkey_fp`: the first 8 bytes (16 hex) of the domain-separated
+    /// SHA-256 of the Canary's Ed25519 key (Wire/DeviceFingerprint), as the
+    /// WAP and the `firmware/canary` build write it into every receipt.
+    /// Nil when the receipt carried none or a value that is not 16 hex. The
+    /// first poll pins a key only when its fingerprint equals this one
+    /// (FleetStore.pinOnFirstSight), so a host answering the device's
+    /// address cannot have its own key pinned in the device's place.
+    var pubkeyFingerprint: String?
+
+    /// Lowercase 16-hex, or nil for anything that cannot be a `pubkey_fp`.
+    static func normalizePubkeyFingerprint(_ raw: String?) -> String? {
+        guard let t = raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              t.count == DeviceFingerprint.byteCount * 2,
+              t.allSatisfy({ $0.isASCII && $0.isHexDigit }) else { return nil }
+        return t
+    }
 
     // Accept the documented alternate field names too.
     init(from decoder: Decoder) throws {
@@ -63,6 +79,7 @@ struct ProvisioningReceipt: Codable, Sendable {
         deviceID = str(["device_id"]) ?? ""
         token = str(["token", "api_token"]) ?? ""
         tlsCertFingerprint = TLSPin.normalize(str(["tls_cert_fp"]))
+        pubkeyFingerprint = Self.normalizePubkeyFingerprint(str(["pubkey_fp"]))
         let urlString = str(["base_url", "host"]) ?? ""
         // Tolerance has a floor: a receipt without a token would "pair" a
         // device whose every authenticated call then 401s with no explanation.
@@ -268,7 +285,7 @@ enum DeviceError: Error, LocalizedError {
         case .notPrivateAddress: return "That address isn't on your local network."
         case .http(let code, let msg): return "Device error \(code): \(msg)"
         case .badReceipt: return "That pairing receipt couldn't be read."
-        case .notPairable: return "This Canary is paired through Home Assistant, not here."
+        case .notPairable: return "This device holds no pairing for this Canary. If it was paired on another device, open its recovery kit here too."
         case .certificateMismatch:
             return "This Canary's secure certificate doesn't match the one in its pairing "
                 + "receipt, so the connection was refused. Something may be answering in its "
@@ -325,7 +342,9 @@ actor DeviceAPI {
             self.session = pinned.session
             self.pinDelegate = pinned.delegate
         } else {
-            self.session = .shared
+            // Plain http: the shared cookie store as before, and no
+            // redirect is followed, so the bearer never leaves this network.
+            self.session = LANSession.plain
             self.pinDelegate = nil
         }
     }
@@ -385,7 +404,7 @@ actor DeviceAPI {
     ///     BLE presence beacon: what a Canary will tell anyone who asks.
     ///
     /// Still gated on `isPrivate` — the app never dials a public address.
-    static func fleetSelfReport(at base: URL, session: URLSession = .shared) async throws -> FleetSelfReport {
+    static func fleetSelfReport(at base: URL, session: URLSession = LANSession.plain) async throws -> FleetSelfReport {
         guard isPrivate(base) else { throw DeviceError.notPrivateAddress }
         var req = URLRequest(url: base.appendingPathComponent("/api/fleet"))
         // Probing several discovered hosts must not stall the refresh loop: a
@@ -469,7 +488,8 @@ actor DeviceAPI {
 
     /// The device's raw 32-byte Ed25519 public key — fetched once, at first
     /// sight, so `PinnedKeyStore.pin` has a key to pin (the pairing receipt
-    /// deliberately carries only id/URL/token). Both dialects are tried, same
+    /// carries the key's fingerprint, `pubkey_fp`, not the key; the poll pins
+    /// a fetched key only when it derives that fingerprint). Both dialects are tried, same
     /// spirit as `authorize(_:)`: the WAP firmware serves the key as 64 hex
     /// chars in `/api/status` ("pubkey"); the reference device-api serves it
     /// SPKI-PEM-encoded in `/api/v1/witness/export` ("public_key_pem").
@@ -684,7 +704,7 @@ actor DeviceAPI {
             dial = pinned.session
             pinDelegate = pinned.delegate
         } else {
-            dial = .shared
+            dial = LANSession.plain
             pinDelegate = nil
         }
         var req = URLRequest(url: url)
@@ -915,7 +935,7 @@ enum TLSPin {
 /// nothing to say about it either way. On a mismatch the challenge is
 /// canceled and the mismatch remembered, so DeviceAPI can name the failure
 /// (`.certificateMismatch`) instead of surfacing a bare "canceled".
-final class PinnedTrustDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
+final class PinnedTrustDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     let pinnedFingerprint: String
     private let lock = NSLock()
     private var mismatch = false
@@ -965,6 +985,15 @@ final class PinnedTrustDelegate: NSObject, URLSessionDelegate, @unchecked Sendab
             noteMismatch()
             completionHandler(.cancelAuthenticationChallenge, nil)
         }
+    }
+
+    /// A pinned Canary's redirect is not followed either (RefuseRedirects).
+    func urlSession(_ session: URLSession,
+                    task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }
 

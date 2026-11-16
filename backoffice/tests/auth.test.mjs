@@ -51,13 +51,19 @@ test('TOTP matches the RFC 6238 SHA-1 test vectors (6-digit truncation)', () => 
 test('operator setup, login with password + code, sessions and API tokens', async () => {
   const db = testDb();
   const secret = setupOperator(db, 'a very long password');
-  assert.equal(await login(db, { password: 'a very long password', code: '000000' }), null, 'wrong code fails');
-  assert.equal(await login(db, { password: 'wrong', code: totp(secret) }), null, 'wrong password fails');
-  const s = await login(db, { password: 'a very long password', code: totp(secret) });
+  // One clock for the whole exchange. Each login runs scrypt first, which
+  // takes about a second, so codes minted from the wall clock on separate
+  // lines could fall either side of a 30-second step: the "same code again"
+  // below was then the NEXT step's code, never used, and the login passed.
+  const now = Date.now();
+  const code = totp(secret, { time: now });
+  assert.equal(await login(db, { password: 'a very long password', code: '000000' }, { now }), null, 'wrong code fails');
+  assert.equal(await login(db, { password: 'wrong', code }, { now }), null, 'wrong password fails');
+  const s = await login(db, { password: 'a very long password', code }, { now });
   assert.ok(s && s.id && s.csrf && s.role === 'owner', 'the only person can log in without typing an email');
   // a code is good for one login: the same one again is refused, the next step's is not
-  assert.equal(await login(db, { email: 'owner@localhost', password: 'a very long password', code: totp(secret) }), null, 'the code just used is spent');
-  const later = Date.now() + 30_000;
+  assert.equal(await login(db, { email: 'owner@localhost', password: 'a very long password', code }, { now }), null, 'the code just used is spent');
+  const later = now + 30_000;
   assert.ok(await login(db, { email: 'owner@localhost', password: 'a very long password', code: totp(secret, { time: later }) }, { now: later }), 'and with the email');
   assert.equal(await login(db, { email: 'nobody@localhost', password: 'a very long password', code: totp(secret, { time: later }) }, { now: later }), null);
   assert.ok(sessionFor(db, s.id));

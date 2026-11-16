@@ -176,8 +176,12 @@ void on_online(uint32_t now_ms, const char* how) {
   apply_power_policy();  // power settings do not survive a link cycle
   if (s_current >= 0) {
     const uint8_t was_good = s_store.last_good;
+    const bool was_joined = (s_store.nets[s_current].flags & wifi_store::FLAG_JOINED) != 0;
     wifi_store::note_result(s_store, s_current, true);
-    if (was_good != s_store.last_good) {
+    // Persist when the pick moved, and the first time a seeded network
+    // joins: FLAG_JOINED is what the setup rule reads back after a power
+    // cut (below), so it has to reach NVS once, not only when last_good moves.
+    if (was_good != s_store.last_good || !was_joined) {
       save_store();
       persist_current(s_current);
     }
@@ -334,7 +338,17 @@ void loop(uint32_t now_ms) {
   // shared threshold the display uses. The saved networks keep being
   // retried quietly underneath the portal, so a router that was merely
   // rebooting rejoins with no human involved.
-  if (wifi_should_open_setup(st, s_last_failure, /*attempts_before_setup=*/3)) {
+  //
+  // "Never online" means this power cycle AND the ring: a saved network
+  // that has joined before (wifi_store::FLAG_JOINED, persisted with it) is
+  // not a credential problem the portal could fix, so a whole-house power
+  // blip — every Canary up in 3 s, the router beaconing again 90 s later —
+  // no longer raises SecuraCV-<type>-XXXX on NotFound. The RAM flag alone
+  // still gates the outage reboot (retry_state / wifi_next_action), so a
+  // link that never associated this power cycle is never rebooted.
+  WifiRetry setup_st = st;
+  setup_st.ever_online = s_ever_online || wifi_store::any_joined(s_store);
+  if (wifi_should_open_setup(setup_st, s_last_failure, /*attempts_before_setup=*/3)) {
     logln("Join keeps failing for a fixable reason - raising the setup network.");
     open_setup_portal();
     return;

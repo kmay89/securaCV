@@ -169,14 +169,16 @@ Four rules keep "beautiful" from decaying into "busy":
   the fleet. Each device rides
   the transport it can actually use right now — and the sheet names the
   wire: a pinned https Canary takes `/api/wifi/connect` over its checked
-  TLS connection, a Canary whose console is connected takes the firmware's
-  bonded BLE provisioning service (preferred over plain http even while it
-  is online; no WAP's console connects today, since the app dials a console
-  only for a peripheral advertising the console service and a WAP does not,
-  so that lane stays empty until ledger A65 is settled), plain http is offered only when nothing encrypted reaches the
-  device and then only behind a disclosure you switch on ("sends it across
-  your Wi-Fi unencrypted"), and the display family is named hands-on up
-  front (its credentials live in its own first-boot portal).
+  TLS connection, plain http is offered only when nothing encrypted reaches
+  the device and then only behind a disclosure you switch on ("sends it
+  across your Wi-Fi unencrypted"), a Canary that is dark on Wi-Fi is named
+  unreachable, and the display family is named hands-on up front (its
+  credentials live in its own first-boot portal). The Bluetooth
+  provisioning lane is never chosen: a console names its device by an id
+  it claims itself, which any host in range could copy from the network's
+  mDNS records, so the lane stays closed until the console proves identity
+  with a nonce signed by the pinned key (and no WAP's console connects
+  today, ledger A65).
   Every verdict on the sheet is a device that actually came back — not a
   hope. The same honesty landed under the glass settings sheet as an undo:
   the sheet snapshots every knob at open, and "Undo changes" replays the
@@ -342,8 +344,17 @@ parts a phone can. Adding a Canary comes first everywhere; the hub second:
     (`FleetStore.startLocalNetworkDiscoveryIfConsented`): the walkthrough's
     "Watch it appear" row (which says why: "iOS asks for Local Network so
     this phone can see it on your Wi-Fi"), the Fleet tab with a real fleet,
-    a Canary heard announcing it has just joined a network, or a launch
-    with a paired fleet; once asked for, every foreground restarts it.
+    the nearby card's done card after a join, or a launch with a paired
+    fleet; once asked for, every foreground restarts it. The display
+    walkthrough's "Enable discovery to watch for it" records the consent
+    without starting the Bluetooth scan (a display has no Bluetooth door),
+    so that tap raises the Local Network prompt only. The hub walkthrough's
+    watch is a gated consumer too: opening "Set up a hub" starts nothing,
+    step 3's **Start watching** does, and its Bonjour browse runs only with
+    the discovery consent (without it the watch probes the typed address or
+    `homeassistant.local`, which needs no browse). The watch, its clock and
+    the typed account live on `FleetStore.hubRunner`, so closing the
+    walkthrough mid-boot keeps them, and a relaunch picks the watch up.
     (`AddCanaryFlowTests` pins all of it: no manager at launch, one
     construction site, no browse in the consent tap, the copy.)
   - **The phone keeps listening in your pocket — slowly, and for the door's

@@ -124,6 +124,88 @@ def test_canary_sd_extraction_and_flags():
     assert not canary_sd_replace_recommended(legacy)
 
 
+# ── the numbers a state attribute can carry ─────────────────────────────
+# Imported here, not in the block above, so this section stands alone.
+from .. import health_metrics as _hm  # noqa: E402
+
+_WIDE = (2**64, 2**70, 10**400, -(2**64), -(10**400))
+
+
+def test_counters_past_64_bits_are_dropped():
+    """The core's JSON writer refuses an integer past 64 bits in a state
+    attribute; the egress and offline-queue counters were bounded below
+    (no negative count) and not above, so one such counter failed the
+    recorder and every websocket subscription on the Health sensor."""
+    most = _hm.HA_ATTRIBUTE_INT_MAX
+    assert most == 2**64 - 1
+    for wide in _WIDE:
+        egress = _hm.egress_counters(
+            {"dropped": wide, "held_dropped": 4, "planner": {"live": wide, "held": 2}}
+        )
+        assert egress == {"held_dropped": 4, "planner": {"held": 2}}, wide
+        assert _hm.offline_queue_counters({"dropped_overflow": wide, "dropped_flushed": 1}) == {
+            "dropped_flushed": 1
+        }, wide
+        assert _hm.egress_topic(
+            {"firmware_version": "2.4.19", "uptime": 60, "csi_event_egress": {"dropped": wide}}
+        ) == (("2.4.19", 60), {}), wide
+    # The largest the core carries is still a count.
+    assert _hm.egress_counters({"dropped": most, "planner": {"live": most}}) == {
+        "dropped": most,
+        "planner": {"live": most},
+    }
+
+
+def test_bounded_number_reads_only_what_the_core_can_carry():
+    most, least = _hm.HA_ATTRIBUTE_INT_MAX, _hm.HA_ATTRIBUTE_INT_MIN
+    for value in (0, 7, -40, most, least, 41.5, -40.123456789, 0.0, 1.8e19):
+        assert _hm.bounded_number(value) == value, value
+        assert type(_hm.bounded_number(value)) is type(value), value
+    for junk in (*_WIDE, most + 1, least - 1, True, False, None, "7", [7], {"n": 7},
+                 float("nan"), float("inf"), float("-inf"), 1e300, -1e300):
+        assert _hm.bounded_number(junk) is None, junk
+    assert _hm.unsigned_reading is _hm._unsigned_reading
+    for junk in _WIDE:
+        assert _hm.unsigned_reading(junk) is None, junk
+    assert _hm.unsigned_reading(most) == most
+
+
+def test_carried_scalar_takes_text_flags_and_bounded_numbers():
+    for value in ("2.4.19", "", "charging", True, False, 4100, -1, 3.5):
+        assert _hm.carried_scalar(value) == value and type(_hm.carried_scalar(value)) is type(value)
+    for junk in (*_WIDE, None, [1], {"a": 1}, float("nan")):
+        assert _hm.carried_scalar(junk) is None, junk
+
+
+def test_the_sd_object_is_projected_to_its_known_keys():
+    """The Health sensor copied the firmware's `sd` object whole; it shows
+    the keys the firmware writes, each as a flag or a bounded number."""
+    assert _hm.canary_sd_attributes(CANARY_HEALTH) == CANARY_HEALTH["sd"]
+    assert set(CANARY_HEALTH["sd"]) == set(_hm.SD_FLAG_KEYS) | set(_hm.SD_NUMBER_KEYS)
+    assert _hm.canary_sd_attributes({"battery": 90}) is None
+    assert _hm.canary_sd_attributes({"sd": "full"}) is None
+    for wide in _WIDE:
+        hostile = {"sd": {
+            "mounted": wide, "usage_pct": wide, "writes": wide, "errors": wide,
+            "lifetime_kb": wide, "wear_pct": 2.8, "replace_recommended": "yes",
+            "nested": {"deeper": wide}, "another": wide,
+        }}
+        assert _hm.canary_sd_attributes(hostile) == {"wear_pct": 2.8}, wide
+    assert _hm.canary_sd_attributes({"sd": {"lifetime_kb": 2**64 - 1, "mounted": False}}) == {
+        "mounted": False, "lifetime_kb": 2**64 - 1,
+    }
+
+
+def test_a_wear_figure_too_wide_for_a_float_is_no_reading():
+    """float() raises OverflowError on an integer past a double's range,
+    which json.loads reads from a long run of digits: out of round_pct that
+    was a traceback from the SD Wear sensor's callback on every such
+    publish."""
+    assert round_pct(10**400) is None
+    assert canary_sd_wear_pct({"sd": {"wear_pct": 10**400}}) is None
+    assert bytes_per_day_to_mb(10**400) is None
+
+
 def test_memory_free_reads_both_firmware_spellings():
     assert memory_free_bytes({"memory_free": 1000}) == 1000
     assert memory_free_bytes({"free_heap": 2000}) == 2000

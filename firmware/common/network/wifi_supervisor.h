@@ -25,8 +25,10 @@
  *                  ring persisted (`wifi_nets` blob), the legacy pair kept in
  *                  step through Config::persist_current so every other reader
  *                  of `wifi_ssid` keeps working.
- *   recovery       a never-online node failing for a fixable reason after three
- *                  attempts (wifi_should_open_setup), OR any node with saved
+ *   recovery       a node that has not been online this power cycle and has
+ *                  no saved network that ever joined (wifi_store::any_joined),
+ *                  failing for a fixable reason after three attempts
+ *                  (wifi_should_open_setup), OR any node with saved
  *                  networks offline ten minutes (onboard::recovery_reraise_due)
  *                  → the portal is re-raised without wiping; the saved networks
  *                  keep being retried quietly underneath it.

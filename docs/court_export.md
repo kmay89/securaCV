@@ -50,6 +50,7 @@ with them.
 | `evidence/` | The bundle exactly as exported (plus its C2PA sidecar, if any) |
 | `anchors/*.der` | The RFC 3161 tokens relevant to THIS disclosure, verbatim as bare DER TimeStampTokens (verified with `openssl ts -verify … -token_in`; a `.tsr` is a full response and takes no such flag), each one's embedded imprint checked against the digest its row claims: tokens over the bundle's exact bytes (called out as such), any token over this disclosure's own signed export receipt entry hash (called out as such, whatever its stored subject — `export_receipt_head` or a `digest` anchor made from `receipts --verbose`), plus chain-head tokens. Digest anchors for other exports, later export-receipt heads, empty-ledger sentinels, break-glass and policy heads are deliberately excluded — including them would disclose that those acts exist |
 | `clock_provenance/clock-NNNN.json` + `clock-NNNN.payload.json` | For every packaged token that has one, the producing device's own clock-provenance record ([`timestamping.md`](timestamping.md), "Clock provenance"): what the device's clock read against that token's `genTime`. The `.payload.json` file is the exact signed bytes; the `.json` beside it carries `prev_hash`, `entry_hash`, the signing domain, the Ed25519 signature and the lineage key it verifies under. Absent when no packaged token has a record |
+| `anchors/ots-NNNN-<subject>.ots` | The OpenTimestamps proofs relevant to THIS disclosure ([`design/opentimestamps_leg.md`](design/opentimestamps_leg.md)), the stored proof verbatim, selected by the same rule as the tokens — by hash first (bundle bytes, this disclosure's receipt entry), chain heads in this database's history last — and each one's digest checked against the row. Each says either "attests Bitcoin block N" (with the merkle root the reader looks up) or "pending (not yet in a Bitcoin block)"; never "confirmed". Absent when no proof qualifies |
 | `MANIFEST.json` | Machine-readable list of every kit file with its SHA-256 |
 
 ## What it checks before packaging
@@ -139,7 +140,35 @@ with them.
    disclose activity outside this export, so a kit carries the records of
    its own tokens and leaves the ledger's own anchors in the producing
    database.
-5. **Fresh output directory**: the manifest attests every file in the kit,
+5. **OpenTimestamps proofs**: a proof is packaged only when it parses and
+   its digest equals the row's hash, else `WARNING: ots anchor #N excluded
+   from the kit: …`; a chain-head proof whose hash is not in this database's
+   history is excluded likewise. Its state is derived from the proof, never
+   from the row's cache. `MANIFEST.json` gains four additive keys, always
+   present: `ots_anchor_count`, `ots_bundle_attestation` and
+   `ots_receipt_attestation` (`"bitcoin"` | `"pending"` | `"none"` — the
+   strongest state among proofs covering the bundle bytes or the receipt
+   entry; `"bitcoin"` means the proof attests a Bitcoin block, not that
+   anything was confirmed), and `ots_anchors[]` (`file`, `subject`, `covers`,
+   `calendar_url`, `attestation`, `bitcoin_height`, `merkle_root` in explorer
+   byte order, `pending_uris`; height and root `null` while pending; no
+   `clock_provenance` key). `anchors[]`, `anchor_count`, `anchored` and
+   `receipt_anchored` keep their RFC 3161 meaning, and an OpenTimestamps
+   proof never silences the "no RFC 3161 anchor covers this bundle"
+   warning. `VERIFICATION.md` step 3 gains `### OpenTimestamps proofs
+   (optional)` — `ots info`, `ots --no-bitcoin verify -d <hex>`, and the
+   block whose merkle root to compare against a node or explorer you trust
+   (or, for a pending proof, what `ots upgrade` would do) — and its intro
+   names the `ots` client. The subsection sits inside step 3, after the
+   openssl recipes and before step 3b. The README's sentence about the
+   proofs follows their state: proofs that attest a block "attest Bitcoin
+   blocks for digests named in `CUSTODY_AND_CONTROL.md`"; when every proof is
+   pending it says they "are pending (not yet in a Bitcoin block) and are not
+   yet evidence of time". The terminal summary adds
+   `ots:       N proof(s), B attest a Bitcoin block, P pending`. A bundle
+   digest gets a proof from `log_anchor request --policy p.json --file
+   bundle.json` (online) or `query --policy` then `import --ots-dir`.
+6. **Fresh output directory**: the manifest attests every file in the kit,
    so `--output-dir` must be absent or empty — a directory with any
    pre-existing content is refused.
 
@@ -157,6 +186,12 @@ with them.
   nothing about when any event happened, and the evidence's 10-minute
   buckets stay 10-minute buckets. The only instant it yields to the second
   is the time of the anchoring act, which the token already fixes.
+- An OpenTimestamps proof in the kit records a block **height** only. The
+  kit says "attests Bitcoin block N"; confirmation is the comparison the
+  reader runs — the proof's merkle root against block N's header from a
+  source they trust. A match shows the bytes existed before block N was
+  mined, to roughly a block interval; it says nothing about who made them.
+  A pending proof shows only that a calendar received a commitment.
 
 Design lineage: this is the "court export" move from the provenance-interop
 research ([`security/PROVENANCE_INTEROP.md`](security/PROVENANCE_INTEROP.md)

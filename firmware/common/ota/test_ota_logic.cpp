@@ -444,6 +444,23 @@ static int test_friendly_strings()
         }
     }
 
+    // A manifest the device REFUSED — a bad or missing signature, a format
+    // downgrade, another product or an over-long field — is not a network
+    // failure. The fetch loop (device-only, securacv_ota.cpp) returns the
+    // parser's verdict without retrying and leaves last_error as the parser
+    // set it, so the sentence every surface then shows must be a different
+    // one from "could not reach the update server".
+    const char *unreachable = securacv_ota_friendly_error(SECURACV_OTA_ERR_MANIFEST_FETCH);
+    const securacv_ota_error_t refusals[] = {
+        SECURACV_OTA_ERR_MANIFEST_SIG, SECURACV_OTA_ERR_MANIFEST_DOWNGRADE,
+        SECURACV_OTA_ERR_MANIFEST_INVALID, SECURACV_OTA_ERR_MANIFEST_PARSE,
+        SECURACV_OTA_ERR_BOARD_MISMATCH,
+    };
+    for (securacv_ota_error_t e : refusals) {
+        CHECK(strcmp(securacv_ota_friendly_error(e), unreachable) != 0);
+    }
+    CHECK(strcmp(securacv_ota_friendly_error(SECURACV_OTA_ERR_NETWORK), unreachable) == 0);
+
     const securacv_ota_state_t states[] = {
         SECURACV_OTA_CHECKING, SECURACV_OTA_DOWNLOADING,
         SECURACV_OTA_VERIFYING, SECURACV_OTA_FLASHING,

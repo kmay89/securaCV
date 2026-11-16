@@ -1,7 +1,9 @@
 // The door's second way in, the watch, and the boundary — each held to its contract over HTTP where it has one.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { netOf, sanitize, boundary, boundaryEach, cidrMatcher, Watch, knownNetwork, BOUNDARY_NOTICE } from '../src/guard.mjs';
+import { netOf, sanitize, boundary, boundaryEach, cidrMatcher, parseCidrRule, Watch, knownNetwork, BOUNDARY_NOTICE } from '../src/guard.mjs';
+import { seedDemo, DEMO_PASSWORD, DEMO_TOTP_SECRET, DEMO_USERS } from '../src/modules/demo.mjs';
+import { orderToken } from '../src/modules/delivery.mjs';
 import { requestSignInLink, signInLink, loginWithLink, setupOperator, totp, clearLocks, sessionFor } from '../src/auth.mjs';
 import { createApp } from '../src/server.mjs';
 import { openTicket, ticketById } from '../src/modules/support.mjs';
@@ -130,5 +132,90 @@ test('the boundary: outsider text is scrubbed at every ingress, the API marks it
     for (const p of ['/login', '/robots.txt', '/healthz', '/store/catalog']) assert.equal((await fetch(base + p)).headers.get('x-robots-tag'), 'noindex, nofollow, noarchive, noai, noimageai', p);
     assert.equal(await (await fetch(base + '/robots.txt')).text(), 'User-agent: *\nDisallow: /\n');
     const rows = doctor(db, cfg).checks; for (const k of ['sign_in_links', 'allowlist', 'session_bind', 'watch']) assert.ok(rows.find(r => r.key === k), k);
+  } finally { await app.close(); }
+});
+
+// ADMIN_ALLOW_CIDRS names networks, and an IPv6 network is a CIDR: a rotating privacy address is useless as an exact
+// rule. A rule that is not a range at all used to match nothing — a 404 on every admin path — so it stops the boot.
+test('the allowlist takes v6 CIDRs and exact v6 addresses however they are spelled, keeps v4-mapped clients on their v4 rule, and refuses an unparseable rule at load', async () => {
+  const allow = cidrMatcher('2001:db8:1200::/56, 2a02:abcd:12::/48, 2001:DB8:0:0:0:0:0:99, 203.0.113.0/24, 198.51.100.7');
+  // a /56: the first 56 bits decide
+  for (const ip of ['2001:db8:1200::1', '2001:db8:1200:ff:aaaa:bbbb:cccc:dddd', '2001:0db8:1200:00ff::1', '2001:DB8:1200:42::7']) assert.equal(allow(ip), true, ip);
+  for (const ip of ['2001:db8:1200:100::1', '2001:db8:1201::1', '2001:db8:11ff:ffff::1', '2001:db9:1200::1']) assert.equal(allow(ip), false, ip);
+  // a /48
+  for (const ip of ['2a02:abcd:12::5', '2a02:abcd:12:ffff:ffff:ffff:ffff:ffff', '2a02:abcd:0012:9::1']) assert.equal(allow(ip), true, ip);
+  for (const ip of ['2a02:abcd:13::5', '2a02:abcd:11:ffff::1', '2a02:abce:12::5']) assert.equal(allow(ip), false, ip);
+  // an exact v6 address matches whatever its spelling, on either side
+  for (const ip of ['2001:db8::99', '2001:0db8:0000:0000:0000:0000:0000:0099', '2001:DB8::99']) assert.equal(allow(ip), true, ip);
+  assert.equal(allow('2001:db8::98'), false);
+  // v4 rules still hold, and a v4 client that arrives v4-mapped (a dual-stack socket) is that v4 client
+  assert.equal(allow('203.0.113.9'), true); assert.equal(allow('::ffff:203.0.113.9'), true); assert.equal(allow('::ffff:cb00:7109'), true, 'the hex spelling of the same mapped address');
+  assert.equal(allow('::ffff:198.51.100.7'), true); assert.equal(allow('::ffff:198.51.100.8'), false); assert.equal(allow('203.0.114.9'), false); assert.equal(allow('::ffff:8.8.8.8'), false);
+  // a v4 rule never lets a v6 client in, and the other way around; nothing that is not an address gets in
+  assert.equal(cidrMatcher('0.0.0.0/0')('2001:db8::1'), false); assert.equal(cidrMatcher('::/0')('8.8.8.8'), false); assert.equal(cidrMatcher('::/0')('2001:db8::1'), true); assert.equal(cidrMatcher('0.0.0.0/0')('8.8.8.8'), true);
+  for (const ip of ['', 'garbage', undefined, '2001:db8:1200::/56']) assert.equal(allow(ip), false, String(ip));
+  // the named ranges read as before
+  const named = cidrMatcher('loopback, private'); for (const ip of ['127.0.0.1', '127.9.9.9', '::1', '0:0:0:0:0:0:0:1', '::ffff:127.0.0.1', '10.1.2.3', '172.16.0.1', '172.31.255.255', '192.168.5.5', '::ffff:10.0.0.9']) assert.equal(named(ip), true, ip);
+  for (const ip of ['172.32.0.1', '172.15.0.1', '11.0.0.1', '192.169.0.1', '8.8.8.8', '::2', 'fd00::1']) assert.equal(named(ip), false, ip);
+  // a rule that is none of those is refused where the list is read, by name: never a silent 404 for everyone
+  for (const bad of ['office', '2a02:zz::/56', '203.0.113.0/33', '2001:db8::/129', '300.1.1.1/24', '203.0.113/24', '203.0.113.0/', '/24', '::ffff:10.0.0.0/90', 'Private']) {
+    assert.equal(parseCidrRule(bad), null, bad);
+    assert.throws(() => cidrMatcher(`203.0.113.0/24, ${bad}`), (e) => e.message.startsWith('ADMIN_ALLOW_CIDRS') && e.message.includes(JSON.stringify(bad)) && /would hide the admin from everyone/.test(e.message), bad);
+  }
+  assert.throws(() => cidrMatcher('office, 2a02:zz::/56'), /"office", "2a02:zz::\/56" are not/);
+  assert.equal(cidrMatcher(''), null); assert.equal(cidrMatcher(' , '), null, 'an empty list is no allowlist');
+  // and the server does not start with one: the reason is the error, not a 404 on every admin path
+  const db = testDb();
+  assert.throws(() => createApp({ db, cfg: testCfg({ secret: 's', adminAllowCidrs: '203.0.113.0/24, 2a02:1234::/5six' }) }), /ADMIN_ALLOW_CIDRS: "2a02:1234::\/5six" is not/);
+  assert.equal(db.get("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'deploy.boot'").n, 0, 'a refused boot is not written down as a boot');
+  // over HTTP: an operator on a v6 /56 reaches the door; a neighbor outside it sees a 404
+  const cfg = testCfg({ secret: 's', adminAllowCidrs: '2001:db8:1200::/56', trustedProxies: 'loopback', attentionTtlMs: 0 }); const app = createApp({ db: testDb(), cfg }); const addr = await app.listen(); const base = `http://127.0.0.1:${addr.port}`;
+  try {
+    const from = (ip) => ({ 'x-forwarded-for': ip });
+    assert.equal((await fetch(base + '/login', { headers: from('2001:db8:1200:7::abcd') })).status, 200, 'inside the /56');
+    assert.equal((await fetch(base + '/login', { headers: from('2001:db8:1300::1') })).status, 404, 'outside it');
+    assert.equal((await fetch(base + '/healthz', { headers: from('2001:db8:1300::1') })).status, 200, 'the public endpoints stay open');
+  } finally { await app.close(); }
+});
+
+// Every answer goes out through send() (http.mjs), which is where the hardening headers are written. Two JSON
+// routes wrote their own response and carried none of them; this walks every registered GET route so the next
+// hand-rolled res.end() fails here.
+test('every GET route answers through send(): nosniff and noindex on each, /api/users and /api/health included', async () => {
+  const db = testDb(); const cfg = testCfg({ demo: true, attentionTtlMs: 0 }); const app = createApp({ db, cfg }); await app.listen(); const base = cfg.baseUrl;
+  try {
+    await seedDemo(db, cfg);
+    const r0 = await fetch(base + '/login', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ email: DEMO_USERS[0].email, password: DEMO_PASSWORD, code: totp(DEMO_TOTP_SECRET) }) });
+    assert.equal(r0.status, 303); const cookie = r0.headers.get('set-cookie').split(';')[0];
+    // a real id for each parameter, so the handler itself answers (a miss would only prove the error page)
+    const one = (sql) => { try { const row = db.get(sql); return row ? String(Object.values(row)[0]) : 'x'; } catch { return 'x'; } };
+    const order = db.get('SELECT id, number FROM orders ORDER BY id LIMIT 1'); const sku = [...(await app.catalog()).products.keys()][0];
+    const fill = (path) => {
+      const v = /^\/(api\/orders|q\/o)\//.test(path) ? [order.number] : /^\/o\//.test(path) ? [order.number, orderToken(cfg.secret, order.number)] : /^\/orders\//.test(path) ? [order.id]
+        : /^\/api\/tickets\//.test(path) ? [one('SELECT number FROM tickets LIMIT 1')] : /^\/tickets\/[^/]+\/att\//.test(path) ? [one('SELECT m.ticket_id FROM attachments a JOIN ticket_messages m ON m.id = a.ticket_message_id LIMIT 1'), one('SELECT id FROM attachments LIMIT 1')] : /^\/tickets\//.test(path) ? [one('SELECT id FROM tickets LIMIT 1')]
+        : /^\/(contacts|api\/customers)\//.test(path) ? [one('SELECT id FROM contacts LIMIT 1')] : /^\/(api\/)?products\//.test(path) ? [sku] : /^\/inventory\//.test(path) ? [one('SELECT sku FROM inventory_items LIMIT 1')]
+        : /^\/warranty\//.test(path) ? [one('SELECT id FROM warranty_claims LIMIT 1')] : /^\/invoices\//.test(path) ? [one('SELECT id FROM invoices LIMIT 1')] : /^\/campaigns\//.test(path) ? [one('SELECT slug FROM campaigns LIMIT 1')]
+        : /^\/purchasing\//.test(path) ? [one('SELECT id FROM purchase_orders LIMIT 1')] : /^\/api\/discounts\//.test(path) ? [one('SELECT code FROM discounts LIMIT 1')] : [];
+      let i = 0; return path.replace(/\(\[\^\/\]\+\)/g, () => encodeURIComponent(v[i++] ?? 'x'));
+    };
+    const gets = app.router.routes.filter(r => r.method === 'GET'); assert.ok(gets.length > 100, `the admin registers its GET routes (${gets.length})`);
+    const seen = []; const bare = [];
+    for (const route of gets) {
+      const path = fill(route.re.source.replace(/^\^/, '').replace(/\\\/\?\$$/, '').replace(/\\\//g, '/'));
+      const r = await fetch(base + path, { headers: { cookie }, redirect: 'manual' }); await r.arrayBuffer();
+      assert.ok(r.status < 500 || (path === '/api/health' && r.status === 503), `${path} answered ${r.status}`);
+      seen.push(`${r.status} ${path}`);
+      if (r.status >= 300 && r.status < 400) continue;   // a redirect has no body to sniff or index
+      // framing: DENY everywhere but the campaign preview, which the admin frames itself (SAMEORIGIN)
+      if (r.headers.get('x-content-type-options') !== 'nosniff' || r.headers.get('x-robots-tag') !== 'noindex, nofollow, noarchive, noai, noimageai' || !['DENY', 'SAMEORIGIN'].includes(r.headers.get('x-frame-options'))) bare.push(`${r.status} ${path}`);
+    }
+    assert.deepEqual(bare, [], 'an answer without the hardening headers was written past send()');
+    for (const p of ['/api/users', '/api/orders', `/orders/${order.id}`, `/api/orders/${order.number}/status-url`, '/settings', '/audit.csv']) assert.ok(seen.includes(`200 ${p}`), `${p} was answered by its handler (${seen.find(s => s.endsWith(' ' + p))})`);
+    assert.ok(seen.some(s => /^(200|503) \/api\/health$/.test(s)));
+    // the two that used to write their own response: their JSON is intact, and an owner-only list stays the owner's
+    const users = await fetch(base + '/api/users', { headers: { cookie } }); assert.match(users.headers.get('content-type'), /^application\/json/); assert.ok((await users.json()).some(u => u.email === DEMO_USERS[0].email));
+    const health = await fetch(base + '/api/health', { headers: { cookie } }); assert.equal(health.headers.get('x-content-type-options'), 'nosniff'); const h = await health.json(); assert.equal(health.status, h.ok ? 200 : 503); assert.ok(Array.isArray(h.checks));
+    const r1 = await fetch(base + '/login', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ email: DEMO_USERS[1].email, password: DEMO_PASSWORD, code: totp(DEMO_TOTP_SECRET) }) });
+    const ops = await fetch(base + '/api/users', { headers: { cookie: r1.headers.get('set-cookie').split(';')[0] } }); assert.equal(ops.status, 403); assert.equal(ops.headers.get('x-content-type-options'), 'nosniff');
   } finally { await app.close(); }
 });

@@ -4,7 +4,12 @@ import { createApp } from '../src/server.mjs';
 import { setupOperator, totp, createApiToken } from '../src/auth.mjs';
 import { signStripePayload } from '../src/modules/stripe.mjs';
 import { createInvoice, invoiceToken } from '../src/modules/invoices.mjs';
-import { testDb, testCfg } from './helpers.mjs';
+import { testDb, testCfg, catalog, sampleOrder, fixture } from './helpers.mjs';
+import { recordOrder, orderById, timeline } from '../src/modules/orders.mjs';
+import { orderToken } from '../src/modules/delivery.mjs';
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 async function boot() {
   const db = testDb(); const cfg = testCfg({ secret: 'sekret' });
@@ -129,6 +134,88 @@ test('end to end: login + CSRF, public forms, signed Stripe webhook, bearer API,
   } finally { await app.close(); db.close(); }
 });
 
+// The signed link shows the order; it does not prove who holds it. Changing where the parcel goes also takes the
+// email the order was placed with, which the page never prints.
+test('the signed status link alone moves no parcel: the address form asks for the order\'s email, and without it the order is unchanged', async () => {
+  const { db, cfg, app, base } = await boot();
+  try {
+    const { order } = recordOrder(db, sampleOrder({ external_id: 'cs_addr_email' }), { catalog: catalog(), actor: 'test' });
+    const url = `${base}/o/${order.number}/${orderToken(cfg.secret, order.number)}`;
+    const page = await (await fetch(url)).text();
+    assert.ok(page.includes('Need to change the address?') && page.includes('name="email"'), 'the form asks for the email'); assert.ok(!page.includes('ada@example.test'), 'and the page does not print it');
+    const moved = { name: 'Mallory', line1: '9 Elsewhere Rd', city: 'Albany', state: 'NY', zip: '12207' };
+    const post = (extra) => fetch(url + '/address', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ ...moved, ...extra }) });
+    for (const [what, extra] of [['no email', {}], ['a blank email', { email: '  ' }], ['somebody else\'s email', { email: 'mallory@example.test' }]]) {
+      const r = await post(extra); assert.equal(r.status, 400, what); assert.match(await r.text(), /not the email this order was placed with/, what);
+      const o = orderById(db, order.id); assert.deepEqual([o.ship_name, o.ship_line1, o.ship_city, o.ship_zip], [order.ship_name, '1 Analytical Way', 'Boston', '02134'], `${what}: the order is unchanged`);
+    }
+    assert.ok(!timeline(db, order.id).some(ev => ev.kind === 'address'), 'nothing on the timeline'); assert.equal(db.get("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'order.address'").n, 0, 'nothing in the audit log');
+    // the email it was placed with, however it is typed
+    const r = await post({ email: ' ADA@Example.Test ' }); assert.equal(r.status, 303); assert.ok(r.headers.get('location').endsWith('?ok=address'));
+    assert.equal(orderById(db, order.id).ship_line1, '9 Elsewhere Rd'); assert.ok(timeline(db, order.id).some(ev => ev.kind === 'address' && ev.actor === 'customer'));
+    // an order with no email on file has nothing to compare with: no form, and the POST is refused
+    const { order: bare } = recordOrder(db, sampleOrder({ external_id: 'cs_addr_bare' }), { catalog: catalog(), actor: 'test' }); db.run('UPDATE orders SET contact_id = NULL WHERE id = ?', bare.id);
+    const bareUrl = `${base}/o/${bare.number}/${orderToken(cfg.secret, bare.number)}`;
+    assert.ok(!(await (await fetch(bareUrl)).text()).includes('Need to change the address?'));
+    const rb = await fetch(bareUrl + '/address', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ ...moved, email: '' }) });
+    assert.equal(rb.status, 400); assert.equal(orderById(db, bare.id).ship_line1, '1 Analytical Way');
+  } finally { await app.close(); db.close(); }
+});
+
+// A website form with a bad field is answered where it was posted, with the reason. Its Referer is a page on the
+// website; redirecting to that path on this host was a 404 on the admin's origin, with the reason lost.
+test('a public form with a bad field answers with the reason, never a redirect to the website\'s path on this host; an admin form still goes back to its page', async () => {
+  const { db, app, base, totpSecret } = await boot();
+  try {
+    const bad = (path, body, referer) => fetch(base + path, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'text/html,application/xhtml+xml', ...(referer ? { referer } : {}) }, body: form(body) });
+    // the Referer a cross-origin form sends by default (the origin only), and the full path an older policy sends
+    for (const [i, referer] of ['https://example.test/', 'https://example.test/contact', 'https://example.test/store.html', null].entries()) {
+      let r = await bad('/forms/contact', { email: 'not-an-email', message: 'hello' }, referer);
+      assert.equal(r.status, 400, String(referer)); assert.equal(r.headers.get('location'), null, 'no redirect'); assert.match(await r.text(), /a valid email is required/);
+      r = await bad('/forms/contact', { email: `ada${i}@example.test`, message: '' }, referer); assert.equal(r.status, 400); assert.equal(r.headers.get('location'), null); assert.match(await r.text(), /message required/);
+      r = await bad('/forms/waitlist', { email: `ada${i}@example.test` }, referer); assert.equal(r.status, 400); assert.equal(r.headers.get('location'), null); assert.match(await r.text(), /sku required/);
+    }
+    // even a Referer that names this host is not followed without a session: the door does not bounce strangers around the admin
+    let r = await bad('/forms/contact', { email: 'nope', message: 'x' }, `${base}/orders`); assert.equal(r.status, 400); assert.equal(r.headers.get('location'), null);
+    assert.equal(db.get('SELECT COUNT(*) AS n FROM tickets').n, 0); assert.equal(db.get('SELECT COUNT(*) AS n FROM contacts').n, 0);
+    // a person with a session, posting an admin form from an admin page: back to that page with the reason, as before
+    r = await fetch(base + '/login', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ password: 'operator password 1', code: totp(totpSecret) }) });
+    const cookie = r.headers.get('set-cookie').split(';')[0]; const csrf = db.get('SELECT csrf FROM sessions').csrf;
+    const admin = (referer) => fetch(base + '/inventory/move', { method: 'POST', redirect: 'manual', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', accept: 'text/html', referer }, body: form({ _csrf: csrf, sku: 'no-such-part', delta: '1', reason: 'test' }) });
+    r = await admin(`${base}/inventory`); assert.equal(r.status, 303); assert.match(r.headers.get('location'), /^\/inventory\?err=/);
+    // the same person, the same mistake, but a Referer from another site: the reason on this page, not a path that site chose
+    r = await admin('https://example.test/inventory'); assert.notEqual(r.status, 303); assert.equal(r.headers.get('location'), null); assert.ok(r.status >= 400 && r.status < 500);
+  } finally { await app.close(); db.close(); }
+});
+
+// The waitlist form posts an id; the thanks page names the product as the catalog does. An id from store.json's
+// `waitlist.products` (what a form may enroll for that is not priced or sold yet) has a name and nothing else:
+// it is never in the storefront's catalog.
+test('the waitlist thanks page names the product, and a waitlist-only row is never listed or sold', async () => {
+  const work = mkdtempSync(join(tmpdir(), 'bo-waitlist-'));
+  const store = JSON.parse(readFileSync(fixture('store.json'), 'utf8'));
+  store.waitlist = { products: [{ id: 'displays-kit', name: 'Watch Station & Canary Dash', link: '', radio: true, stock: 0, hidden: true, authorization: 'pending-fcc' }, { id: 'wap-kit', name: 'A name that must not replace the product\'s' }] };
+  const storeJson = join(work, 'store.json'); writeFileSync(storeJson, JSON.stringify(store));
+  const db = testDb(); const cfg = testCfg({ secret: 'sekret', storeJson }); const app = createApp({ db, cfg }); const addr = await app.listen(); const base = `http://127.0.0.1:${addr.port}`;
+  try {
+    const join_ = (body) => fetch(base + '/forms/waitlist', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'text/html' }, body: form(body) });
+    let r = await join_({ email: 'ada@example.test', sku: 'displays-kit' }); assert.equal(r.status, 200); let page = await r.text();
+    assert.ok(page.includes('on the list for Watch Station &amp; Canary Dash'), 'the name, escaped'); assert.ok(!page.includes('displays-kit'), 'not the raw id');
+    assert.equal(db.get('SELECT sku FROM waitlist').sku, 'displays-kit', 'the id is what is stored');
+    r = await join_({ email: 'ada@example.test', sku: 'wap-kit' }); page = await r.text(); assert.ok(page.includes('on the list for Canary WAP Kit'), 'a priced product keeps its own name');
+    r = await join_({ email: 'ada@example.test', sku: 'no-such-thing' }); assert.ok((await r.text()).includes('on the list for no-such-thing'), 'an id the catalog does not know is printed as posted');
+    // never listed, never sold: not in the storefront's catalog, not a line a checkout accepts
+    const cat = await (await fetch(base + '/store/catalog')).json();
+    assert.ok(cat.products.length > 0 && !cat.products.some(p => p.sku === 'displays-kit'), '/store/catalog does not list it'); assert.ok(!JSON.stringify(cat).includes('displays-kit'));
+    const loaded = await app.catalog(); assert.equal(loaded.products.has('displays-kit'), false); assert.equal(loaded.waitlist.get('displays-kit').name, 'Watch Station & Canary Dash'); assert.equal(loaded.waitlist.has('wap-kit'), false);
+    r = await fetch(base + '/store/checkout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ items: [{ sku: 'displays-kit', qty: 1 }], email: 'ada@example.test' }) }); assert.ok(r.status >= 400, 'a checkout for it is refused');
+    // nor on the admin's Products list or its CSV: there is no product to price, stock or pack
+    const secret = setupOperator(db, 'operator password 1'); r = await fetch(base + '/login', { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form({ password: 'operator password 1', code: totp(secret) }) }); const cookie = r.headers.get('set-cookie').split(';')[0];
+    for (const p of ['/products', '/products.csv', '/api/products']) { r = await fetch(base + p, { headers: { cookie } }); assert.equal(r.status, 200, p); const body = await r.text(); assert.ok(body.includes('wap-kit') && !body.includes('displays-kit') && !body.includes('Watch Station'), `${p} does not list it`); }
+    assert.equal((await fetch(base + '/products/displays-kit', { headers: { cookie } })).status, 404, 'and it has no product page');
+  } finally { await app.close(); db.close(); rmSync(work, { recursive: true, force: true }); }
+});
+
 test('redirect targets: only the site origin for forms, only a local path for the Referer', async () => {
   const { sameOriginUrl, safeLocalPath } = await import('../src/server.mjs');
   assert.equal(sameOriginUrl('https://example.test/store?joined=1', 'https://example.test'), 'https://example.test/store?joined=1');
@@ -138,4 +225,6 @@ test('redirect targets: only the site origin for forms, only a local path for th
   assert.equal(safeLocalPath('http://ops.test/orders/12'), '/orders/12');
   assert.equal(safeLocalPath('http://ops.test//evil.net/x'), null, 'a protocol-relative path never becomes a redirect');
   assert.equal(safeLocalPath('not a url'), null);
+  // with this server's hosts named, a Referer from anywhere else is not a path here
+  assert.equal(safeLocalPath('https://ops.test/orders/12', ['ops.test']), '/orders/12'); assert.equal(safeLocalPath('https://example.test/contact', ['ops.test']), null); assert.equal(safeLocalPath('https://ops.test.evil.net/orders', ['ops.test']), null);
 });

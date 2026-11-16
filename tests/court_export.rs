@@ -1497,3 +1497,276 @@ fn step_2_follows_each_record_clamped_and_binding_only() -> Result<()> {
     }
     Ok(())
 }
+
+// -------------------- OpenTimestamps proofs in the kit --------------------
+
+use witness_kernel::ots;
+
+const OTS_BOB: &str = "https://bob.btc.calendar.opentimestamps.org";
+
+/// A pending proof over `hash`, composed from the fixture calendar body.
+fn ots_proof(hash: &[u8; 32]) -> ots::Proof {
+    let body = std::fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ots/response-bob.otsr"),
+    )
+    .unwrap();
+    // Random like the kernel's own, never a literal.
+    let nonce = ots::random_nonce();
+    let c = ots::commitment(hash, &nonce);
+    let node = ots::parse_timestamp(&body, &c).unwrap();
+    ots::Proof::compose(hash, &nonce, node).unwrap()
+}
+
+fn insert_ots_row(db: &Path, subject: tsa::AnchorSubject, proof: &ots::Proof) -> i64 {
+    let kernel = Kernel::open(&test_cfg(db)).unwrap();
+    ots::insert_ots_anchor(
+        &kernel.conn,
+        TimeBucket {
+            start_epoch_s: 600,
+            size_s: 600,
+        },
+        subject,
+        &proof.digest,
+        OTS_BOB,
+        proof,
+    )
+    .unwrap()
+}
+
+#[test]
+fn ots_proof_over_bundle_packaged() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_db_and_bundle(temp.path())?;
+    let bundle_sha: [u8; 32] = Sha256::digest(std::fs::read(&bundle)?).into();
+    let proof = ots_proof(&bundle_sha);
+    let id = insert_ots_row(&db, tsa::AnchorSubject::Digest, &proof);
+    let kit = temp.path().join("kit");
+    let out = run_court_export(&db, &bundle, &kit);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let file = format!("ots-{id:04}-digest.ots");
+    assert_eq!(
+        std::fs::read(kit.join("anchors").join(&file))?,
+        proof.to_bytes()
+    );
+    let m = read_manifest(&kit)?;
+    assert_eq!(m["ots_anchor_count"], 1);
+    assert_eq!(m["ots_bundle_attestation"], "pending");
+    assert_eq!(m["ots_receipt_attestation"], "none");
+    let o = &m["ots_anchors"][0];
+    assert_eq!(o["file"], format!("anchors/{file}"));
+    assert_eq!(o["subject"], "digest");
+    assert_eq!(o["covers"], "bundle_bytes");
+    assert_eq!(o["calendar_url"], OTS_BOB);
+    assert_eq!(o["attestation"], "pending");
+    assert!(o["bitcoin_height"].is_null());
+    assert!(o["merkle_root"].is_null());
+    assert_eq!(o["pending_uris"][0], OTS_BOB);
+    assert!(o.get("clock_provenance").is_none());
+    // The RFC 3161 keys keep their exact meaning.
+    assert_eq!(m["anchored"], false);
+    assert_eq!(m["anchor_count"], 0);
+    assert_eq!(m["receipt_anchored"], false);
+    assert_eq!(m["anchors"].as_array().unwrap().len(), 0);
+    assert!(m["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["path"] == format!("anchors/{file}")));
+    let verification = std::fs::read_to_string(kit.join("VERIFICATION.md"))?;
+    assert!(verification.contains(
+        "The optional OpenTimestamps check in step 3 also needs the open-source `ots` client (`pip install opentimestamps-client`) and a Bitcoin node or block explorer you trust."
+    ));
+    assert!(verification.contains("### OpenTimestamps proofs (optional)"));
+    assert!(verification.contains(&format!("ots info anchors/{file}")));
+    assert!(verification.contains("This proof is pending (not yet in a Bitcoin block)"));
+    let custody = std::fs::read_to_string(kit.join("CUSTODY_AND_CONTROL.md"))?;
+    assert!(custody.contains(&format!(
+        "- `anchors/{file}` — subject `digest`, OpenTimestamps proof via {OTS_BOB}; pending (not yet in a Bitcoin block) at {OTS_BOB} — **covers the evidence file's exact bytes**"
+    )), "{custody}");
+    let readme = std::fs::read_to_string(kit.join("README.md"))?;
+    assert!(readme.contains(
+        "OpenTimestamps proofs in `anchors/*.ots` are pending (not yet in a Bitcoin block) and are not yet evidence of time; `VERIFICATION.md` shows how to upgrade and check them."
+    ), "{readme}");
+    assert!(!readme.contains("attest Bitcoin blocks"), "{readme}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("  ots:       1 proof(s), 0 attest a Bitcoin block, 1 pending"),
+        "{stdout}"
+    );
+    // An OTS proof never silences the RFC 3161 warning.
+    assert!(stdout.contains("WARNING: no RFC 3161 anchor covers"));
+    for doc in [&verification, &custody, &readme] {
+        assert!(!doc.contains("confirmed in Bitcoin"), "{doc}");
+    }
+
+    if common::ots_available() {
+        let o = Command::new("ots")
+            .arg("info")
+            .arg(kit.join("anchors").join(&file))
+            .output()?;
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    }
+    Ok(())
+}
+
+/// A proof over `hash` whose calendar body is a Bitcoin leaf at the
+/// commitment itself (synthetic: a 32-byte message, so it reads as attesting
+/// block `height`; no header confirms it, and the kit never says it does).
+fn ots_attested_proof(hash: &[u8; 32], height: u8) -> ots::Proof {
+    let nonce = ots::random_nonce();
+    let c = ots::commitment(hash, &nonce);
+    let mut body = vec![0x00, 0x05, 0x88, 0x96, 0x0d, 0x73, 0xd7, 0x19, 0x01, 0x01];
+    body.push(height);
+    let node = ots::parse_timestamp(&body, &c).unwrap();
+    ots::Proof::compose(hash, &nonce, node).unwrap()
+}
+
+#[test]
+fn ots_readme_sentence_follows_the_proofs_state() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_db_and_bundle(temp.path())?;
+    let bundle_sha: [u8; 32] = Sha256::digest(std::fs::read(&bundle)?).into();
+    let attested = ots_attested_proof(&bundle_sha, 5);
+    assert_eq!(attested.state(), ots::ProofState::Bitcoin { height: 5 });
+    insert_ots_row(&db, tsa::AnchorSubject::Digest, &attested);
+    let kit = temp.path().join("kit");
+    export_ok(&db, &bundle, &kit);
+    let readme = std::fs::read_to_string(kit.join("README.md"))?;
+    assert!(readme.contains(
+        "OpenTimestamps proofs in `anchors/*.ots` attest Bitcoin blocks for digests named in `CUSTODY_AND_CONTROL.md`; `VERIFICATION.md` shows the `ots` command and the block to look up."
+    ), "{readme}");
+    assert!(!readme.contains("are pending"), "{readme}");
+    assert_eq!(read_manifest(&kit)?["ots_bundle_attestation"], "bitcoin");
+
+    // One attested and one pending: the sentence names the exception.
+    insert_ots_row(&db, tsa::AnchorSubject::Digest, &ots_proof(&bundle_sha));
+    let kit2 = temp.path().join("kit2");
+    export_ok(&db, &bundle, &kit2);
+    let readme = std::fs::read_to_string(kit2.join("README.md"))?;
+    assert!(readme.contains(
+        "except those it lists as pending (not yet in a Bitcoin block), which are not yet evidence of time"
+    ), "{readme}");
+    for doc in [
+        &readme,
+        &std::fs::read_to_string(kit2.join("VERIFICATION.md"))?,
+    ] {
+        assert!(!doc.contains("confirmed in Bitcoin"), "{doc}");
+        assert!(!doc.contains("tie the same digests"), "{doc}");
+    }
+    Ok(())
+}
+
+#[test]
+fn ots_excluded_rows() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_db_and_bundle(temp.path())?;
+    let sentinel = tsa::AnchorSubject::PolicyHead
+        .empty_ledger_sentinel()
+        .unwrap();
+    insert_ots_row(&db, tsa::AnchorSubject::Digest, &ots_proof(&sentinel));
+    insert_ots_row(&db, tsa::AnchorSubject::Digest, &ots_proof(&[9u8; 32]));
+    let gone = insert_ots_row(&db, tsa::AnchorSubject::ChainHead, &ots_proof(&[8u8; 32]));
+    let bundle_sha: [u8; 32] = Sha256::digest(std::fs::read(&bundle)?).into();
+    let broken = insert_ots_row(&db, tsa::AnchorSubject::Digest, &ots_proof(&bundle_sha));
+    {
+        let kernel = Kernel::open(&test_cfg(&db))?;
+        kernel.conn.execute(
+            "UPDATE ots_anchors SET proof = x'00' WHERE id = ?1",
+            [broken],
+        )?;
+    }
+    let kit = temp.path().join("kit");
+    let out = run_court_export(&db, &bundle, &kit);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let m = read_manifest(&kit)?;
+    assert_eq!(m["ots_anchor_count"], 0);
+    assert_eq!(m["ots_bundle_attestation"], "none");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains(&format!(
+        "WARNING: ots anchor #{gone} excluded from the kit: it claims to anchor a chain head, but the anchored hash is not in this database's chain history."
+    )), "{err}");
+    assert!(err.contains(&format!(
+        "WARNING: ots anchor #{broken} excluded from the kit: its stored proof does not parse as an OpenTimestamps proof ("
+    )), "{err}");
+    assert_eq!(
+        err.matches("WARNING: ots anchor").count(),
+        2,
+        "sentinel and foreign digest stay out silently: {err}"
+    );
+    assert!(
+        !kit.join("anchors").exists() || std::fs::read_dir(kit.join("anchors"))?.next().is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn kit_without_ots_rows_has_constant_zero_keys() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_db_and_bundle(temp.path())?;
+    let kit = temp.path().join("kit");
+    let out = run_court_export(&db, &bundle, &kit);
+    assert!(out.status.success());
+    let m = read_manifest(&kit)?;
+    assert_eq!(m["ots_anchor_count"], 0);
+    assert_eq!(m["ots_bundle_attestation"], "none");
+    assert_eq!(m["ots_receipt_attestation"], "none");
+    assert_eq!(m["ots_anchors"], serde_json::json!([]));
+    let verification = std::fs::read_to_string(kit.join("VERIFICATION.md"))?;
+    assert!(!verification.contains("OpenTimestamps"));
+    let readme = std::fs::read_to_string(kit.join("README.md"))?;
+    assert!(!readme.contains("OpenTimestamps"));
+    let kernel = Kernel::open(&test_cfg(&db))?;
+    assert!(
+        !ots::ots_table_exists(&kernel.conn)?,
+        "court_export never creates it"
+    );
+    Ok(())
+}
+
+/// Cross-implementation check, skipped when the Python `ots` client is not
+/// installed: `ots info` reads the fixtures and a proof our codec composed.
+/// `ots info` makes no network call.
+#[test]
+fn ots_client_reads_fixtures_and_our_proofs() -> Result<()> {
+    if !common::ots_available() {
+        eprintln!("skipping: the `ots` client is not on PATH");
+        return Ok(());
+    }
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ots");
+    for f in [
+        "pending.ots",
+        "bitcoin.ots",
+        "pending-bob.ots",
+        "genesis.ots",
+    ] {
+        let o = Command::new("ots").arg("info").arg(dir.join(f)).output()?;
+        assert!(
+            o.status.success(),
+            "{f}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        if f == "bitcoin.ots" {
+            let text = String::from_utf8_lossy(&o.stdout);
+            assert!(
+                text.contains("BitcoinBlockHeaderAttestation(449399)"),
+                "{text}"
+            );
+            assert!(text.contains("https://alice.btc.calendar.opentimestamps.org"));
+            assert!(text.contains("https://bob.btc.calendar.opentimestamps.org"));
+        }
+    }
+    let temp = tempfile::tempdir()?;
+    let ours = temp.path().join("ours.ots");
+    std::fs::write(&ours, ots_proof(&[0x5au8; 32]).to_bytes())?;
+    let o = Command::new("ots").arg("info").arg(&ours).output()?;
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    Ok(())
+}

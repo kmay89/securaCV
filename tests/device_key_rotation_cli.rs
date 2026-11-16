@@ -147,7 +147,14 @@ fn grove_ingest(db: &str, envs: &[(&str, &str)]) -> Output {
     .expect("spawn grove_vision2_ingest");
     {
         let mut stdin = child.stdin.take().expect("stdin");
-        writeln!(stdin, "{EVENT_LINE}").expect("write event line");
+        // A daemon that refuses its seed exits before it reads stdin, so this
+        // write races its exit. A closed pipe is that refusal arriving first:
+        // the caller reads the outcome from the exit status and stderr.
+        match writeln!(stdin, "{EVENT_LINE}") {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+            Err(e) => panic!("write event line: {e}"),
+        }
     }
     child.wait_with_output().expect("wait grove_vision2_ingest")
 }

@@ -50,7 +50,12 @@ _UNSIGNED_REASONS = ("unsigned", "no_pubkey")
 
 # The liveness vocabulary the online binary sensor accepts — mirrored here
 # so speech and the dashboard can never disagree about what "online" means.
+# A status word in neither tuple is no verdict: the flagship's status
+# carries its witness state (`"state": "NOFIX"`, `"STAT"`, `"MOVE"`, ...)
+# and its liveness on the availability last will, so reading such a word
+# as offline took every flagship down thirty seconds after it connected.
 _ONLINE_WORDS = ("online", "1", "true", "connected")
+_OFFLINE_WORDS = ("offline", "0", "false", "disconnected")
 
 # The waking-hours window, matching the display firmware's audible
 # self-test. Outside it, the casual answer switches to the night register:
@@ -219,47 +224,73 @@ def _snake(event_type: Any) -> str:
     return out
 
 
-def json_status_online(data: dict[str, Any]) -> bool:
-    """The liveness verdict for an already-decoded status object.
+def json_status_online(data: dict[str, Any]) -> bool | None:
+    """The liveness verdict for an already-decoded status object, or None.
 
     Three dialects are live in the fleet. canary-wap publishes an ``online``
     boolean and nothing else — ``{"online":true}`` on connect,
     ``{"online":false}`` as its last will (csi_mqtt.cpp) — while other
     firmware publishes a ``status``/``state`` word. An explicit ``online``
     field is authoritative: a payload that says false is never read as up,
-    whatever else it carries.
+    whatever else it carries. True for an online word, False for an offline
+    word, and None when the payload says neither (no ``online`` key and a
+    ``status``/``state`` word in neither vocabulary, or none at all): the
+    flagship's status names its witness state there, not its liveness,
+    which its availability last will carries, so such a status moves no
+    verdict.
     """
     online = data.get("online")
     if isinstance(online, bool):
         return online
-    if online is not None and str(online).lower().strip() in _ONLINE_WORDS:
-        return True
+    if online is not None:
+        word = str(online).lower().strip()
+        if word in _ONLINE_WORDS:
+            return True
+        if word in _OFFLINE_WORDS:
+            return False
     field = str(data.get("status") or data.get("state") or "").lower().strip()
-    return field in _ONLINE_WORDS
+    if field in _ONLINE_WORDS:
+        return True
+    if field in _OFFLINE_WORDS:
+        return False
+    return None
+
+
+def status_verdict(raw: Any) -> bool | None:
+    """What a device's retained status payload says about its liveness.
+
+    The one rule every surface uses — the entry's status handler and
+    SecuraCVCanaryOnlineSensor read this too — so speech, the dashboard and
+    the entities' availability can never disagree about what "online"
+    means. True for an online word, False for an offline word, None when
+    the payload says neither: a bare word in neither vocabulary, JSON that
+    ``json_status_online`` cannot judge, or a payload we can't read. A None
+    verdict moves nothing; the device's liveness stays what its availability
+    last will said.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    text = raw.lower().strip()
+    if text in _ONLINE_WORDS:
+        return True
+    if text in _OFFLINE_WORDS:
+        return False
+    if text.startswith("{"):
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError, RecursionError):
+            return None
+        if isinstance(data, dict):
+            return json_status_online(data)
+    return None
 
 
 def status_online(raw: Any) -> bool:
     """True only when a device's retained status payload says it is online.
 
-    The one rule both surfaces use — SecuraCVCanaryOnlineSensor calls this
-    too — so speech and the dashboard can never disagree about what "online"
-    means. Bare words are matched directly; JSON goes through
-    ``json_status_online``. A payload we can't read means we don't know —
-    and "don't know" is never spoken as online.
+    ``status_verdict`` for speech: "don't know" is never spoken as online.
     """
-    if not isinstance(raw, str) or not raw.strip():
-        return False
-    text = raw.lower().strip()
-    if text in _ONLINE_WORDS:
-        return True
-    if text.startswith("{"):
-        try:
-            data = json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            return False
-        if isinstance(data, dict):
-            return json_status_online(data)
-    return False
+    return status_verdict(raw) is True
 
 
 def _friendly_name(raw: Any) -> str | None:
@@ -350,7 +381,18 @@ def fleet_brief(
         verify = entry.get("verify") or {}
         for device_id in sorted(devices):
             device_ids.append(device_id)
-            is_online = status_online(devices[device_id].get("status"))
+            # The merged liveness verdict the entities follow (the status
+            # topic and the availability last will, kept by the entry's
+            # status handler) when there is one, else what the status
+            # payload says: the flagship's status names no liveness, and
+            # speech read from it alone called a connected flagship
+            # offline. "Don't know" is still never spoken as online.
+            merged = devices[device_id].get("online")
+            is_online = (
+                merged
+                if isinstance(merged, bool)
+                else status_online(devices[device_id].get("status"))
+            )
             if is_online:
                 online.append(device_id)
             verdict = verify.get(device_id)
@@ -1026,6 +1068,10 @@ def speak_privacy() -> str:
     2. It admits the wake-word residue (docs/voice_control.md, "What
        turning a wake word on means") rather than claiming a purity the
        design doesn't have.
+    3. It names the one thing that is kept. The subject of a "keep an eye
+       on the ..." request is stored as the watch's label (watch_runtime's
+       store) until the watch ends, so "nothing I hear is stored" is said
+       with that exception, never without it.
 
     Composed from the contract, never from runtime state, so no setting
     can make it say something kinder than the truth.
@@ -1038,10 +1084,11 @@ def speak_privacy() -> str:
         "else; and if something false-wakes me, a television say, the few "
         "seconds after it are read here on this hub and thrown away. Either "
         "way, I don't record you, and nothing I hear is stored or sent "
-        "anywhere — once I've answered, it's gone. As for the Canaries around "
-        "the house: they report what happened, never who — no faces, no plate "
-        "numbers, no footage leaving home. That isn't a setting I have. It's "
-        "code that was never written."
+        "anywhere — the one thing I keep is the name you give a watch, until "
+        "that watch ends; the rest is gone once I've answered. As for the "
+        "Canaries around the house: they report what happened, never who — no "
+        "faces, no plate numbers, no footage leaving home. That isn't a "
+        "setting I have. It's code that was never written."
     )
 
 

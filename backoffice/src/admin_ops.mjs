@@ -178,7 +178,7 @@ ${filters(c, [['actor', 'Actor', actors.map(a => [a, a])], ['action', 'Action st
   router.get('/audit.csv', (c) => { const { rows } = auditQuery(c, 100000); text(c.res, ['id,at,actor,action,entity,entity_id,detail', ...rows.map(r => csvLine([r.id, r.at, r.actor, r.action, r.entity, r.entity_id, r.detail]))].join('\n') + '\n', 200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="audit.csv"' }); });
 
   // ---------- a checked backup from the CLI's point of view is also an API call
-  router.get('/api/health', (c) => { const h = { env: cfg.env, build: build(cfg), ...doctor(db, cfg) }; c.res.statusCode = h.ok ? 200 : 503; c.res.setHeader('Content-Type', 'application/json; charset=utf-8'); c.res.end(JSON.stringify(h, null, 2)); });
+  router.get('/api/health', (c) => { const h = { env: cfg.env, build: build(cfg), ...doctor(db, cfg) }; c.app.json(c.res, h, h.ok ? 200 : 503); });
   router.get('/api/backups', (c) => c.app.json(c.res, { backups: listBackups(join(cfg.dataDir, 'backups')), live: liveCounts(db) }));
   router.post('/api/backups', async (c) => { const r = await runJob(app, 'backup'); c.app.json(c.res, r, r.ok ? 201 : 500); });
   router.get('/api/audit', (c) => c.app.json(c.res, auditQuery(c, Number(c.query.get('limit')) || 200).rows));

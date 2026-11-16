@@ -14,7 +14,9 @@ configuration:
       How the kernel listens to Frigate. Broker fields left empty are filled
       from the Mosquitto add-on automatically. topic_prefix must match
       Frigate's mqtt.topic_prefix (default "frigate"). enable_reviews seals
-      only Frigate alerts instead of every tracked object. cameras lists the
+      only Frigate alerts instead of every tracked object; it needs recording
+      on in Frigate, which creates alerts only for cameras that record.
+      cameras lists the
       camera slugs to seal (empty = every camera Frigate reports); the setup
       wizard fills it from Frigate's own config. labels and min_confidence
       filter what gets sealed.

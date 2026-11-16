@@ -668,8 +668,8 @@
         heading("SecuraCV", { icon: "mdi:shield-check" }),
         markdown(
           "**SecuraCV is not set up yet.** Add it under [Settings → Devices & Services](/config/integrations/dashboard/add?domain=securacv). "
-          + "On Home Assistant OS, install the SecuraCV app from the App Store first — it announces its witness kernel and a "
-          + "\"SecuraCV discovered\" card appears. Running Frigate under Docker? Start the SecuraCV sidecar beside it. "
+          + "On Home Assistant OS, install the SecuraCV app from the App Store first — it announces its witness kernel and the "
+          + "SecuraCV app card appears under Discovered. Running Frigate under Docker? Start the SecuraCV sidecar beside it. "
           + "Canary devices appear here as they report.",
         ),
       ],

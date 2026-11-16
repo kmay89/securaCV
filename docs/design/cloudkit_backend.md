@@ -434,8 +434,11 @@ Concretely, not in the abstract:
   "our end."
 - **No subscription, ever.** iCloud storage cost is a handful of records
   measured in bytes — inside anyone's free tier, including the 5 GB one.
-- **Your second device just has your fleet.** Sign in, and the Canaries are
-  there. No re-pairing, no export file, no QR dance.
+- **Your second device has your fleet's list.** Sign in, and the Canaries are
+  listed. Each device adds a Canary's pairing token once, from its recovery
+  kit: tokens live in each device's Keychain and never sync, so until then
+  the row reads "Not yet paired on this device" and nothing on it is polled
+  or verified there.
 - **Away alerts with no relay to register with and no vendor to trust.** Setup
   is "be signed into iCloud", which you already are.
 - **The lock screen stays quiet about your house.** A stolen or shoulder-surfed

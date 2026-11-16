@@ -108,6 +108,8 @@ const KEYS = {
 // bench, so without the second key this step could never be done there.
 const FLASH_MEMORY_KEY = "canary.flash.installTimes.v1";
 const FLASHED_KEY = "scv-lab-flashed";
+// The most boards KEYS.seen remembers (the longest-unheard are evicted).
+const MAX_SEEN = 64;
 const load = (k, fallback) => { try { return JSON.parse(localStorage.getItem(k)) ?? fallback; } catch { return fallback; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode: not remembered */ } };
 
@@ -162,14 +164,81 @@ export function kernelBases() {
   return [...new Set(b)];
 }
 
+/* ---- is this host on this network? ----
+   The JS twin of desktop-lab/src-tauri/src/lib.rs host_is_local, the gate
+   every native LAN call already passes: an IP literal in RFC 1918,
+   100.64/10, 127/8 or 169.254/16 (for IPv6: ::1, fe80::/10, fc00::/7, and an
+   IPv4-mapped address judged as the IPv4 it carries); otherwise a name
+   ending in .local, .lan, .internal or .home.arpa, or a single label, which
+   can only resolve locally. The page needs its own copy because two things
+   leave the page without passing the native gate: the Open link on a fleet
+   row (the OS browser follows it) and the typed hub address (saved as
+   typed, then handed to the companion). lab_app.test.js pins both copies
+   to lib.rs's own accept/refuse lists. */
+const v4Octets = (s) => {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(s);
+  if (!m) return null;
+  const o = m.slice(1).map(Number);
+  return o.some((n) => n > 255) ? null : o;
+};
+const v4IsLocal = (o) =>
+  o[0] === 10 || o[0] === 127 || (o[0] === 192 && o[1] === 168) || (o[0] === 172 && o[1] >= 16 && o[1] <= 31)
+  || (o[0] === 169 && o[1] === 254) || (o[0] === 100 && o[1] >= 64 && o[1] <= 127);
+/** An IPv6 literal as its eight groups, or null when the text is not one. */
+const v6Groups = (s) => {
+  if (!s.includes(":") || !/^[0-9a-f:.]+$/.test(s)) return null;
+  // A trailing dotted quad (::ffff:192.168.1.40) is the last two groups.
+  const dotted = /^(.*:)(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(s);
+  if (dotted) {
+    const o = v4Octets(dotted[2]);
+    if (!o) return null;
+    s = dotted[1] + ((o[0] << 8) | o[1]).toString(16) + ":" + ((o[2] << 8) | o[3]).toString(16);
+  }
+  const halves = s.split("::");
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const tail = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  let groups;
+  if (halves.length === 2) {
+    if (head.length + tail.length > 7) return null;
+    groups = [...head, ...new Array(8 - head.length - tail.length).fill("0"), ...tail];
+  } else groups = head;
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return null;
+  return groups.map((g) => parseInt(g, 16));
+};
+const v6IsLocal = (g) => {
+  if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return v4IsLocal([g[6] >> 8, g[6] & 255, g[7] >> 8, g[7] & 255]);
+  if (g.slice(0, 7).every((x) => x === 0) && g[7] === 1) return true;
+  return (g[0] & 0xffc0) === 0xfe80 || (g[0] & 0xfe00) === 0xfc00;
+};
+export function hostIsLocal(host) {
+  const h = String(host || "").trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (!h) return false;
+  const o = v4Octets(h);
+  if (o) return v4IsLocal(o);
+  const g = v6Groups(h);
+  if (g) return v6IsLocal(g);
+  if (h.includes(":")) return false;
+  for (const suffix of [".local", ".lan", ".internal", ".home.arpa"]) {
+    if (h.endsWith(suffix) && h.length > suffix.length) return true;
+  }
+  // A bare number is an address, not a name: a browser reads 3627734734 or
+  // 0xd83ad6ce as a public IPv4.
+  if (/^(0x[0-9a-f]+|\d+)$/.test(h)) return false;
+  return !h.includes(".");
+}
+
 /** Where a browsed board serves its own page, when it serves one. A board
     that announces a real port is reachable there; the WAP, the all-rounder
     and the displays serve :80 even when their advert still says port 1 (the
     Flasher's fleet book probes them the same way). A Sense or Vision runs no
-    server at all, so it gets no address. */
+    server at all, so it gets no address. The address must be on this
+    network (hostIsLocal): an announcement is unauthenticated LAN traffic,
+    and the Open link hands it to the OS browser — a public name or address
+    gets no link, while the row's facts still show what was announced. */
 export function deviceBase(row) {
   const addr = row.ip && !String(row.ip).includes(":") ? row.ip : String(row.host || "").replace(/\.$/, "");
-  if (!addr) return null;
+  if (!addr || !hostIsLocal(addr)) return null;
   if (row.port && row.port !== 1) return `http://${addr}:${row.port}`;
   if (/wap|display|dash|watch|glance|^canary$/.test(String(row.deviceType || row.role || ""))) return `http://${addr}`;
   return null;
@@ -232,13 +301,24 @@ export const fleet = {
           this.sightings = (await invoke("fleet_scan", { timeoutMs: 2500 })) || [];
           const seen = load(KEYS.seen, {});
           const now = Date.now();
+          // What is remembered is bounded: an announcement is unauthenticated
+          // LAN traffic, and on-device storage must not grow with whatever a
+          // device chooses to say. Each fact is capped at the length the
+          // rows show, and the map at a fixed count.
+          const word = (v, max) => (typeof v === "string" ? v.slice(0, max) : "");
           for (const s of this.sightings) {
-            if (!s || !s.deviceId) continue;
-            seen[s.deviceId] = { name: s.name, model: s.model, deviceType: s.deviceType, role: s.role,
-              fw: s.fw, ip: s.ip, host: s.host, port: s.port, at: now };
+            if (!s || typeof s.deviceId !== "string" || !s.deviceId) continue;
+            seen[s.deviceId.slice(0, 64)] = { name: word(s.name, 40), model: word(s.model, 40), deviceType: word(s.deviceType, 40),
+              role: word(s.role, 40), fw: word(s.fw, 24), ip: word(s.ip, 45), host: word(s.host, 40), port: s.port, at: now };
           }
           // Forget a board unheard for a month: a note that old is a guess.
           for (const [id, r] of Object.entries(seen)) if (now - (r.at || 0) > 30 * 86400e3) delete seen[id];
+          // …and never keep more than MAX_SEEN, the longest-unheard first.
+          const ids = Object.keys(seen);
+          if (ids.length > MAX_SEEN) {
+            ids.sort((a, b) => (seen[a].at || 0) - (seen[b].at || 0));
+            for (const id of ids.slice(0, ids.length - MAX_SEEN)) delete seen[id];
+          }
           save(KEYS.seen, seen);
         } catch { this.sightings = []; }
       }
@@ -260,18 +340,20 @@ export const fleet = {
     const rows = new Map();   // key -> row
     const now = Date.now();
     const seen = load(KEYS.seen, {});
-    const live = new Set(this.sightings.map((s) => s && s.deviceId).filter(Boolean));
+    const live = new Set(this.sightings.map((s) => s && typeof s.deviceId === "string" && s.deviceId.slice(0, 64)).filter(Boolean));
     for (const [id, r] of Object.entries(seen)) {
       rows.set("m:" + id, { key: "m:" + id, id, name: r.name || id, model: r.model || "", deviceType: r.deviceType || "",
         role: r.role || "", fw: r.fw || "", ip: r.ip || "", host: r.host || "", port: r.port || 0,
         online: live.has(id) ? true : null, heardAt: r.at || 0, chain: null, hub: null, source: "mdns" });
     }
+    const word = (v, max) => (typeof v === "string" ? v.slice(0, max) : "");
     for (const s of this.sightings) {
-      if (!s || !s.deviceId) continue;
-      const key = "m:" + s.deviceId;
-      const r = rows.get(key) || { key, id: s.deviceId, source: "mdns", chain: null, hub: null };
-      Object.assign(r, { name: s.name || s.deviceId, model: s.model || "", deviceType: s.deviceType || "", role: s.role || "",
-        fw: s.fw || "", ip: s.ip || "", host: s.host || "", port: s.port || 0, online: true, heardAt: now });
+      if (!s || typeof s.deviceId !== "string" || !s.deviceId) continue;
+      const id = s.deviceId.slice(0, 64);
+      const key = "m:" + id;
+      const r = rows.get(key) || { key, id, source: "mdns", chain: null, hub: null };
+      Object.assign(r, { name: word(s.name, 40) || id, model: word(s.model, 40), deviceType: word(s.deviceType, 40), role: word(s.role, 40),
+        fw: word(s.fw, 24), ip: word(s.ip, 45), host: word(s.host, 40), port: s.port || 0, online: true, heardAt: now });
       rows.set(key, r);
     }
     const doc = this.kernel;
@@ -496,7 +578,9 @@ export function dashboardView(ctx) {
     ].filter(Boolean));
   };
   render();
-  const off = fleet.subscribe(render);
+  // A poll result rebuilds the Home, and a rebuild drops the keyboard's
+  // place: while focus is inside it, the redraw waits for the next emit.
+  const off = fleet.subscribe(() => { if (!root.contains(document.activeElement)) render(); });
   root.addEventListener("scv:leave", off, { once: true });
   return root;
 }
@@ -523,6 +607,15 @@ export function devicesView(ctx) {
   const saveAddr = async () => {
     const v = addr.value.trim();
     if (v && !/^https?:\/\/[^\s/]+/i.test(v)) { note.textContent = "Type the address as http://host or http://host:port."; return; }
+    // The same gate the native side applies before any socket opens (lib.rs
+    // base_ok): an address off this network would be saved, announced as in
+    // use, and then silently skipped by the companion and the poll.
+    let host = "";
+    try { host = new URL(v).hostname; } catch { /* not a URL: refused below */ }
+    if (v && !hostIsLocal(host)) {
+      note.textContent = "That address is not on this network (private/LAN addresses and .local names only), so the app will not use it.";
+      return;
+    }
     try { if (v) localStorage.setItem(KEYS.kernel, v); else localStorage.removeItem(KEYS.kernel); } catch {}
     note.textContent = v ? "Saved. The tray and the Witness Wall use it too." : "Cleared — the well-known addresses are tried.";
     if (CAPS.notifications) { try { await invoke("companion_set_bases", { bases: kernelBases() }); } catch { /* the tray keeps what it had */ } }
@@ -555,28 +648,52 @@ export function devicesView(ctx) {
     );
   };
   render();
-  const off = fleet.subscribe(() => { if (document.activeElement !== addr) render(); });
+  // The address field, and every other control here: a rebuild under the
+  // keyboard loses the typed text or the place, so it waits for focus to leave.
+  const off = fleet.subscribe(() => { if (!root.contains(document.activeElement)) render(); });
   root.addEventListener("scv:leave", off, { once: true });
   return root;
 }
 
-/* ---- the status strip under every view ---- */
+/* ---- the status strip under every view ----
+   Not a live region: the poller emits twice per tick (at the start and with
+   the result), and a strip that was one announced itself to a screen reader
+   every 15 to 60 seconds for as long as the app was open. The chips are
+   built once and their text patched in place only when it changed (a
+   patched span keeps the keyboard's place); one visually hidden
+   role="status" span carries the fleet / USB / hub summary and is written
+   only when that summary changed — the start-of-tick "listening…" is a
+   chip's word, never the summary's. */
 export function statusStrip(ctx) {
-  const bar = h("footer", { class: "foot app-foot", role: "status", "aria-live": "polite" });
-  const chip = (icon, text, to, cls) => h("button", { class: "fchip " + (cls || ""), onclick: to }, ico(icon), h("span", {}, text));
+  const bar = h("footer", { class: "foot app-foot" });
+  const chip = (icon, to) => h("button", { class: "fchip", onclick: to }, ico(icon), h("span", {}));
+  const net = (CAPS.mdns || CAPS.discovery) ? chip(I.net, () => ctx.navigate("devices")) : null;
+  const usbChip = CAPS.serial_list ? chip(I.usb, () => ctx.goBench("flash")) : null;
+  const hub = CAPS.discovery ? chip(I.home, () => ctx.navigate("devices")) : null;
+  const app = chip(I.app, () => ctx.navigate(SETTINGS_AVAILABLE ? "settings" : "family"));
+  const summary = h("span", { role: "status", style: "position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap" });
+  bar.append(...[net, usbChip, hub, h("span", { class: "grow" }), app, summary].filter(Boolean));
+  const set = (c, text, on, cls = "on") => {
+    if (!c) return;
+    if (c.lastChild.textContent !== text) c.lastChild.textContent = text;
+    c.classList.toggle(cls, !!on);
+  };
+  let said = "";
   const render = () => {
     const devices = fleet.devices();
     const online = devices.filter((r) => r.online === true).length;
     const usb = fleet.ports[0];
     const info = ctx.appInfo() || {};
-    bar.replaceChildren(...[
-      (CAPS.mdns || CAPS.discovery) ? chip(I.net, devices.length ? online + " of " + devices.length + " online" : fleet.scanning ? "listening…" : "no Canaries heard", () => ctx.navigate("devices"), online ? "on" : "") : null,
-      CAPS.serial_list ? chip(I.usb, usb ? (usb.product || "board") + " on " + usb.name : "no board over USB", () => ctx.goBench("flash"), usb ? "on" : "") : null,
-      CAPS.discovery ? chip(I.home, fleet.kernel ? "hub " + (fleet.kernelName() || "answering") : "no hub", () => ctx.navigate("devices"), fleet.kernel ? "on" : "") : null,
-      h("span", { class: "grow" }),
-      chip(I.app, "v" + (info.version || "—") + (fleet.train ? " · fw " + fleet.train : "") + (updateState.update ? " · update ready" : ""),
-        () => ctx.navigate(SETTINGS_AVAILABLE ? "settings" : "family"), updateState.update ? "up" : ""),
-    ].filter(Boolean));
+    const fleetWord = devices.length ? online + " of " + devices.length + " online" : "no Canaries heard";
+    const usbWord = usb ? (usb.product || "board") + " on " + usb.name : "no board over USB";
+    const hubWord = fleet.kernel ? "hub " + (fleet.kernelName() || "answering") : "no hub";
+    set(net, devices.length || !fleet.scanning ? fleetWord : "listening…", online);
+    set(usbChip, usbWord, usb);
+    set(hub, hubWord, fleet.kernel);
+    set(app, "v" + (info.version || "—") + (fleet.train ? " · fw " + fleet.train : "") + (updateState.update ? " · update ready" : ""),
+      updateState.update, "up");
+    const now = [net ? fleetWord : null, usbChip ? usbWord : null, hub ? hubWord : null].filter(Boolean).join(" · ");
+    if (now !== said) { said = now; summary.textContent = now; }
   };
   render();
   fleet.subscribe(render);

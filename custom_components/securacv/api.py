@@ -118,7 +118,9 @@ async def _async_read_json(resp: Any, what: str = "response") -> Any:
         return None
     try:
         return json.loads(body)
-    except ValueError as err:
+    except (ValueError, RecursionError) as err:
+        # RecursionError: a body nested past the interpreter's limit fits
+        # the byte cap and is a response error like any other junk.
         raise SecuraCVApiResponseError(f"invalid JSON response: {err}") from err
 
 

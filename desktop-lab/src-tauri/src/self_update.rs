@@ -266,6 +266,14 @@ pub async fn check_update(app: AppHandle) -> Result<Option<UpdateDto>, String> {
 /// there first owns the conversation; the loser gets told, not queued.
 #[tauri::command]
 pub async fn install_update(app: AppHandle) -> Result<(), String> {
+    // An install ends in a restart, and a restart kills a running espflash
+    // mid-write. Refused up front, by name, rather than guarded at the
+    // restart: the Settings panel shows this reason, and the flash finishes.
+    if crate::flash::Sidecars::any_running(&app) {
+        return Err(
+            "a flash is still writing to the board — update once it has finished".to_string(),
+        );
+    }
     {
         let gate = app.state::<Mutex<UpdateGate>>();
         let mut g = gate.lock().unwrap();
@@ -428,6 +436,13 @@ pub async fn routine_check(app: AppHandle) {
         if declined == version && epoch_secs().saturating_sub(at) < DECLINE_SNOOZE.as_secs() {
             return done(&app);
         }
+    }
+    // A "yes" here ends in a restart, which kills a running espflash
+    // mid-write. Not offered while one runs: the next routine pass (or the
+    // Settings panel, once the flash is over) asks instead.
+    if crate::flash::Sidecars::any_running(&app) {
+        journal(&app, "update offered later — a flash is running");
+        return done(&app);
     }
 
     let mut body = format!(

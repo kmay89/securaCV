@@ -243,6 +243,31 @@ remove_kernel_seed_copy() {
     echo "removed"
 }
 
+# camera_url_for_log <url>
+#
+# A camera URL as the log may carry it: the scheme, the host and the path,
+# never a username, a password or a query string. Everything up to the LAST
+# "@" is taken as the login, so a password that itself holds an "@" or a "/"
+# cannot leak a tail of itself; the cost is that a path holding an "@" is
+# shortened too, which only makes the line say less. The query is dropped
+# whole because some cameras take the login there (?user=…&password=…).
+camera_url_for_log() {
+    local url="$1" scheme="" rest
+    case "$url" in
+        *://*) scheme="${url%%://*}"; rest="${url#*://}" ;;
+        *) rest="$url" ;;
+    esac
+    case "$rest" in
+        *@*) rest="***@${rest##*@}" ;;
+    esac
+    rest="${rest%%\?*}"
+    if [ -n "$scheme" ]; then
+        printf '%s://%s' "$scheme" "$rest"
+    else
+        printf '%s' "$rest"
+    fi
+}
+
 # ha_device_id SEED
 # The public Home Assistant device id of this kernel. It lands in retained
 # MQTT discovery topics and in the Supervisor discovery payload, both of

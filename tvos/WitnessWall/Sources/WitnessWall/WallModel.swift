@@ -42,8 +42,10 @@ final class WallModel {
     private(set) var report: VerifyReport?
     /// Where that walk stands against the key pinned at pairing
     /// (WallPairing). The header banner keys off it: only `.verified` may
-    /// say "Verified"; `.keyChanged` is an alarm; everything else is phrased
-    /// as the fleet's own report or a walk "not yet pinned".
+    /// say "Verified"; `.keyChanged` is an alarm; `.unauthorized` and
+    /// `.pairedNoLog` are warnings (a paired check that did not happen);
+    /// everything else is phrased as the fleet's own report or a walk "not
+    /// yet pinned".
     private(set) var standing: VerificationStanding = .none
     /// This TV's pairing with the one source it polls, if any — the viewer
     /// token and the pinned key, read from the Keychain (never defaults).
@@ -94,6 +96,18 @@ final class WallModel {
     /// minute. Cleared by pair, forget and connect; in memory only, so a
     /// relaunch asks once more.
     private var sealedLogRefused: Set<String> = []
+    /// Consecutive verify passes in which the paired source answered the
+    /// roll-call but served no sealed log to this TV's token
+    /// (`VerificationStanding.pairedNoLog`). The standing is published only
+    /// once this reaches `noLogCyclesBeforeSaid`; until then it reads
+    /// `.none`, so one timed-out or rate-limited fetch does not flap the
+    /// banner. Reset by any other outcome and by `clearVerdict`.
+    private var noLogCycles = 0
+    /// How many no-log cycles in a row a paired Wall tolerates before it
+    /// says so — three, about half a minute at the steady poll interval:
+    /// longer than one request timeout (6 s) and one backoff step, shorter
+    /// than a household wonders.
+    static let noLogCyclesBeforeSaid = 3
     /// The Bonjour browse, injectable exactly like the transport: a real
     /// NWBrowser cannot be constructed or fed in a test, and a unit test must
     /// not spend four wall-clock seconds listening to a simulator's network.
@@ -195,6 +209,7 @@ final class WallModel {
     private func clearVerdict() {
         report = nil
         standing = .none
+        noLogCycles = 0
         timeline = []
         timelineUnparsed = 0
     }
@@ -582,8 +597,18 @@ final class WallModel {
             }
         }
         report = verdict
-        standing = VerificationStanding.derive(pinnedKey: pin?.verifyingKey, fetch: fetch,
-                                               report: verdict, servedKey: servedKey)
+        let derived = VerificationStanding.derive(pinnedKey: pin?.verifyingKey, fetch: fetch,
+                                                  report: verdict, servedKey: servedKey)
+        // A paired source that served no log is said only after several
+        // cycles running (`noLogCycles`): the first two read as `.none`,
+        // the calm self-report, exactly as before the standing existed.
+        if derived == .pairedNoLog {
+            noLogCycles += 1
+            standing = noLogCycles >= Self.noLogCyclesBeforeSaid ? .pairedNoLog : .none
+        } else {
+            noLogCycles = 0
+            standing = derived
+        }
         if standing == .verified, case .document(let sealed) = fetch {
             let folded = TimelineScrub.records(fromSealedPayloads: Self.sealedPayloads(in: sealed))
             timeline = folded.records

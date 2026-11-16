@@ -53,7 +53,6 @@ import hmac
 import secrets
 from collections import Counter
 from collections.abc import Callable, Iterable
-from dataclasses import asdict
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -78,6 +77,29 @@ from .device_vocabulary import REDACTED_DEVICE_KEYS
 from .entity import canary_registry_facts
 from .kernel_trust import kernel_key_fingerprint, normalize_kernel_key
 from .mqtt_payload import valid_device_id
+
+# The chain-walk fields the dump carries, named one by one: the scalars of
+# ``data.VerificationState`` and nothing else. The state also holds the
+# chain head's hash and two indexes of every entry the walks covered, each
+# keyed by (event type, owner-named zone, bucket), which no dump may carry
+# (the covered index once reached the dump whole through ``asdict``); a
+# field the dataclass gains stays out until it is named here, and the two
+# indexes are reported as their sizes below.
+CHAIN_VERIFICATION_FIELDS = (
+    "ok",
+    "verified_seq",
+    "verified_entries",
+    "verified_bucket_start",
+    "verified_bucket_size",
+    "head_seq",
+    "error",
+    "failed_seq",
+    "key_mismatch",
+    "verifying",
+    "last_trigger",
+    "walk_entries",
+    "anchor_moved",
+)
 
 # The keys this integration owns: every key whose value is a secret, a
 # credential, a stable identifier, a network address or a location, named
@@ -440,11 +462,13 @@ async def async_get_config_entry_diagnostics(
 
     verification: dict[str, Any] | None = None
     if runtime is not None:
-        verification = asdict(runtime.verification)
-        # The covered set is (event type, zone, bucket) triples: zones are
-        # owner-named; the count says how much the walk covered.
-        verification["covered"] = len(runtime.verification.covered)
-        verification.pop("head_hash", None)
+        state = runtime.verification
+        verification = {name: getattr(state, name) for name in CHAIN_VERIFICATION_FIELDS}
+        # The covered set and the seq index hold (event type, zone, bucket)
+        # per entry: zones are owner-named; the counts say how much the
+        # walks covered.
+        verification["covered"] = len(state.covered)
+        verification["covered_seqs"] = len(state.covered_seqs)
 
     # Watches are domain-scoped (hass.data[DOMAIN]["watches"], persisted by
     # watch_runtime). Count only: a label is what the owner said aloud, and

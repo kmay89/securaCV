@@ -44,7 +44,8 @@ ${invite ? `<div class="card"><div class="k">The invitation link</div><pre style
   router.post('/users/:id/role', (c) => { if (Number(c.params.id) === c.user.id) throw new HttpError(400, 'ask another owner to change your role'); const u = setRole(db, Number(c.params.id), c.body.role, { actor: c.actor }); back(c, '/users', `${u.email} is now ${u.role}`); });
   router.post('/users/:id/status', (c) => { if (Number(c.params.id) === c.user.id) throw new HttpError(400, 'you cannot disable yourself'); const u = setStatus(db, Number(c.params.id), c.body.status, { actor: c.actor }); back(c, '/users', `${u.email} ${u.status}`); });
   router.post('/users/:id/remove', (c) => { if (Number(c.params.id) === c.user.id) throw new HttpError(400, 'you cannot remove yourself'); const u = removeUser(db, Number(c.params.id), { actor: c.actor }); back(c, '/users', `${u.email} removed — their past actions stay in the audit log`); });
-  router.get('/api/users', (c) => { if (c.user && c.user.role !== 'owner') throw new HttpError(403, 'owners only'); c.res.setHeader('Content-Type', 'application/json; charset=utf-8'); c.res.end(JSON.stringify(listUsers(db), null, 2)); });
+  // Answered through json() like every other route, so it carries the hardening headers (nosniff, no framing, noindex).
+  router.get('/api/users', (c) => { if (c.user && c.user.role !== 'owner') throw new HttpError(403, 'owners only'); c.app.json(c.res, listUsers(db)); });
 
   // ---------- your own account
   router.get('/me', (c) => {

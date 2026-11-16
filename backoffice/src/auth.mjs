@@ -105,6 +105,12 @@ export const ROLE_TEXT = {
 const OWNER_ONLY = /^\/(settings|users|books|books\.csv|api\/books|api\/jobs|api\/users|api\/flags|settings\.json|health\/external)(\/|$|\?)|^\/contacts\/[^/]+\/(forget|export\.json)(\/|$)|^\/api\/customers\/[^/]+\/(forget|export)(\/|$)/;
 const OWNER_WRITES = /^\/api\/backups(\/|$)/;
 const SUPPORT_WRITES = /^\/(tickets|canned|warranty|waitlist|contacts\/(new|[^/]+\/(tags|notes|consent)))(\/|$)|^\/orders\/[^/]+\/(note|tags)\/?$|^\/api\/(tickets|mail\/ingest|customers\/[^/]+\/tags|orders\/[^/]+\/(note|tags))(\/|$)/;
+// A read that hands out the power to write is a write. The customer's signed status link changes the address of an
+// order that has not shipped (with the order's email), so the route that returns it is refused, whatever the method,
+// to the roles that may not change an address themselves, and to a read-only token (server.mjs asks writeCapability).
+// The id position takes anything, an encoded slash included: the router matches the path as sent and decodes after.
+const WRITE_CAPABILITY = /^\/api\/orders\/.+\/status-url(\/|$)/;
+export function writeCapability(rawPath) { try { return WRITE_CAPABILITY.test(decodeURIComponent(String(rawPath))); } catch { return true; } }
 // The path is checked decoded (what the handler will see), and a path that does not decode is refused.
 export function can(role, method, rawPath) {
   let path; try { path = decodeURIComponent(String(rawPath)); } catch { return false; }
@@ -113,6 +119,7 @@ export function can(role, method, rawPath) {
   if (OWNER_ONLY.test(path) || (method !== 'GET' && method !== 'HEAD' && OWNER_WRITES.test(path))) return false;
   if (/^\/(me|logout)(\/|$)/.test(path)) return true;
   if (role === 'ops') return true;
+  if (WRITE_CAPABILITY.test(path)) return false;
   if (method === 'GET' || method === 'HEAD') return true;
   return role === 'support' && SUPPORT_WRITES.test(path);
 }

@@ -19,12 +19,25 @@ name: Firmware Release
 # firmware/common/ota/src/ota_release_key.h, and install via the
 # pull-OTA engine (firmware/common/ota/).
 #
-# Required repository secret:
+# Required secret:
 #   OTA_SIGNING_KEY_PEM — the Ed25519 release private key (PEM, PKCS8),
 #   generated offline with:
 #     python firmware/scripts/ota_release.py keygen --private-key releaser.pem
 #   Its PUBLIC half must match ota_release_key.h — this workflow fails
 #   loudly if they drift, because devices would reject every artifact.
+#
+# Who may use that key. The job that signs runs in the `firmware-release`
+# environment, and that is where the secret belongs (an environment secret,
+# not a repository secret, which any workflow file on any branch can read).
+# The environment's required reviewers are the second person in the loop; they
+# are a repository setting, so this file can name the environment but cannot
+# prove it has reviewers (docs/RELEASE_PROCESS.md § "Who can sign"). What this
+# file does enforce, on both paths: a dispatch runs only from main, and a
+# commit that is not on main is refused before the key is read. Both checks
+# are this file's, and the copy that runs is the one at the commit being
+# released: they stop a tag or a dispatch made by mistake, not a commit that
+# edits this file (or one from before the checks existed), which is what the
+# key in the environment and its reviewers are for.
 
 on:
   # Path A — the git-tag ceremony (unchanged): push a fw-v* tag and this cuts
@@ -70,8 +83,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # A dispatch from any ref but main. The signing job below does not run for
+  # it, and a skipped job says nothing: the run would end gray, with nothing
+  # built, and whoever pressed the button would be left to guess. This job is
+  # that run's red line. It is outside the environment on purpose (no secret,
+  # no token, and no reviewer needed to be told no). "Update everything" does
+  # not dispatch firmware off main at all (its firmware gate); this covers a
+  # dispatch made here by hand.
+  main-only:
+    name: Refuse a dispatch that is not from main
+    if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Say why nothing was built
+        run: |
+          echo "::error::Firmware Release signs only from main, and this dispatch is on ${GITHUB_REF}: nothing was built or signed. Merge first, then run it with 'Use workflow from' set to main (docs/RELEASE_PROCESS.md § Who can sign)."
+          exit 1
+
   build-sign-release:
     name: Build, sign, and publish firmware
+    # A dispatch signs only from main (the job above says so, in red, for any
+    # other ref); a tag push is checked against main in the first step (a tag
+    # can sit on any commit, so the ref cannot say).
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    # Holds OTA_SIGNING_KEY_PEM. flasher-release.yml and
+    # vision-model-release.yml sign with the same key, in the same environment.
+    environment: firmware-release
     runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 90
     outputs:
@@ -88,6 +127,17 @@ jobs:
           IN_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
+          # Both paths, before the key is read: the commit being released must
+          # be on main. A fw-v* tag can be pushed at any commit by anyone who
+          # can push a tag, and this job signs what it builds with the fleet's
+          # release key. The checkout is depth 1, so fetch main's recent
+          # history to ask; a commit more than 200 commits behind main's tip
+          # is refused too (release from a newer one).
+          if ! { git fetch --no-tags --depth=200 origin main \
+                 && git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; }; then
+            echo "::error::release commit ${GITHUB_SHA} is not on main (within its last 200 commits). Firmware is signed only from main: merge first, then tag or dispatch from main."
+            exit 1
+          fi
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             # Dispatch path (Actions tab): derive VERSION + TAG from the inputs. The source
             # triple (canary's FIRMWARE_VERSION) is the fallback for a release.
@@ -187,7 +237,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "$OTA_SIGNING_KEY_PEM" ]; then
-            echo "::error::OTA_SIGNING_KEY_PEM secret is not set. Generate a key with 'ota_release.py keygen' and add it as a repository secret."
+            echo "::error::OTA_SIGNING_KEY_PEM secret is not set. Generate a key with 'ota_release.py keygen' and add it as a secret of the firmware-release environment (Settings → Environments → firmware-release)."
             exit 1
           fi
           printf '%s' "$OTA_SIGNING_KEY_PEM" > /tmp/releaser.pem
