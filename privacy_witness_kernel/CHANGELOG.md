@@ -9,8 +9,9 @@
   choice is not applied, every tracked object is sealed instead, and the
   done screen says why and how to turn alerts on. When only some of them
   record, the choice is kept and the screen names the cameras that will
-  seal nothing. A config the wizard cannot read is taken at your word, as
-  before.
+  seal nothing. A config the wizard cannot read, or a record setting it
+  cannot resolve (YAML anchors, aliases, merge keys, a templated value), is
+  taken at your word, as before.
 - **The kernel, the integration and the app move to 0.9.2 together.**
 
 ## 0.9.1

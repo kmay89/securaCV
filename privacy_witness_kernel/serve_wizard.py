@@ -755,9 +755,20 @@ def yaml_value_at(text: str, path: tuple) -> str | None:
     return None
 
 
-def _yaml_true(value: str | None) -> bool:
-    """A YAML boolean as Frigate's config reads it; absent is false."""
-    return (value or "").strip().lower() in ("true", "yes", "on", "1")
+def _yaml_bool(value: str) -> bool | None:
+    """A YAML boolean as Frigate's config reads it, or None when the value
+    is not one this reader can read (an alias, a tag, a template)."""
+    word = value.strip().strip("'\"").lower()
+    if word in ("true", "yes", "on", "1"):
+        return True
+    if word in ("false", "no", "off", "0"):
+        return False
+    return None
+
+
+# Anchors, aliases and merge keys (`&defaults`, `*defaults`, `<<:`) can carry
+# a record setting this small reader does not resolve.
+_YAML_INDIRECTION_RE = re.compile(r"(?:^|[\s:\[{,-])[&*][^\s,\]}]+|<<\s*:", re.M)
 
 
 # ---------------------------------------------------------------------------
@@ -811,22 +822,32 @@ def frigate_recording(path, selected: list) -> tuple | None:
     Frigate's own config: (recording, not_recording), by camera name. A
     camera's own `record.enabled` wins over the top-level one, and Frigate's
     default is off. `selected` empty means every camera the config declares.
-    None when the file cannot be read or declares no cameras: the wizard
-    then cannot tell, and says nothing."""
+    None when the wizard cannot tell: the file cannot be read, declares no
+    cameras, uses YAML anchors, aliases or merge keys, or holds a record
+    value that is not a plain boolean. The person's choice then stands: a
+    setting this reader did not see is never taken for "off"."""
     try:
         text = Path(path).read_text(encoding="utf-8", errors="replace")
     except OSError:
+        return None
+    if _YAML_INDIRECTION_RE.search(text):
         return None
     declared = yaml_child_keys(text, ("cameras",)) or []
     wanted = {camera_slug(name) for name in selected}
     names = [name for name in declared if not wanted or camera_slug(name) in wanted]
     if not names:
         return None
-    default = _yaml_true(yaml_value_at(text, ("record", "enabled")))
+    top = yaml_value_at(text, ("record", "enabled"))
+    default = _yaml_bool(top) if top is not None else False
+    if default is None:
+        return None
     recording, not_recording = [], []
     for name in names:
         own = yaml_value_at(text, ("cameras", name, "record", "enabled"))
-        (recording if (_yaml_true(own) if own is not None else default) else not_recording).append(name)
+        records = default if own is None else _yaml_bool(own)
+        if records is None:
+            return None
+        (recording if records else not_recording).append(name)
     return recording, not_recording
 
 

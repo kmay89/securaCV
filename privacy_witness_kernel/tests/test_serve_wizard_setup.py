@@ -1032,3 +1032,35 @@ def test_alerts_only_is_kept_when_frigate_records_every_sealed_camera(save_env, 
     assert save_env["options"]["frigate"]["enable_reviews"] is True
     assert "was not applied" not in result["frigate_config"]
     assert "nothing is sealed" not in result["frigate_config"]
+
+
+FRIGATE_RECORDS_BY_ANCHOR = """\
+record: &record_on
+  enabled: true
+cameras:
+  front_door:
+    record: *record_on
+  back_yard:
+    record:
+      <<: *record_on
+"""
+
+FRIGATE_RECORDS_BY_TEMPLATE = """\
+cameras:
+  front_door:
+    record:
+      enabled: "{FRIGATE_RECORD}"
+"""
+
+
+def test_a_setting_the_reader_cannot_resolve_keeps_the_persons_choice(save_env, monkeypatch, tmp_path):
+    # An anchor, an alias, a merge key or a value that is not a boolean is
+    # "cannot tell": never read as recording off.
+    for text in (FRIGATE_RECORDS_BY_ANCHOR, FRIGATE_RECORDS_BY_TEMPLATE):
+        config = _frigate_owns(monkeypatch, tmp_path, text)
+        assert serve_wizard.frigate_recording(config, []) is None
+        result = _save_alerts_only([])
+        assert save_env["options"]["frigate"]["enable_reviews"] is True
+        assert "was not applied" not in result["frigate_config"]
+        assert "nothing is sealed" not in result["frigate_config"]
+
