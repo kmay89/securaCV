@@ -271,10 +271,16 @@ stay canonical in [`ENTERPRISE_CUSTODY.md`](ENTERPRISE_CUSTODY.md).
    description + `sha256sum`/`openssl`-only VERIFICATION instructions;
    per-file handoff sidecars at unseal so downstream custody chains onto
    ours. *(Implemented for event-export bundles — the `court_export` tool,
-   see `docs/court_export.md`. OpenTimestamps proofs ship in the kit as
+   see `docs/court_export.md`; per-file handoff sidecars on every unseal and
+   every `export_events` run (an API bundle gets one through
+   `handoff_sidecar emit`), `docs/handoff_sidecars.md` — the seam a downstream custody system
+   docks onto: device-signed rows it can check with `sha256sum`, `openssl`
+   and `jq`, a salted pairing of the file to the envelope the device
+   decrypted, and a declared recipient fixed by a salted commitment. The
+   sidecar is a SecuraCV format, not a C2PA manifest, and makes no C2PA
+   claim. OpenTimestamps proofs ship in the kit as
    `anchors/ots-NNNN-<subject>.ots`, checkable with `ots info` and
-   `ots verify -d <hex>`. Still open: handoff sidecars on `break_glass unseal`
-   outputs.)*
+   `ots verify -d <hex>`.)*
 5. **Anchoring upgrades**: scheduled anchoring on by default; "two TSAs"
    becomes "one eIDAS-qualified + one independent"; OpenTimestamps as a
    second, trust-kind-independent leg; clock-provenance events (measured

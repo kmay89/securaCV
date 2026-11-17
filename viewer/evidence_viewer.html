@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <!-- Filled by viewer/build.mjs with the sha256 of every inline script and the style block. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-6++bycc7gmp7jI/jE4GCqeWu6YeaQ7zdIJ4su6h6pL0=' 'sha256-LBAnM3qHWW5ib2SP6Fl9m39wYUoNmGCSVeGD27qC158=' 'sha256-Nwl/xttjiTtjUX50UyhumWrbL4RQZwqAC1YracOmPxo=' 'sha256-dlF3MZgxgxUPUB1zioSzt8ceVDI0WkeUVMrP/iI8MG4='; style-src 'sha256-e7ozVxf7MNrR4rizIw9HrBstIeronyYskq+pu2ORdA0='; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-6FI7vTgw99UqMUFHPO2oNYRlBVrDzOYdI6MMX6BfF6A=' 'sha256-LBAnM3qHWW5ib2SP6Fl9m39wYUoNmGCSVeGD27qC158=' 'sha256-Nwl/xttjiTtjUX50UyhumWrbL4RQZwqAC1YracOmPxo=' 'sha256-KVtIVD3K8WddhbAuMU0qquzzJvYxQp5L5Ppco2BWhTs='; style-src 'sha256-e7ozVxf7MNrR4rizIw9HrBstIeronyYskq+pu2ORdA0='; img-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="Verify a securaCV evidence bundle offline in your browser. No install, no account, no network.">
 <title>securaCV · Evidence Viewer</title>
@@ -892,22 +892,198 @@ function serExportArtifact(a) {
 const serExportWindow = (w) =>
   `{"start_epoch_s":${serInt(w.start_epoch_s)},"end_epoch_s":${serInt(w.end_epoch_s)}}`;
 
-// `auth_mode`, `window` and `token_id` are optional trailing fields the Rust
-// side skips when absent (legacy receipts); serialize them only when present,
-// in struct order, so every receipt generation hashes to the bytes the device
-// signed. `auth_mode` is an opaque label here (`api`, `self_export`,
-// `break_glass`, `paired`, …): the viewer never interprets it, and a new
-// credential class must not break an old viewer. `token_id` (the paired
-// bearer's id, present only under `auth_mode: paired`) is LAST because it is
-// the newest field of `ExportReceipt` in src/lib.rs — the signed bytes carry
-// which credential exported, so it cannot be edited after the fact.
+// 32-byte hashes: serde's [u8; 32] is exactly 32 integers 0..=255 (Rust refuses anything else).
+function serBytes32(arr) {
+  if (!Array.isArray(arr) || arr.length !== 32) throw new Error('expected a 32-byte array');
+  for (const b of arr) if (!Number.isInteger(b) || b < 0 || b > 255) throw new Error('byte out of range: ' + b);
+  return serBytes(arr);
+}
+const serOptStr = (v) => (v == null ? 'null' : serStr(v));
+// break_glass::OperatorContext: field order fixed by src/break_glass/core.rs; case_ref and
+// requester_key are `#[serde(default)]` WITHOUT skip, so serde writes null when absent.
+function serOperatorContext(c) {
+  return `{"requester_name":${serStr(c.requester_name)},"reason_code":${serStr(c.reason_code)},` +
+    `"case_ref":${serOptStr(c.case_ref)},"requester_key":${serOptStr(c.requester_key)}}`;
+}
+// ExportContext: both members skip when absent (Option + skip_serializing_if), in struct order.
+function serExportContext(x) {
+  const parts = [];
+  if (x.operator != null) parts.push(`"operator":${serOperatorContext(x.operator)}`);
+  if (x.recipient_commitment != null) parts.push(`"recipient_commitment":${serBytes32(x.recipient_commitment)}`);
+  return '{' + parts.join(',') + '}';
+}
+// `auth_mode`, `window`, `token_id`, `context` and `authorizing_receipt` are optional trailing
+// fields the Rust side skips when absent (legacy receipts); serialize each only when present, in
+// struct order, so every receipt generation hashes to the bytes the device signed. `auth_mode` is
+// an opaque label here: the viewer never interprets it, and a new credential class must not break
+// an old viewer. `token_id` is the paired bearer's id. `context` is DECLARED at export (a
+// self-export's operator; a salted recipient commitment); `authorizing_receipt` names the Granted
+// break-glass receipt whose token authorized a quorum export, and is LAST because it is the newest
+// field of `ExportReceipt` in src/lib.rs.
 function serExportReceipt(r) {
   let s = `{"time_bucket":${serTimeBucket(r.time_bucket)},"ruleset_hash":${serBytes(r.ruleset_hash)},` +
     `"batch_size":${serInt(r.batch_size)},"artifact_hash":${serBytes(r.artifact_hash)}`;
   if (r.auth_mode != null) s += `,"auth_mode":${serEnum(r.auth_mode)}`;
   if (r.window != null) s += `,"window":${serExportWindow(r.window)}`;
   if (r.token_id != null) s += `,"token_id":${serStr(r.token_id)}`;
+  if (r.context != null) s += `,"context":${serExportContext(r.context)}`;
+  if (r.authorizing_receipt != null) s += `,"authorizing_receipt":${serBytes32(r.authorizing_receipt)}`;
   return s + '}';
+}
+
+// The kernel's display_safe (src/break_glass/core.rs is_forbidden_text_char, range by range — the
+// same class as the break-glass console's displaySafe): anything that could forge or hide a
+// displayed line becomes U+FFFD.
+function displaySafe(s) {
+  return String(s == null ? '' : s).replace(
+    /[\u0000-\u001f\u007f-\u009f\u00ad\u034f\u061c\u0600-\u0605\u06dd\u070f\u0890-\u0891\u08e2\u115f-\u1160\u17b4-\u17b5\u180b-\u180f\u200b-\u200f\u2028-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufffb\u{110bd}\u{110cd}\u{13430}-\u{13438}\u{1bca0}-\u{1bca3}\u{1d173}-\u{1d17a}\u{e0000}-\u{e0fff}]/gu,
+    '\ufffd');
+}
+
+function isBytes32(arr) {
+  return Array.isArray(arr) && arr.length === 32 && arr.every((b) => Number.isInteger(b) && b >= 0 && b <= 255);
+}
+
+// Structural rules shared with src/lib.rs verify_export_bundle and src/verify.rs
+// export_authorization_shape (R0, R1, R6). Same strings. Returns the grant hash (hex) or null.
+function checkReceiptAuthorizationShape(r) {
+  if (r == null || r.authorizing_receipt == null) return null;
+  if (!isBytes32(r.authorizing_receipt)) {
+    throw new Error("export receipt's authorizing_receipt is not a 32-byte array"); // R0
+  }
+  if (r.auth_mode !== 'break_glass') { // R1
+    // displaySafe, as Rust's display_safe: a forged mode never forges or hides an output line. A
+    // non-string mode is named by kind (serde and JSON.stringify render numbers differently).
+    const mode = r.auth_mode == null ? 'absent' : (typeof r.auth_mode === 'string' ? displaySafe(r.auth_mode) : 'a non-string value');
+    throw new Error(`export receipt names an authorizing receipt but its auth_mode is ${mode}, not break_glass`);
+  }
+  if (r.context && r.context.operator != null) { // R6
+    throw new Error("export receipt carries an operator context beside its authorizing receipt (a quorum export's operator is its grant's)");
+  }
+  return bytesToHex(Uint8Array.from(r.authorizing_receipt));
+}
+
+// The raw text of a top-level member's value in a JSON object text (the last one, as JSON.parse and
+// serde_json keep the last of a duplicated key), or null. A ledger payload is hashed verbatim, so R0
+// reads the bytes the device signed, not their JSON.parse image.
+function topLevelMemberText(text, key) {
+  let found = null;
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
+      const str = text.slice(i, j + 1);
+      i = j;
+      if (depth !== 1) continue;
+      let k = j + 1;
+      while (k < text.length && /\s/.test(text[k])) k++;
+      if (text[k] !== ':') continue;
+      let name;
+      try { name = JSON.parse(str); } catch (_) { continue; }
+      if (name !== key) continue;
+      let m = k + 1;
+      let d = 0;
+      let inStr = false;
+      for (; m < text.length; m++) {
+        const ch = text[m];
+        if (inStr) {
+          if (ch === '\\') m++;
+          else if (ch === '"') inStr = false;
+          continue;
+        }
+        if (ch === '"') inStr = true;
+        else if (ch === '[' || ch === '{') d++;
+        else if (ch === ']' || ch === '}') { if (d === 0) break; d--; }
+        else if (ch === ',' && d === 0) break;
+      }
+      found = text.slice(k + 1, m).trim();
+      i = m - 1;
+      continue;
+    }
+    if (c === '{' || c === '[') depth++;
+    else if (c === '}' || c === ']') depth--;
+  }
+  return found;
+}
+
+// R0 over a ledger payload's own bytes: Rust reads `authorizing_receipt` as 32 unsigned integer
+// literals (serde_json's as_u64), so `4.0`, `4e0` or `-0` fail R0 there even though JSON.parse
+// turns them into integers. Throws R0's string, or returns quietly.
+function checkRawAuthorizingReceipt(payloadJson) {
+  const raw = topLevelMemberText(payloadJson, 'authorizing_receipt');
+  if (raw == null || raw === 'null') return;
+  if (!/^\[\s*(?:\d+\s*,\s*){31}\d+\s*\]$/.test(raw)) {
+    throw new Error("export receipt's authorizing_receipt is not a 32-byte array"); // R0
+  }
+}
+
+// Cross-ledger export-authorization rules R0–R6, mirroring src/verify.rs
+// check_export_authorizations byte for byte. `grants`: Map(grantHex -> {envelope}); `redeemedGrants`:
+// Set(grantHex); `exports`: [[index, receiptObject, payloadJson?]] — with the ledger row's own
+// payload text, R0 also reads the signed bytes (checkRawAuthorizingReceipt). Returns the count of
+// receipts naming their grant, or throws an Error carrying `.index`.
+function checkExportAuthorizations(grants, redeemedGrants, exports) {
+  const seen = new Map();
+  let authorized = 0;
+  for (const [idx, r, raw] of exports) {
+    let grant;
+    try {
+      if (raw != null && r != null && r.authorizing_receipt != null) checkRawAuthorizingReceipt(raw);
+      grant = checkReceiptAuthorizationShape(r);
+    } catch (e) {
+      e.index = idx;
+      throw e;
+    }
+    if (grant == null) continue;
+    const fail = (why) => Object.assign(new Error(why), { index: idx });
+    const g = grants.get(grant);
+    if (!g) throw fail(`export receipt names authorizing receipt ${grant} but no Granted break-glass receipt has that hash`); // R2
+    if (g.envelope !== 'export:events') {
+      throw fail(`export receipt's authorizing grant ${grant} is for envelope '${displaySafe(g.envelope)}', not export:events`); // R3
+    }
+    if (!redeemedGrants.has(grant)) {
+      throw fail(`export receipt's authorizing grant ${grant} has no redemption row — its token was never spent`); // R4
+    }
+    if (seen.has(grant)) {
+      throw fail(`export receipts ${seen.get(grant)} and ${idx} both name authorizing grant ${grant} — a grant authorizes one export`); // R5
+    }
+    seen.set(grant, idx);
+    authorized++;
+  }
+  return authorized;
+}
+
+const EXPORT_RECEIPT_KEYS = new Set(['time_bucket', 'ruleset_hash', 'batch_size', 'artifact_hash',
+  'auth_mode', 'window', 'token_id', 'context', 'authorizing_receipt']);
+// Diagnostic only: names keys this verifier cannot re-serialize. It NEVER changes status or ok.
+function unknownReceiptFields(r) {
+  const out = Object.keys(r || {}).filter((k) => !EXPORT_RECEIPT_KEYS.has(k));
+  if (r && r.context && typeof r.context === 'object') {
+    for (const k of Object.keys(r.context)) if (k !== 'operator' && k !== 'recipient_commitment') out.push('context.' + k);
+  }
+  return out;
+}
+
+// The entry-hash mismatch message, annotated (never softened) when the receipt carries fields
+// this verifier does not know.
+function receiptMismatchError(r) {
+  const unknown = unknownReceiptFields(r);
+  if (unknown.length === 0) return new Error('export receipt entry_hash mismatch');
+  return new Error(`export receipt entry_hash mismatch (this receipt also carries field(s) this verifier does not know: ${unknown.join(', ')}; if a newer SecuraCV build wrote it, re-check with that build — the mismatch stands until then)`);
+}
+
+// Display-only lines naming what a receipt declares (never a verdict).
+function receiptDisclosureLines(r) {
+  const lines = [];
+  const op = r && r.context && r.context.operator;
+  if (op) lines.push(`Declared operator: ${displaySafe(op.requester_name)} (${displaySafe(op.reason_code)}) — declared by the exporting operator, not trustee-consented`);
+  if (r && r.context && r.context.recipient_commitment != null) lines.push('Recipient: committed in the signed receipt (named only in the handoff sidecar)');
+  if (r && r.authorizing_receipt != null && isBytes32(r.authorizing_receipt)) {
+    lines.push(`Authorized by Granted break-glass receipt ${bytesToHex(Uint8Array.from(r.authorizing_receipt)).slice(0, 16)}… (consent recorded on the grant)`);
+  }
+  return lines;
 }
 
 // Sealed-log records are stored as the literal `payload_json` string and hashed verbatim by both
@@ -1061,7 +1237,9 @@ async function verifyEnvelope(envelope, opts = {}) {
     break_glass_granted: 0,
     break_glass_denied: 0,
     break_glass_redeemed: 0,
+    break_glass_unsealed: 0,
     export_receipts: 0,
+    export_receipts_authorized: 0,
     pq_checked: false,
     warnings: [],
     checks: [],
@@ -1158,6 +1336,8 @@ async function verifyEnvelope(envelope, opts = {}) {
     const grants = new Map();
     const redeemedNonces = new Set();
     const redeemedGrants = new Set();
+    const redemptions = new Map();
+    const unsealedRedemptions = new Set();
     for (let i = 0; i < bg.entries.length; i++) {
       const e = bg.entries[i];
       const receipt = JSON.parse(e.payload_json);
@@ -1202,7 +1382,38 @@ async function verifyEnvelope(envelope, opts = {}) {
         if (approvals.length > 0 || (receipt.trustees_used && receipt.trustees_used.length > 0)) {
           throw fail('redemption row carries approvals or names trustees');
         }
+        redemptions.set(entryHex, {
+          grant: grantHex,
+          envelope: receipt.vault_envelope_id,
+          ruleset: bytesToHex(toBytes(receipt.ruleset_hash)),
+          request: bytesToHex(toBytes(receipt.request_hash)),
+          bucket: receipt.time_bucket,
+        });
         result.break_glass_redeemed++;
+      } else if (receipt.outcome && receipt.outcome.Unsealed) {
+        // Mirrors src/verify.rs RedemptionLedger U1–U5 (same strings).
+        const u = receipt.outcome.Unsealed;
+        const fail = (why) => chainFail('break-glass token redemption invalid: ' + why,
+          'break_glass_receipts', i, 'token_redemption');
+        const redHex = bytesToHex(toBytes(u.redemption_entry_hash));
+        const red = redemptions.get(redHex);
+        if (!red) throw fail(`unseal record names receipt ${redHex} but no earlier redemption row has that hash`);
+        if (unsealedRedemptions.has(redHex)) throw fail(`redemption ${redHex} is recorded as unsealed twice — a token releases one cleartext`);
+        unsealedRedemptions.add(redHex);
+        if (red.envelope === 'export:events') throw fail('unseal record names the redemption of an export:events token');
+        if (red.envelope !== receipt.vault_envelope_id
+          || red.ruleset !== bytesToHex(toBytes(receipt.ruleset_hash))
+          || red.request !== bytesToHex(toBytes(receipt.request_hash))) {
+          throw fail('unseal record does not restate the envelope, ruleset and request hash of the redemption it records');
+        }
+        if (red.bucket.start_epoch_s !== receipt.time_bucket.start_epoch_s
+          || red.bucket.size_s !== receipt.time_bucket.size_s) {
+          throw fail("unseal record is stamped outside its redemption's bucket");
+        }
+        if (approvals.length > 0 || (receipt.trustees_used && receipt.trustees_used.length > 0)) {
+          throw fail('unseal record carries approvals or names trustees');
+        }
+        result.break_glass_unsealed++;
       } else {
         result.break_glass_denied++;
       }
@@ -1217,6 +1428,21 @@ async function verifyEnvelope(envelope, opts = {}) {
     const expHead = await verifyLinearChain(exp.entries, new Uint8Array(32), domains.export_receipt,
       { anyOf: lineage.keys }, 'export_receipts', sigCheckable);
     validateSummary('export_receipts', exp.entries.length, exp.count, exp.head_hash, expHead);
+    // Export authorizations (R0–R6), the same rule and strings as src/verify.rs
+    // check_export_authorizations: the envelope carries both ledgers from genesis.
+    {
+      const parsed = [];
+      for (let i = 0; i < exp.entries.length; i++) {
+        let r;
+        try { r = JSON.parse(exp.entries[i].payload_json); } catch (_) { continue; }
+        parsed.push([i, r, exp.entries[i].payload_json]);
+      }
+      try {
+        result.export_receipts_authorized = checkExportAuthorizations(grants, redeemedGrants, parsed);
+      } catch (e) {
+        throw chainFail('export receipt authorization invalid: ' + e.message, 'export_receipts', e.index, 'export_authorization');
+      }
+    }
 
     // Provenance must be consistent with the signed export receipt.
     if (bytesToHex(toBytes(envelope.provenance.ruleset_hash)) !== bytesToHex(toBytes(envelope.export_receipt_entry.receipt.ruleset_hash))) {
@@ -1235,10 +1461,17 @@ async function verifyEnvelope(envelope, opts = {}) {
     // Export-receipt entry: serialize the receipt in serde field order (NOT the input JSON's key
     // order) so a key-reordered-but-equivalent bundle still re-derives the signed entry_hash.
     const rEntry = envelope.export_receipt_entry;
-    const computedEntryHash = await hashEntry(toBytes(rEntry.prev_hash), serExportReceipt(rEntry.receipt));
-    if (!bytesEqual(computedEntryHash, toBytes(rEntry.entry_hash))) {
-      throw new Error('export receipt entry_hash mismatch');
+    let computedEntryHash;
+    try {
+      computedEntryHash = await hashEntry(toBytes(rEntry.prev_hash), serExportReceipt(rEntry.receipt));
+    } catch (_) {
+      throw receiptMismatchError(rEntry.receipt);
     }
+    if (!bytesEqual(computedEntryHash, toBytes(rEntry.entry_hash))) {
+      throw receiptMismatchError(rEntry.receipt);
+    }
+    checkReceiptAuthorizationShape(rEntry.receipt);
+    for (const line of receiptDisclosureLines(rEntry.receipt)) result.checks.push(line);
     if (sigCheckable) {
       // Strictly the provenance key, never any-of: this entry is created in
       // the SAME export call that stamps provenance, so accepting an earlier
@@ -1366,9 +1599,14 @@ async function verifyExportBundle(bundle, opts = {}) {
     //    JSON's key order) so a key-reordered-but-equivalent bundle still
     //    re-derives the signed entry_hash.
     const rEntry = bundle.receipt_entry;
-    const computedEntryHash = await hashEntry(toBytes(rEntry.prev_hash), serExportReceipt(rEntry.receipt));
+    let computedEntryHash;
+    try {
+      computedEntryHash = await hashEntry(toBytes(rEntry.prev_hash), serExportReceipt(rEntry.receipt));
+    } catch (_) {
+      throw receiptMismatchError(rEntry.receipt);
+    }
     if (!bytesEqual(computedEntryHash, toBytes(rEntry.entry_hash))) {
-      throw new Error('export receipt entry_hash mismatch');
+      throw receiptMismatchError(rEntry.receipt);
     }
     result.entry_hash = bytesToHex(computedEntryHash);
     result.checks.push('Export receipt entry hash recomputed and matches');
@@ -1392,6 +1630,10 @@ async function verifyExportBundle(bundle, opts = {}) {
     }
     result.artifact_hash = bytesToHex(artifactHash);
     result.checks.push('Human-readable artifact bound to the signed export hash');
+
+    // Structural export-authorization rules (R0, R1, R6), as Rust's verify_export_bundle.
+    checkReceiptAuthorizationShape(rEntry.receipt);
+    for (const line of receiptDisclosureLines(rEntry.receipt)) result.checks.push(line);
 
     if (result.authorship !== 'trusted') {
       result.warnings.push('device key taken from the bundle itself — authorship is self-attested; compare the key against one published by the device owner, or supply it to confirm');
@@ -1460,6 +1702,13 @@ const api = {
   serExportFailure,
   serExportArtifact,
   serExportReceipt,
+  serOperatorContext,
+  serExportContext,
+  checkReceiptAuthorizationShape,
+  checkRawAuthorizingReceipt,
+  checkExportAuthorizations,
+  unknownReceiptFields,
+  displaySafe,
   serSealedEvent,
   serSealedFailure,
   utf8,
@@ -3591,6 +3840,27 @@ function packKeyNote(bundleKeyHex) {
 }
 
 // ---- helpers -------------------------------------------------------------
+// The receipt's declared disclosure context and its authorizing grant, as rows (every value
+// through esc). "Declared" labels what the exporting operator stated; the grant is named by
+// reference — its trustee-consented context lives on the grant, not in this file.
+function disclosureRows(r) {
+  let rows = '';
+  const op = r.context && r.context.operator;
+  if (op) {
+    rows += `<dt>Declared operator</dt><dd>${esc(op.requester_name)} — declared by the exporting operator, not trustee-consented</dd>`;
+    rows += `<dt>Reason code</dt><dd>${esc(op.reason_code)}</dd>`;
+    if (op.case_ref != null) rows += `<dt>Case reference</dt><dd>${esc(op.case_ref)}</dd>`;
+    if (op.requester_key != null) rows += `<dt>Requester key (claimed)</dt><dd class="mono">${esc(op.requester_key)}</dd>`;
+  }
+  if (r.context && r.context.recipient_commitment != null) {
+    rows += '<dt>Recipient</dt><dd>committed in the signed receipt — the name is in the handoff sidecar, not in this file</dd>';
+  }
+  if (Array.isArray(r.authorizing_receipt)) {
+    const hex = r.authorizing_receipt.map((b) => Number(b).toString(16).padStart(2, '0')).join('');
+    rows += `<dt>Authorizing grant</dt><dd class="mono">${esc(hex)} <span class="c-muted">(consent recorded on the grant)</span></dd>`;
+  }
+  return rows;
+}
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function fmtBytes(n) { return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB'; }
 function fmtBucket(tb) {
@@ -3814,7 +4084,7 @@ async function processBundle(bundle, sourceLabel, stale) {
     <dt>Window</dt><dd>${r.window
       ? esc(new Date(r.window.start_epoch_s * 1000).toISOString().replace('.000Z', 'Z')) + ' → ' + esc(new Date(r.window.end_epoch_s * 1000).toISOString().replace('.000Z', 'Z'))
       : 'full retained history'}</dd>
-    <dt>Events in batch</dt><dd>${esc(String(r.batch_size))}</dd>
+    <dt>Events in batch</dt><dd>${esc(String(r.batch_size))}</dd>${disclosureRows(r)}
     <dt>Artifact hash</dt><dd class="mono">${esc(report.artifact_hash || '')}</dd>
     <dt>Receipt entry hash</dt><dd class="mono">${esc(report.entry_hash || '')}</dd>
   </dl>
@@ -3960,6 +4230,16 @@ function failureDiagnosis(f) {
       what: 'A break-glass receipt does not satisfy the quorum policy it claims (or required approvals are missing).',
       causes: 'The policy was changed or removed after receipts were written, or a receipt was recorded without the required approvals.',
       next: 'Compare the trustee keys in the policy against the approvals; ask the trustees what they actually signed.',
+    },
+    token_redemption: {
+      what: 'The break-glass chain’s record of spent tokens is inconsistent: a token redeemed twice, a redemption naming no grant, or an unseal record that names no redemption or repeats one.',
+      causes: 'A single-use token was replayed, or a redemption or unseal record was forged or removed.',
+      next: 'Treat the unseal as possibly repeated; compare the chain head against its last anchor and ask who held the token file.',
+    },
+    export_authorization: {
+      what: 'An export receipt’s link to the break-glass grant that authorized it does not hold: the grant is missing, is for another envelope, was never spent, authorized two exports, or the receipt restates an operator beside it.',
+      causes: 'A forged or edited export receipt; a grant or redemption row removed from the break-glass chain.',
+      next: 'Compare both chain heads against their last anchors and list who held the device key.',
     },
     untrusted_signer: {
       what: 'The checkpoint names a signer key that is not part of the device’s genesis-anchored key lineage.',

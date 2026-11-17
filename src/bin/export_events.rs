@@ -13,9 +13,11 @@
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
+use sha2::Digest;
 use std::io::IsTerminal;
 use std::time::Duration;
 use witness_kernel::break_glass::BreakGlassTokenFile;
+use witness_kernel::handoff;
 use witness_kernel::{
     parse_duration_s, ExportOptions, ExportWindow, Kernel, KernelConfig, ZonePolicy,
 };
@@ -31,7 +33,10 @@ const BUCKET_S: u64 = 600;
 Exported times are coarsened to 10-minute buckets and jittered by design \
 (see spec/event_contract.md); raw media never leaves the kernel. Every export \
 appends a signed receipt to the tamper-evident log, so disclosures are always \
-auditable.")]
+auditable.
+
+Every export also writes <file>.securacv-handoff.json, a handoff sidecar that \
+carries the signed receipt rows to whoever receives the file.")]
 struct Args {
     /// Path to the witness database.
     #[arg(long, default_value = "witness.db")]
@@ -63,6 +68,43 @@ struct Args {
     /// from quorum-authorized disclosures.
     #[arg(long)]
     self_export: bool,
+    /// Printed name of the person exporting (self-export only; declared, signed into the receipt).
+    /// A quorum export's requester is the one its grant recorded and is named by reference.
+    #[arg(
+        long,
+        value_name = "NAME",
+        conflicts_with = "break_glass_token",
+        requires = "reason"
+    )]
+    requested_by: Option<String>,
+    /// Reason code for the self-export (one of the break-glass reason codes; declared).
+    #[arg(
+        long,
+        value_name = "CODE",
+        conflicts_with = "break_glass_token",
+        requires = "requested_by"
+    )]
+    reason: Option<String>,
+    /// Case / ticket reference for the self-export (declared).
+    #[arg(
+        long,
+        value_name = "REF",
+        conflicts_with = "break_glass_token",
+        requires = "requested_by"
+    )]
+    case_ref: Option<String>,
+    /// The exporting operator's Ed25519 public key, 64 hex (claimed, not checked).
+    #[arg(
+        long,
+        value_name = "HEX",
+        conflicts_with = "break_glass_token",
+        requires = "requested_by"
+    )]
+    requester_key: Option<String>,
+    /// Who receives this export (declared; committed, salted, into the signed
+    /// receipt and named only in the handoff sidecar).
+    #[command(flatten)]
+    recipient: witness_kernel::handoff::RecipientArgs,
     /// Export window start (Unix epoch seconds, floored to a 600s bucket boundary).
     #[arg(long, requires = "end", conflicts_with = "last")]
     start: Option<u64>,
@@ -141,12 +183,16 @@ fn prune_exports(dir: &std::path::Path, keep: usize) -> Result<usize> {
     let excess = exports.len().saturating_sub(keep.max(1));
     for (_, path) in exports.iter().take(excess) {
         std::fs::remove_file(path)?;
-        let mut sidecar_name = path.file_name().unwrap_or_default().to_os_string();
-        sidecar_name.push(".c2pa");
-        match std::fs::remove_file(path.with_file_name(sidecar_name)) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.into()),
+        // Its C2PA manifest and its handoff sidecar go with it. A sidecar's
+        // name never parses as a bundle bucket, so it is never counted.
+        for suffix in [".c2pa", witness_kernel::handoff::HANDOFF_SUFFIX] {
+            let mut sidecar_name = path.file_name().unwrap_or_default().to_os_string();
+            sidecar_name.push(suffix);
+            match std::fs::remove_file(path.with_file_name(sidecar_name)) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
         }
     }
     Ok(excess)
@@ -165,6 +211,26 @@ fn main() -> Result<()> {
              or --break-glass-token <FILE> (trustee quorum)"
         ));
     }
+
+    // Declared context and recipient are validated before anything opens, so
+    // a bad flag spends nothing and records nothing.
+    let operator = match &args.requested_by {
+        Some(name) => Some(witness_kernel::break_glass::OperatorContext::new(
+            name,
+            args.reason.as_deref().unwrap_or_default(),
+            args.case_ref.as_deref(),
+            args.requester_key.as_deref(),
+        )?),
+        None => None,
+    };
+    let recipient = args.recipient.resolve()?;
+    let recipient_salt = recipient
+        .as_ref()
+        .map(|_| zeroize::Zeroizing::new(handoff::fresh_salt()));
+    let recipient_commitment = match (&recipient, &recipient_salt) {
+        (Some(r), Some(salt)) => Some(handoff::recipient_commitment(salt, r)),
+        _ => None,
+    };
 
     // An export signs a receipt under the CURRENT device identity, so the seed
     // must be the one witnessd runs with: the flag / DEVICE_KEY_SEED, else the
@@ -191,6 +257,38 @@ fn main() -> Result<()> {
     };
 
     let window = resolve_window(&args)?;
+    let output_path: std::path::PathBuf = match &args.output_dir {
+        Some(dir) => {
+            std::fs::create_dir_all(dir)?;
+            dir.join(format!(
+                "securacv-events-{}.json",
+                witness_kernel::TimeBucket::now_10min()?.start_epoch_s
+            ))
+        }
+        None => std::path::PathBuf::from(&args.output),
+    };
+    // The stale-sidecar rule: before anything is exported, an old handoff
+    // sidecar at this path is moved aside — restored if the export fails
+    // before its bundle replaces the old one (a spent or invalid token must
+    // not destroy the earlier bundle's recipient opening), deleted once it
+    // has — and the sidecar path is proven writable.
+    let sidecar_at = handoff::sidecar_path_for(&output_path);
+    let stale = handoff::set_aside_stale_sidecar(&output_path).map_err(|e| {
+        anyhow!(
+            "refusing to export: a stale handoff sidecar at {} could not be moved aside ({}); \
+             nothing was exported",
+            sidecar_at.display(),
+            e
+        )
+    })?;
+    handoff::probe_sidecar_path(&output_path).map_err(|e| {
+        anyhow!(
+            "refusing to export: a handoff sidecar cannot be created at {} ({}); nothing was \
+             exported",
+            sidecar_at.display(),
+            e
+        )
+    })?;
     let mut kernel = {
         let _stage = ui.stage("Open kernel");
         Kernel::open(&cfg)?
@@ -203,8 +301,9 @@ fn main() -> Result<()> {
     };
     let (bundle, mode) = if args.self_export {
         let _stage = ui.stage("Export events (self)");
+        let context = witness_kernel::ExportContext::new(operator.clone(), recipient_commitment)?;
         (
-            kernel.export_events_bundle_self(cfg.ruleset_hash, options)?,
+            kernel.export_events_bundle_self_with(cfg.ruleset_hash, options, context)?,
             "self-export (device key seed)",
         )
     } else {
@@ -219,25 +318,62 @@ fn main() -> Result<()> {
         };
         let _stage = ui.stage("Export events");
         (
-            kernel.export_events_bundle_authorized(cfg.ruleset_hash, options, &mut token)?,
+            kernel.export_events_bundle_authorized_with(
+                cfg.ruleset_hash,
+                options,
+                &mut token,
+                recipient_commitment,
+            )?,
             "break-glass (trustee quorum)",
         )
     };
     let json = serde_json::to_vec(&bundle)?;
-    let output_path: std::path::PathBuf = match &args.output_dir {
-        Some(dir) => {
-            std::fs::create_dir_all(dir)?;
-            dir.join(format!(
-                "securacv-events-{}.json",
-                witness_kernel::TimeBucket::now_10min()?.start_epoch_s
-            ))
-        }
-        None => std::path::PathBuf::from(&args.output),
-    };
     {
         let _stage = ui.stage("Write export bundle");
         std::fs::write(&output_path, &json)?;
     }
+    // The new bundle replaced the old one: its sidecar describes bytes that
+    // are gone from this path, so it is never restored beside these.
+    stale.discard();
+    // The handoff sidecar, right after the bundle and BEFORE the optional
+    // C2PA sidecar, so a C2PA failure can never skip it (or its fail-closed
+    // ERROR and recovery text). The bundle carries its own signed receipt,
+    // so a missing sidecar loses no pairing. On failure the bundle is kept,
+    // the error names a secret-free recovery command, and the tool exits 1.
+    let sidecar_result = {
+        let _stage = ui.stage("Write handoff sidecar");
+        write_export_sidecar(
+            &kernel,
+            &json,
+            &output_path,
+            recipient
+                .as_ref()
+                .map(|r| (r, recipient_salt.as_ref().map(|s| **s))),
+        )
+    };
+    let sidecar_path = match sidecar_result {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!(
+                "ERROR: export bundle written to {} (sha256 {}) but its handoff sidecar could not \
+                 be written ({}). The bundle and its signed export receipt are kept. Recover the \
+                 sidecar with:\n  handoff_sidecar emit --file {} --db {}",
+                output_path.display(),
+                hex::encode(sha2::Sha256::digest(&json)),
+                e,
+                output_path.display(),
+                args.db_path
+            );
+            if recipient.is_some() {
+                eprintln!(
+                    "The receipt commits to the recipient you named; that commitment's salt \
+                     existed only in the sidecar that was not written, so a recovered sidecar \
+                     records the recipient as committed but not disclosed."
+                );
+            }
+            std::process::exit(1);
+        }
+    };
     #[cfg(feature = "c2pa-export")]
     let c2pa_sidecar: Option<(std::path::PathBuf, String)> = if args.c2pa {
         use witness_kernel::c2pa_export;
@@ -309,6 +445,34 @@ fn main() -> Result<()> {
         "  receipt: signed export receipt {}… appended to the tamper-evident log",
         &hex::encode(bundle.receipt_entry.entry_hash)[..16]
     );
+    if let Some(op) = &operator {
+        println!(
+            "  context:         {}, {}{} — declared by the exporting operator, recorded in the \
+             signed receipt",
+            witness_kernel::break_glass::display_safe(&op.requester_name),
+            op.reason_code,
+            op.case_ref
+                .as_deref()
+                .map(|c| format!(", case {}", witness_kernel::break_glass::display_safe(c)))
+                .unwrap_or_default()
+        );
+    }
+    if let Some(grant) = bundle.receipt_entry.receipt.authorizing_receipt {
+        println!(
+            "  consent:         recorded on the authorizing grant {}… (trustee-consented; named \
+             by reference)",
+            &hex::encode(grant)[..16]
+        );
+    }
+    println!(
+        "  recipient:       {}",
+        if recipient.is_some() {
+            "committed in the signed receipt; named only in the handoff sidecar"
+        } else {
+            "none named"
+        }
+    );
+    println!("  handoff sidecar: {} (mode 0600)", sidecar_path.display());
     #[cfg(feature = "c2pa-export")]
     if let Some((sidecar_path, ca_fingerprint)) = c2pa_sidecar {
         println!(
@@ -342,6 +506,55 @@ fn main() -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Build, self-verify and write the export's handoff sidecar (create-new,
+/// 0600). Returns its path.
+fn write_export_sidecar(
+    kernel: &Kernel,
+    bundle_bytes: &[u8],
+    output_path: &std::path::Path,
+    recipient: Option<(&handoff::HandoffRecipient, Option<[u8; 32]>)>,
+) -> Result<std::path::PathBuf> {
+    let name = output_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let sidecar = handoff::build_export_sidecar(
+        &kernel.conn,
+        bundle_bytes,
+        &name,
+        recipient,
+        handoff::handoff_bucket_now()?,
+        env!("CARGO_PKG_VERSION"),
+    )?;
+    let bytes = zeroize::Zeroizing::new(sidecar.to_canonical_bytes()?);
+    let report = handoff::verify_sidecar_bytes(
+        &bytes,
+        bundle_bytes,
+        &handoff::VerifyOptions {
+            pinned: Some(kernel.device_verifying_key()),
+            ..Default::default()
+        },
+    );
+    if report.verdict() != "valid" {
+        return Err(anyhow!(
+            "internal: the handoff sidecar did not verify ({})",
+            report
+                .first_failure()
+                .map(|c| format!("{}: {}", c.subject, c.detail))
+                .unwrap_or_else(|| report.verdict().to_string())
+        ));
+    }
+    let path = handoff::sidecar_path_for(output_path);
+    // Test seam (debug builds only): plant an obstacle at the sidecar path
+    // after the stale check, so the failure path can be exercised.
+    #[cfg(debug_assertions)]
+    if std::env::var_os("SECURACV_TEST_HANDOFF_OBSTACLE").is_some() {
+        std::fs::create_dir_all(path.join("obstacle"))?;
+    }
+    handoff::write_sidecar_new(&path, &bytes)?;
+    Ok(path)
 }
 
 #[cfg(test)]
@@ -392,11 +605,33 @@ mod tests {
         // count sidecars as bundles, and not fail when a sidecar is absent.
         std::fs::write(dir.path().join("securacv-events-600.json.c2pa"), b"x").expect("write");
         std::fs::write(dir.path().join("securacv-events-1800.json.c2pa"), b"x").expect("write");
+        // Handoff sidecars travel and prune the same way, and never count
+        // as a bundle (their name never parses as a bucket).
+        std::fs::write(
+            dir.path()
+                .join("securacv-events-600.json.securacv-handoff.json"),
+            b"{}",
+        )
+        .expect("write");
+        std::fs::write(
+            dir.path()
+                .join("securacv-events-2400.json.securacv-handoff.json"),
+            b"{}",
+        )
+        .expect("write");
 
         let pruned = super::prune_exports(dir.path(), 2).expect("prune");
         assert_eq!(pruned, 2);
         assert!(!dir.path().join("securacv-events-600.json").exists());
         assert!(!dir.path().join("securacv-events-600.json.c2pa").exists());
+        assert!(!dir
+            .path()
+            .join("securacv-events-600.json.securacv-handoff.json")
+            .exists());
+        assert!(dir
+            .path()
+            .join("securacv-events-2400.json.securacv-handoff.json")
+            .exists());
         assert!(!dir.path().join("securacv-events-1200.json").exists());
         assert!(dir.path().join("securacv-events-1800.json").exists());
         assert!(dir.path().join("securacv-events-1800.json.c2pa").exists());

@@ -135,10 +135,11 @@ ENVELOPE_FIXTURES = [
     "valid_envelope_legacy.json",
     "valid_envelope_self_export.json",
     "valid_envelope_rotated.json",
+    "valid_envelope_unsealed.json",
     "tampered_payload.json",
     "tampered_digest.json",
 ]
-BUNDLE_FIXTURES = ["valid_bundle.json"]
+BUNDLE_FIXTURES = ["valid_bundle.json", "valid_bundle_quorum.json"]
 
 # The /playground Test bench and the /modes page run on these three upstream
 # files. Each was a hand copy on the website, headed HAND-COPIED, and lagged:
