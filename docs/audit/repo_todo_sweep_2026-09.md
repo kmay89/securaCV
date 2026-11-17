@@ -356,21 +356,19 @@ so — see D2 below.)
   code and a host run. Found by the device-details design
   (`docs/design/device_details.md` §7.2).
 
-- [ ] **F483 [code+decision] Canary Vision broadcasts what it sees, with no
-  key, on three carriers, and the two security docs do not say so.** While a
-  detection is held, `fleet_beacon_payload_build()` (canary-vision
-  `src/net/`) sends the version-2 bytes: the watch profile's class (person or
-  animal today) and a 0 to 100 confidence. `fleet_beacon_adv.cpp` advertises
-  them over Bluetooth, `fleet_espnow.cpp` broadcasts them and `fleet_udp.cpp`
-  multicasts them on the home network, every 5 s and at once when a
-  detection starts, ends or changes class; all three default on. So a radio
-  in range, or any host on the network, reads when someone is in view. That
-  is by design (`fleet_beacon.h`), but `THREAT_MODEL.md` and
-  `SECURITY_MODEL.md` list the beacon's version-1 fields only. What remains:
-  both say what Vision sends and to whom; decide whether it stays in the
-  clear, is coarsened, or goes only to a paired display (the device-details
-  design's §7.3 and §14). From code. Found by the device-details design
-  (`docs/design/device_details.md` §7.2).
+- [ ] **F483 [code] `SECURITY_MODEL.md` does not say that Canary Vision can
+  broadcast what it sees.** Since #1986 the detection fields of the version-2
+  beacon (the `ALERT` flag, the watch profile's class and a 0 to 100
+  confidence) go out only while the owner's Broadcast detection switch is on
+  (`detect_config.h` `beacon_detect`, default off; `share_detection()` in
+  canary-vision `src/net/fleet_beacon_payload.cpp`). While it is on,
+  `fleet_beacon_adv.cpp`, `fleet_espnow.cpp` and `fleet_udp.cpp` send them in
+  the clear over Bluetooth, ESP-NOW and LAN multicast, and the switch is an
+  unsigned MQTT command (`securacv/<id>/beacon/set`) any broker login can
+  send. `THREAT_MODEL.md` says all of this; `SECURITY_MODEL.md`'s Bluetooth
+  paragraph still lists "type, flags, battery, health, chain height and the
+  two fingerprint bytes" only. What remains: say the same there. From code.
+  Found by the device-details design (`docs/design/device_details.md` §7.2).
 
 ### Network surface & provisioning
 
@@ -1164,9 +1162,10 @@ so — see D2 below.)
   addresses (static per boot for broadcast-only advertisers, resolvable for
   the WAP's bonded console) behind `FEATURE_BLE_RANDOM_ADDR`, off until a
   reader audit and a bench pass (U1; device-details PR 20). From code, the
-  NimBLE-Arduino sources (1.4.3 and 2.5.1) and the cores' SDK configurations;
-  not probed. Found by the device-details design's privacy review
-  (`docs/design/device_details.md` §11, finding P1).
+  NimBLE-Arduino sources (1.4.3 and 2.5.1; the tree pins 2.5.2 since #1986,
+  not reread) and the cores' SDK configurations; not probed. Found by the
+  device-details design's privacy review (`docs/design/device_details.md`
+  §11, finding P1).
 
 - [ ] **F376 [code+human] `canary-wap-usbdrive` and the flagship's
   `usb-onboard` put the factory MAC in the USB serial-number descriptor.**
@@ -1180,8 +1179,9 @@ so — see D2 below.)
   (F430) that refuses an `ARDUINO_USB_MODE=0` env without `USB_SERIAL`
   (device-details PR 4). Not checked: whether the stock images' USB
   Serial/JTAG controller reports the MAC as its serial number too (a bench
-  read, U1). From code and arduino-esp32 2.0.17 and 3.3.8; not probed. Found
-  by the device-details design's privacy review
+  read, U1), and whether 3.3.11, which the core-3 envs build on since #1986,
+  keeps the `"__MAC__"` default. From code and arduino-esp32 2.0.17 and
+  3.3.8; not probed. Found by the device-details design's privacy review
   (`docs/design/device_details.md` §11, finding P2).
 
 - [ ] **F377 [code+human] The setup network's BSSID is fixed by the factory
@@ -1275,20 +1275,19 @@ so — see D2 below.)
   §5.5 and §14). From code; not probed. Found by the device-details design's
   privacy review (`docs/design/device_details.md` §11, finding P9).
 
-- [ ] **F383 [code] The display's `/api/device` and `/api/log` skip the Host
-  guard, and `/api/device` serves the home network's name, the IP, the signal
-  in dBm, the uptime to the second and the heap's low-water mark.**
-  `glass_web.cpp` asks `host_is_foreign()` on `/api/glass`, on every write
-  (`foreign_blocked()`) and before the CSRF token goes out, but
-  `handle_device()` and `handle_log()` ask nothing, so a DNS-rebinding page
-  reads both. `handle_device()` sends `id`, `ssid`, `ip`, `signal`
-  (`WiFi.RSSI()`), `up_s` (F382) and `heap_min_kb`; its one reader is the
-  image's own mirror page (`mirror_html.h`'s `device()`, which
-  `firmware/tests_host/test_honest_names.test.js` runs). What remains:
-  refuse a foreign Host and a cross-site Origin first on both routes
-  (`/api/log`'s stamps are F395), and drop `ssid`, `signal`, `heap_min_kb`
-  and `up_s` with the mirror rows that draw them (device-details PR 11).
-  From code; not probed. Found by the device-details design's privacy review
+- [ ] **F383 [code] The display's `/api/device` serves the home network's
+  name, the signal in dBm, the uptime to the second and the heap's
+  low-water mark, and neither it nor `/api/log` asks the Origin.** Since
+  #1986 `handle_device()` and `handle_log()` (`glass_web.cpp`) refuse a
+  foreign Host with `host_is_foreign()` (pinned by
+  `test_glass_web_host_guard.cpp`), but neither calls `foreign_blocked()`,
+  so a cross-site Origin is not refused. `handle_device()` still sends
+  `ssid` (`WiFi.SSID()`), `signal` (`WiFi.RSSI()`), `up_s` (F382) and
+  `heap_min_kb`, which `mirror_html.h`'s `device()` draws. What remains:
+  refuse a cross-site Origin first on both routes (`/api/log`'s stamps are
+  F395), and drop `ssid`, `signal`, `heap_min_kb` and `up_s` with the mirror
+  rows that draw them (device-details PR 11). From code; not probed. Found
+  by the device-details design's privacy review
   (`docs/design/device_details.md` §11, finding P10).
 
 - [ ] **F389 [code+decision] `creds_at_rest` is a posture word on the
@@ -1370,19 +1369,19 @@ so — see D2 below.)
 
 - [ ] **F395 [code] canary-display mirrors its console to the network:
   `/api/log` serves the last 48 lines, each stamped with the uptime to a tenth
-  of a second, with no Host check.** `log_line()` (`include/canary/log.h`)
-  writes to the cable and to `g_log_sink`, which `glass_web_init()`
-  (`src/net/glass_web.cpp`) points at `log_capture()`'s 48-line ring.
-  `handle_log()` sends the ring to any host, where `handle_glass()` beside it
-  refuses a foreign Host. `log_capture()` stamps each line from `millis() /
-  100`, and the lines include household and update events ("Household
-  acknowledge received", "Firmware update rolled back"). The display has no
+  of a second.** `log_line()` (`include/canary/log.h`) writes to the cable
+  and to `g_log_sink`, which `glass_web_init()` (`src/net/glass_web.cpp`)
+  points at `log_capture()`'s 48-line ring, stamped from `millis() / 100`;
+  the lines include household and update events ("Household acknowledge
+  received", "Firmware update rolled back"). Since #1986 `handle_log()`
+  refuses a foreign Host (`host_is_foreign()`, pinned by
+  `test_glass_web_host_guard.cpp`), but it asks no Origin. The display has no
   owner credential, and the design (its §14) keeps the route readable on the
-  network. What remains (device-details PR 11): refuse a foreign Host and a
-  cross-site Origin first, as `foreign_blocked()` does for the writes (F383),
-  and drop the stamp (the lines keep their order). From code; not probed.
-  Found by the device-details design's privacy review
-  (`docs/design/device_details.md` §11, finding P22).
+  network. What remains (device-details PR 11): refuse a cross-site Origin
+  too, as `foreign_blocked()` does for the writes (F383), and drop the stamp
+  (the lines keep their order). From code; not probed. Found by the
+  device-details design's privacy review (`docs/design/device_details.md`
+  §11, finding P22).
 
 - [ ] **F396 [code] The CORS-open `/api/status` of the displays, Sense, Vision
   and Sentinel carries the Wi-Fi signal in dBm and when something last polled
@@ -3901,18 +3900,18 @@ so — see D2 below.)
   the rest of the device-details design's finding
   (`docs/design/device_details.md` §11, finding P12).
 
-- [ ] **A134 [code+decision] The iPhone app's display settings never land:
-  its `POST /api/set` sends no CSRF token, and the display answers 403.**
-  `NightlightAPI.set()` (`ios/Sources/SecuraCV/Transport/`), which
-  `GlassAPI.set()` calls, sets no `X-CSRF-Token`, and nothing in the app
-  reads the `csrf` that `GET /api/settings` hands it. The display's
-  `handle_settings_set()` asks `write_blocked()` (canary-display
-  `src/net/glass_web.cpp`), which answers `{"ok":false,"err":"csrf"}` without
-  the header. `GlassSettingsSheet` then says the knob "didn't stick";
-  `NightlightSection` drops the refusal (`try?`) and keeps the value it drew.
-  Decide which side changes: the app echoes the token, or `/api/set` holds to
-  `foreign_blocked()` alone, as the OTA kick routes do; then pin the request
-  in `GlassSettingsTests`. From code; not run on a device. Found by the
+- [ ] **A134 [code] The iPhone's nightlight section keeps a setting the display
+  refused.** Since #1986 `NightlightAPI.set()` (`ios/Sources/SecuraCV/Transport/`)
+  sends the display's per-boot `X-CSRF-Token` and retries once on a `csrf`
+  refusal, and `GlassSettingsTests` pins it. But `NightlightSection`
+  (`ios/Sources/SecuraCV/Views/Components/`) still sets the knob in local
+  state first and then posts it with `Task { try? await NightlightAPI.set(...) }`
+  (in `intBinding`, `boolBinding`, the lamp brightness slider and the
+  orientation picker), so a refusal the token cannot cure (`on_glass_only`,
+  `host`, `origin`) or a dropped connection is silent and the screen shows a
+  value the glass never took. What remains: re-read the glass so the control
+  shows what it holds, and say the refusal, as `GlassSettingsSheet` and
+  `LampColorControl` do. From code; not run on a device. Found by the
   device-details design (`docs/design/device_details.md` §9).
 
 ---

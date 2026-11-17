@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Docs: the backlog and the device-details design catch up with #1986
+
+- **#1986 finished part of four backlog items and none whole, so nothing
+  is deleted.** A134 now holds only the iPhone Nightlight section's dropped
+  refusals (the app sends the display's CSRF token since #1986); F383 and
+  F395 hold only the Origin refusal and the fields and stamps to drop (the
+  display's `/api/device` and `/api/log` refuse a foreign Host since
+  #1986); F483 holds only `SECURITY_MODEL.md` (Vision's beacon carries a
+  detection only behind the owner's Broadcast detection switch, and
+  `THREAT_MODEL.md` says so). F375 and F376 note the NimBLE-Arduino 2.5.2
+  and arduino-esp32 3.3.11 pins #1986 moved them to, not yet reread. The
+  design's section 11 marks P10 and P22 part fixed in #1986, its section 13
+  records #1986 as merged, and the sentences on those items follow; the
+  counts in section 11 and the docs index line are unchanged. Docs only.
+
 ## [2.4.21] - 2026-11-16
 
 > **Before you update.** Built by CI; the device changes are not yet booted on our bench.
