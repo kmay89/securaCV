@@ -5631,6 +5631,18 @@ Turning a PlatformIO lib_deps range into an exact pin changes a string that othe
 - **Regression check:** `scripts/tests/test_check_firmware_advisories.py` (`Reviewed`: every entry is a well-formed GHSA id citing a file or a version, and a cited repository file exists); `scripts/tests/test_vendored_webserver_core2.py`; `firmware/tests_host/test_webserver_boundary.cpp` under AddressSanitizer.
 - **Date learned:** 2026-11
 
+### 2026-11-17 — a pioarduino release can require a newer PlatformIO than the tree pins
+2026-11-17 — core-3 pin move (fw 2.4.21). The core-3 line moved to pioarduino
+55.03.312-1 (arduino-esp32 3.3.12) and every PlatformIO core-3 build failed with
+`IncompatiblePlatform: ... depends on PlatformIO Core >=6.2.0`: that release's
+platform.json declares `"engines": {"platformio": ">=6.2.0"}`, and this tree pins
+PlatformIO 6.1.19 (setup-platformio, and check_route_security.py's reader). The
+Arduino-CLI rows compiled fine, which hid it until the PlatformIO jobs ran. Before
+moving `[platform_core3]`, read the release's platform.json `engines` field
+(raw.githubusercontent.com/pioarduino/platform-espressif32/<tag>/platform.json)
+against the pinned PlatformIO; 55.03.311 (3.3.11, same ESP-IDF 5.5.5) still
+accepts >=6.1.19, so 3.3.12 waits on a PlatformIO 6.2 bump.
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:
