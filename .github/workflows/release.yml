@@ -62,7 +62,7 @@ jobs:
           mkdir -p dist
           for bin in witnessd log_verify break_glass export_events export_verify \
                      frigate_bridge event_mqtt_bridge witness_api grove_vision2_ingest demo \
-                     log_anchor court_export; do
+                     log_anchor court_export handoff_sidecar; do
             if [ -f "target/release/$bin" ]; then
               cp "target/release/$bin" "dist/"
             fi

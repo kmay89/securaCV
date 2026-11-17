@@ -301,7 +301,7 @@
       {
         "method": "POST",
         "path": "/breakglass/unseal",
-        "desc": "only if ready \u2192 authorize + unseal to an operator dir"
+        "desc": "only if ready \u2192 authorize + unseal to an operator dir, with a handoff sidecar beside the file"
       },
       {
         "method": "POST",

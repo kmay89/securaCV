@@ -244,6 +244,135 @@
   panels under WiFi, nightstand-c6's SPI panel, and canary-sense's radar
   UART.
 
+### Device details: the design is on main, and each of its 24 privacy findings has a home: an open backlog item, or the PRs that fixed it (#1987)
+
+- **`docs/design/device_details.md` is the design for showing every chip,
+  radio and sensor fact a Canary can honestly report, in every app.** One
+  record per Canary (`securacv.canary.details/v1`) cut into small parts, one
+  vocabulary file to generate every copy from, privacy classes and tiers that
+  decide who sees each fact, and a plan of 22 PRs. Four of them merged before
+  the design did: PR 1 (#1970), PR 2 (#1891), PR 6 (#1971) and PR 7 (#1892);
+  #1961 built one slice of PR 3. The record, its routes and every Details
+  screen are still plan. The document was read against `0a06c14b`, and then
+  against `62bc0bc7` (the 2.4.20 train, #1972, with #1969 and #1983) on
+  2026-11-16, with its §1 measured again there. Nothing in it was checked on
+  a device. `docs/README.md` indexes it.
+- **Its privacy review's findings, P1 to P24, each have a home** (its §11).
+  Fourteen are filed as new open items in
+  `docs/audit/repo_todo_sweep_2026-09.md`: F375 to F377, F379 to F383, F389,
+  F390 and F393 to F396. Four are held by items already there, which now cite
+  their finding: F357 (a dated note, P4), F430 (P15), A132 (P14) and A133
+  (P12). Six were fixed before the design landed: P8 by #1887, P11 by #1892
+  (sweep F384), P13 and P24 by #1970, P18 by #1891, #1916 and #1961 (F391),
+  and P19 by #1891 (F392). #1970 also fixed part of P12 and P14; A133 and A132
+  hold the rest. Nothing is fixed here.
+- **Nine more open items, from reading the design against the tree.** F479:
+  the `/admin` page's gzip is 2,102 B past 65,536 B, and the budget gate the
+  design gave PR 6 was not built. F480: `improv_ble.cpp`'s reset guard and
+  its comments take IDF 5.1.0 as the floor for three reset reasons that
+  5.1.0 does not have. F481: the
+  Wi-Fi sensing probe broadcasts a counter that dates the boot. F482: the
+  Chirp channel leaves under the unit's fixed address, against its spec's
+  "unlinkable", and puts the uptime in its header when the clock is unset.
+  F483: Vision's beacon broadcasts what it sees, which the two security docs
+  leave out. A134: the iPhone app's glass-knob writes carry no CSRF token, so
+  the display refuses them. D24 to D26: the 4.3B's microSD rating, the MR60
+  notes on oversized frames and a `platformio.ini` comment on which flagship
+  image is published disagree with the code. The new ids skip F469 to F478
+  and D23, which open #1966 files.
+- **The backlog no longer says the design is missing.** F430 is the identifier
+  lint with the rest of finding P15 (the `mac_address` slot in `boot_info_t`),
+  and it stays `[code+decision]`: its scope is written in the design's §10
+  item 3, and its deny list waits on PR 3's `never` rows, which wait on HA62
+  and the class question (§2.2). HA62 and HA63 point at the vocabulary
+  questions the design leaves open, and HA63 names six uptime keys, not four.
+  F22's note says Home Assistant's redaction set has held `last_frame_age_ms`
+  since #1916. F353 no longer says a session can start the firmware install
+  over HTTP, which the 2.4.20 train took to the bearer, and F379 names each
+  self-test row's `code` beside its `detail`.
+- **`scripts/tests/test_ledger_numbers.py` (new)** holds the backlog to one
+  heading per id, under every prefix; each §11 row to a home that exists, an
+  open backlog entry that cites the row back or `fixed in #N`; each backlog
+  entry that cites a finding to the row that names it; and the counts and
+  lists in §11's opening sentence and in the index line to the table. A
+  heading, a cite, a row, a list or a sentence it cannot read fails, and so
+  does a backlog line that looks like a heading written another way. In the
+  backlog the phrase "finding P<n>" belongs to the one entry the row names;
+  any other entry cites that entry's id.
+- Docs and one test. No code, firmware or generated file changes.
+### Every disclosed file carries its handoff sidecar; the device records the decrypt; a quorum export names its grant
+
+- **Release coupling — merge gate.** This change adds a receipt outcome
+  (`Unsealed`) that every reader built from the token-redemption change
+  (#1936) fails to parse (`unknown variant`); a `witnessd` of that era boots
+  into safe mode on such a row. The plan was to merge it before the first
+  release that contains #1936. That did not happen: kernel 0.9.1, Flasher
+  0.12.5 and Lab app 0.4.1 carry #1936 without this reader. The owner
+  confirmed on 2026-11-16 that no deployment reads these ledgers yet, so
+  what remains is the upgrade order below.
+- **Upgrade order.** Upgrade `witnessd`, `break_glass`, `log_verify`,
+  `envelope_verify`, `court_export` and every observer host **before the
+  first unseal recorded by this build** — the same rule `TokenRedeemed`
+  rows carried. A bundle whose receipt carries `context` or
+  `authorizing_receipt` (every quorum export from this build) needs a
+  verifier from this build, including the website's copy of
+  `viewer/verify_core.js`, which ships in the same release (a separate
+  website PR carries it; until it merges, the website's copy of
+  `viewer/verify_core.js` and the two new fixtures stay stale — the weekly
+  "Update everything" carry diff shows it, or run
+  `python3 scripts/carry_to_site.py --site <checkout>` and then
+  `git -C <checkout> diff`. `--check` covers only the downloads carry).
+- **Handoff sidecars** (`spec/quorum_unseal_v2.md` §5). `break_glass unseal`,
+  the break-glass console, the drill and `export_events` write
+  `<file>.securacv-handoff.json` beside every disclosed file: canonical
+  `securacv-cjson-v1`, no trailing newline, 0600, never overwritten. It
+  embeds the device-signed rows of the disclosure verbatim (grant,
+  redemption and unseal record, or export receipt), references RFC 3161
+  tokens by SHA-256 (selected by hash only), carries one 600 s bucket as its
+  only time value, and labels everything else declared. It adds no signing
+  domain. New tool `handoff_sidecar emit | verify | redact` (in the release
+  and container bin lists) and a POSIX recipe,
+  `scripts/verify_handoff_sidecar.sh` (`sha256sum`, `openssl` ≥ 3.0, `jq`; no
+  `xxd`). Guide: `docs/handoff_sidecars.md`; design:
+  `docs/design/handoff_sidecars.md`.
+- **The unseal record.** After #1936's burn-first redemption and a
+  successful decrypt, and before any byte is written, the kernel appends a
+  device-signed `Unsealed { redemption_entry_hash, plaintext_commitment,
+  recipient_commitment? }` row; the commitments are salted
+  (`securacv:pwk:unsealed-plaintext:v1`, `securacv:pwk:handoff-recipient:v1`)
+  with salts that exist only in the sidecar, so the never-pruned ledger holds
+  no media fingerprint and no recipient name. Fail-closed order: before the
+  burn an earlier sidecar at the output path is moved aside (restored on any
+  failure, so a re-run with a spent or wrong token never destroys an earlier
+  disclosure's salts) and the sidecar path is proven writable; then the row,
+  the sidecar (created `O_EXCL` at its final path — no hard link, so FAT,
+  exFAT and SMB media work), the `.raw`.
+  `--recipient-file` (preferred) and `--recipient-name/-org/-key` declare
+  the recipient; it is never verified and never printed. Verifiers apply
+  U1–U5 (`token_redemption`).
+- **`ExportReceipt` gains two trailing optional fields**: `context`
+  (`{operator?, recipient_commitment?}`, declared — a self-export's
+  `--requested-by/--reason/--case-ref/--requester-key`) and
+  `authorizing_receipt` (the Granted receipt a quorum export spent, set on
+  every quorum export). A quorum export never restates an operator
+  (`--requested-by` conflicts with `--break-glass-token`). Receipts without
+  them serialize byte-identically. R0–R6 under the new
+  `FailureKind::ExportAuthorization` run in `log_verify`, the Rust and JS
+  envelope walks and `handoff_sidecar verify`; R0/R1/R6 in
+  `verify_export_bundle` and the viewer.
+- **Reports.** `VerifyReport.break_glass_unsealed` and
+  `export_receipts_authorized` are omitted while zero, so the MQTT/API
+  report is byte-identical until the first unseal record or authorizing
+  receipt exists.
+- **`court_export`** verifies a supplied sidecar (refusing a contradicting
+  one before the kit directory exists) or generates one, and adds the
+  `Disclosure context` and `Handoff sidecar` sections, `VERIFICATION.md`
+  steps, README item 8, and the MANIFEST `evidence.context`,
+  `evidence.authorizing_receipt` and `handoff` keys.
+- **Viewer.** `viewer/verify_core.js` serializes the new fields, applies the
+  same rules with the same strings, annotates (never softens) an entry-hash
+  mismatch on a receipt with unknown fields, and shows the declared fields;
+  the Home Assistant copy of the viewer is rebuilt.
 ### The 2.4.20 follow-ups: kernel, integration and app 0.9.2, Flasher 0.12.7, Lab 0.4.3, iOS 0.9.2
 
 - **The Home Assistant app's wizard checks "Only Frigate alerts" against

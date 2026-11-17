@@ -167,6 +167,14 @@ truncation but can never cause a false verify failure.
   remains a declaration). Binding the heads *into* the sealed-event chain
   (Merkle leaves) remains tracked — it is also what removes the last
   TSA-visible imprint residual of scheduled anchoring.
+- **The disclosure seam.** *Shipped:* every unseal leaves three
+  device-signed rows (grant, redemption, `Unsealed` record) and every quorum
+  export names its grant (`authorizing_receipt`); the verifiers check those
+  links (`token_redemption`, `export_authorization`). The file that crosses
+  the custody boundary carries them in its handoff sidecar
+  (`docs/handoff_sidecars.md`), checkable with `sha256sum`, `openssl` and
+  `jq`. The recipient in a sidecar is a declaration fixed by a salted
+  commitment, not a verified identity.
 
 ---
 

@@ -88,6 +88,34 @@ the Lab.
 opens — by quorum, never by one person.
 → [`spec/break_glass.md`](../spec/break_glass.md)
 
+**Handoff sidecar** — The file that travels with every disclosed file,
+`<file>.securacv-handoff.json` (0600): the device-signed rows of the
+disclosure that released it, verbatim — the trustees' grant, the
+redemption, and the unseal record or export receipt — plus anchors
+referenced by hash. Unsigned itself: a carrier, and everything it does not
+embed signed is labeled *declared*. Always two words.
+→ [handoff sidecars](handoff_sidecars.md)
+
+**Unseal record** — The device-signed `Unsealed` row the kernel appends
+after a successful decrypt and before any byte is written: "the device
+decrypted envelope E, under redemption R, to the plaintext this salted
+commitment fixes." The salt lives only in the handoff sidecar, so the
+ledger holds no media fingerprint.
+→ [`spec/break_glass.md`](../spec/break_glass.md)
+
+**Recipient commitment** — A salted SHA-256 commitment to the recipient the
+operator *declared* at disclosure, signed into the unseal record or export
+receipt; the name and salt live only in the handoff sidecar. It fixes the
+declaration against later substitution — it does not verify who received
+the file.
+→ [handoff sidecars](handoff_sidecars.md)
+
+**Authorizing receipt** — The field of a quorum export's receipt that names
+the `Granted` break-glass receipt whose token it spent. The requester's
+trustee-consented context stays on that grant, named by reference, never
+copied into the export ledger.
+→ [`spec/evidence_envelope.md`](../spec/evidence_envelope.md)
+
 **Sealed snapshot** — Not the Vault. One camera frame a canary-wap seals when
 an alarm it was armed for fires, encrypted to one person's X25519 key; the
 Canary keeps only the public half, so it cannot open its own file. Being

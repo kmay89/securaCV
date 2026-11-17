@@ -86,6 +86,29 @@ recipient can check without our tools.
 → [the operator guide](operator_guide.md) ·
 [evidence lifecycle](evidence_lifecycle.md)
 
+### What do I hand the receiving party with an unsealed file?
+
+The file **and its handoff sidecar** — `<file>.securacv-handoff.json`,
+written beside it by `break_glass unseal` (and by every `export_events` run;
+an API bundle gets one through `handoff_sidecar emit`). The sidecar
+carries the device-signed records of that disclosure: the trustees' grant,
+the redemption that spent the token, and the device's unseal record, which
+pairs this exact file to the envelope it decrypted through a salted
+commitment only the sidecar can open. The receiving party checks it with
+`handoff_sidecar verify --file <file> --public-key-file <device.pub>` or
+with `sha256sum`, `openssl` and `jq` alone (the recipe in
+[handoff sidecars](handoff_sidecars.md)). To forward a sidecar without the
+recipient's name, `handoff_sidecar redact` it first.
+
+### Can the device prove who we gave footage to?
+
+No — and it does not pretend to. It proves what was decrypted (the unseal
+record, device-signed) and under whose consent (the grant), and it **fixes
+what you declared** about the recipient: the name you give at unseal is
+committed, salted, into the signed record, so it cannot be swapped later.
+But the device never checks who actually received the file; the sidecar
+says "declared by the operator, not verified" for exactly that reason.
+
 ### Does it phone home? Any telemetry, any accounts?
 
 No. Logs stay local, there is no remote indexing and no telemetry (Invariant
