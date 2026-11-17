@@ -370,8 +370,8 @@ jobs:
           PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-canary-sense" \
             pio run -e canary-sense-default -e canary-sense-wellbeing
 
-      - name: Install Arduino CLI + ESP32 core 3.3.12 (WAP row, exclusive)
-        # Pinned to the WAP sketch.yaml's core (3.3.12, the core inside
+      - name: Install Arduino CLI + ESP32 core 3.3.11 (WAP row, exclusive)
+        # Pinned to the WAP sketch.yaml's core (3.3.11, the core inside
         # platform_core3), read from this dispatch ref, not from the tag: a
         # refresh of an older tag builds its WAP image on today's pin, not on
         # the core that tag's own release used. firmware.yml's PR row keeps
@@ -384,11 +384,11 @@ jobs:
         # (installing one already present is a no-op) and the unversioned
         # FQBN would take the newer (RELEASE_LESSONS 2026-07-29 (k)). The
         # action uninstalls the installed esp32:esp32 release before
-        # installing, and fails the step unless 3.3.12 is the one installed
+        # installing, and fails the step unless 3.3.11 is the one installed
         # afterwards.
         uses: ./.github/actions/setup-arduino-esp32
         with:
-          core-version: "3.3.12"
+          core-version: "3.3.11"
           exclusive-core: "true"
           # Exact library pins, the same as firmware-release.yml's WAP row:
           # a factory image is flashed onto new devices, so it must not link
@@ -419,7 +419,7 @@ jobs:
 
       - name: Install ESP32 core 2.0.17 + display libraries (core-2 row, exclusive)
         # SPI-panel row (watch). Exclusive because the wap row above installed
-        # core 3.3.12 into this same ~/.arduino15 — see the action's
+        # core 3.3.11 into this same ~/.arduino15 — see the action's
         # exclusive-core input and RELEASE_LESSONS 2026-07-29 (k).
         uses: ./.github/actions/setup-arduino-esp32
         with:
@@ -494,14 +494,14 @@ jobs:
                echo "::error::canary-display 'watch' did not link $WEBSERVER_LIB (GHSA-8cmm-3887-r32j) — withheld from the browser flasher this rebuild" ;;
           esac
 
-      - name: Install ESP32 core 3.3.12 + display libraries (core-3 row, exclusive)
+      - name: Install ESP32 core 3.3.11 + display libraries (core-3 row, exclusive)
         # RGB-panel row (dash + modes): only GFX 1.6.x takes the bounce buffers
         # that keep the 4.3B glass from flickering under WiFi load
         # (display_dash.cpp, RELEASE_LESSONS 2026-07-28 (j)).
         if: hashFiles('firmware/projects/canary-display/arduino/canary_display/canary_display.ino') != ''
         uses: ./.github/actions/setup-arduino-esp32
         with:
-          core-version: "3.3.12"
+          core-version: "3.3.11"
           exclusive-core: "true"
           libraries: |
             GFX Library for Arduino@1.6.6

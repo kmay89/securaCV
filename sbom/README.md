@@ -143,7 +143,7 @@ version to agree with, and a sketch may pin libraries its row leaves floating
 float; neither ships an image).
 That leaves one recorded residual, not a drift: the WAP's release rows
 (`firmware-release.yml`, `flasher-release.yml`, `ram_audit.yml`,
-`csi_module_disable_matrix.yml`) pin 3.3.12, the WAP sketch's core and the one
+`csi_module_disable_matrix.yml`) pin 3.3.11, the WAP sketch's core and the one
 inside `platform_core3`, so rule 1 holds them to the sketch; `firmware.yml`'s
 PR row still builds on "latest" by design, the early warning for the next
 core, and appears under the `framework:arduino-esp32@latest` component. That

@@ -1253,7 +1253,7 @@ void test_the_settings_read_on_a_fresh_nvs_logs_nothing() {
 // egress writes its delivery ceiling there at boot, csi_event_egress.cpp),
 // the read-only open succeeds, and config_load() read the host, user,
 // password and prefix with getString() whether or not they were there.
-// Arduino-ESP32 3.3.12's getString() logs "nvs_get_str len fail: <key>
+// Arduino-ESP32 3.3.11's getString() logs "nvs_get_str len fail: <key>
 // NOT_FOUND" at error level for a missing key (the stub counts each), so a
 // debug build whose bridge was never configured printed four error lines at
 // every boot, re-init and config GET or POST. Each is now read behind
@@ -1529,7 +1529,7 @@ void test_the_config_answer_gives_its_buffer_back() {
 // POST /api/mqtt/config stored up to MAX_*_LEN characters of each string
 // setting (cutting a longer user or prefix to it without a word), and
 // config_load() read each back with Preferences::getString(key, buf,
-// MAX_*_LEN). arduino-esp32 3.3.12's getString refuses a value whose length
+// MAX_*_LEN). arduino-esp32 3.3.11's getString refuses a value whose length
 // with its NUL exceeds the size it is given (stubs/mqtt/Preferences.h quotes
 // it), so a setting of exactly MAX_*_LEN characters was stored and read back
 // as nothing: a 32-character prefix as "securacv", a 128-character host as no

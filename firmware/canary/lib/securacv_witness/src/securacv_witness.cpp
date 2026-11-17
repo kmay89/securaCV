@@ -180,7 +180,7 @@ static bool persist_chain_blob() {
 // the firmware sees only its answer. An entry whose data CRC fails IDF
 // erases inside the read it refuses, leaving the blob's index, so that boot
 // halts. On IDF 4.4 (core 2.0.17: every env but env:full) the index stays
-// and every later boot halts on it; on IDF 5.5 (core 3.3.12, env:full) the
+// and every later boot halts on it; on IDF 5.5 (core 3.3.11, env:full) the
 // next boot's nvs_flash_init() erases an index whose data is gone, so that
 // boot finds no key and makes a new identity. A data chunk whose header
 // fails IDF's check is erased when IDF loads the page: on IDF 4.4 every boot

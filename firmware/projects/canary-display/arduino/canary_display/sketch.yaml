@@ -67,7 +67,7 @@ profiles:
     notes: XIAO ESP32-S3 + Round Display — arduino-esp32 3.x (Boards Manager default)
     fqbn: esp32:esp32:XIAO_ESP32S3:PSRAM=opi,CDCOnBoot=default,USBMode=hwcdc
     platforms:
-      - platform: esp32:esp32 (3.3.12)
+      - platform: esp32:esp32 (3.3.11)
         platform_index_url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
     libraries:
       - GFX Library for Arduino (1.6.6)
@@ -98,7 +98,7 @@ profiles:
     notes: Waveshare 4.3B (generic ESP32-S3 board) — arduino-esp32 3.x (Boards Manager default)
     fqbn: esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=huge_app,CDCOnBoot=default,USBMode=hwcdc
     platforms:
-      - platform: esp32:esp32 (3.3.12)
+      - platform: esp32:esp32 (3.3.11)
         platform_index_url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
     libraries:
       - GFX Library for Arduino (1.6.6)
@@ -121,7 +121,7 @@ profiles:
     notes: Waveshare 4.3B vendor board — dev playground (bench mode), core 3.x only
     fqbn: esp32:esp32:waveshare_esp32_s3_touch_lcd_43b
     platforms:
-      - platform: esp32:esp32 (3.3.12)
+      - platform: esp32:esp32 (3.3.11)
         platform_index_url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
     libraries:
       - GFX Library for Arduino (1.6.6)
@@ -141,7 +141,7 @@ profiles:
     notes: Waveshare 4.3B vendor board — full mode system (fleet + gears), core 3.x only
     fqbn: esp32:esp32:waveshare_esp32_s3_touch_lcd_43b
     platforms:
-      - platform: esp32:esp32 (3.3.12)
+      - platform: esp32:esp32 (3.3.11)
         platform_index_url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
     libraries:
       - GFX Library for Arduino (1.6.6)

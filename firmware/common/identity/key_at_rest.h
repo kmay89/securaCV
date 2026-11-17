@@ -26,7 +26,7 @@
  * depends on flash encryption being configured in the build. So the key is
  * encrypted at rest only when BOTH are active, and `Facts::nvs_encryption`
  * is the second fact. Neither pinned Arduino core's precompiled sdkconfig
- * has it (2.0.17's leaves CONFIG_SECURE_FLASH_ENC_ENABLED unset; 3.3.12's,
+ * has it (2.0.17's leaves CONFIG_SECURE_FLASH_ENC_ENABLED unset; 3.3.11's,
  * which env:full and the WAP build on, leaves CONFIG_NVS_ENCRYPTION unset),
  * so NVS encryption does not exist in any framework = arduino build, and
  * the PIO canary tree's firmware reports the fact as false

@@ -163,7 +163,7 @@
   one that linked the core's copy, and the release and flasher workflows
   withhold its image. The flagship links no WebServer.
   GHSA-g764-gwc3-75m5 (ESP-IDF 5.5.4's DHCP server on every core-3
-  SoftAP) is fixed by the move to 3.3.12 / ESP-IDF 5.5.5 below, which is
+  SoftAP) is fixed by the move to 3.3.11 / ESP-IDF 5.5.5 below, which is
   compile-tested on the new core and not yet on a bench. The rest reach
   no image (an API we never call, a library we never include, upstream's
   own CI, or an ESP-IDF example); `REVIEWED` in
@@ -171,7 +171,7 @@
   shows it, and a test holds every entry to a GHSA id and a cited file or
   version. Four ESP-IDF advisories that name the new 5.5.5 itself (fixed
   in 5.5.6) reach no image either, each read against the sdkconfig and
-  libraries the 3.3.12 core ships prebuilt: GHSA-ch63-jxm5-vmvf (lwIP DNS;
+  libraries the 3.3.11 core ships prebuilt: GHSA-ch63-jxm5-vmvf (lwIP DNS;
   the cache holds one address), GHSA-49x8-xqjg-2pjg (ESP-TEE; not built),
   GHSA-rjvf-fxv5-x87j (Bluedroid BLE Mesh GATT; not built, on core 2
   either) and GHSA-xcpr-5mqp-9qvv (Bluedroid A2DP sink; the S3 and C6 have
@@ -201,13 +201,13 @@
   entities check no signature. The page and the FAQ's phone-home answer
   now say so, and name the Sense's clock sync.
 
-### Firmware toolchain: the core-3 line moves to Arduino-ESP32 3.3.12 / ESP-IDF 5.5.5
+### Firmware toolchain: the core-3 line moves to Arduino-ESP32 3.3.11 / ESP-IDF 5.5.5
 
-- **Every core-3 build moves to arduino-esp32 3.3.12 on ESP-IDF 5.5.5
+- **Every core-3 build moves to arduino-esp32 3.3.11 on ESP-IDF 5.5.5
   (GHSA-g764-gwc3-75m5).** ESP-IDF 5.5.4's lwIP DHCP server reads past
   its buffer while it parses a client's options, and every core-3 product
   that runs a SoftAP runs that server. ESP-IDF 5.5.5 fixes it.
-  `platform_core3` moves from pioarduino `55.03.38-1` to `55.03.312-1`,
+  `platform_core3` moves from pioarduino `55.03.38-1` to `55.03.311`,
   which moves canary-wap, canary-sense, canary-sentinel (`door`, `window`,
   `hallway`, `demo-head`), the display dash family with `dash7`,
   `nightstand7` and `nightstand-c6`, and canary `[env:full]` in one edit,
@@ -220,14 +220,15 @@
   display's core-3 rows and profiles also move NimBLE-Arduino 2.5.0 to
   2.5.2, the version the PlatformIO dash envs already link (2.5.1 fixed a
   build and crash on core 3.3.11 for C5/C6 targets).
-- **What 3.3.12 changes that a user can see.** Its WebServer hardening
-  answers a request line or URI over its new limits with 414 or 431 and
-  drops a client that takes more than 10 s to send its headers; the
-  display's glass page and setup portal and the canary-sense / sentinel
-  setup portals run on it. The core also brings a newer mDNS component
-  (fleet discovery) and LittleFS (the WAP's filesystem).
+- **What 3.3.11 changes that a user can see.** A newer mDNS component
+  (fleet discovery) and LittleFS (the WAP's filesystem). The pin is 3.3.11,
+  not 3.3.12: pioarduino's 3.3.12 platform requires PlatformIO 6.2, and this
+  tree pins 6.1.19. 3.3.11 carries ESP-IDF 5.5.5, which fixes the DHCP-server
+  advisory; 3.3.12's WebServer hardening is not in it, and the two WebServer
+  advisories in range for 3.3.11 (serveStatic, authenticate) reach no code
+  we ship.
 - **Re-read, not respelled.** The claims this tree makes about the core's
-  internals were checked against 3.3.12 / IDF 5.5.5 and still hold:
+  internals were checked against 3.3.11 / IDF 5.5.5 and still hold:
   esp-mqtt's publish path and network-timeout default (IDF 5.5.5 pins
   esp-mqtt `0e9ec17`; the only change from `6af4446` that the bridge
   touches is that `esp_mqtt_client_stop()` no longer gives up when its
@@ -236,7 +237,7 @@
   `mbedtls/x509write_crt.h` in the libs, IDF's NVS sources byte-identical
   to 5.5.4's, and the C6's `Serial` on UART0 (GPIO16/17) when CDC-on-boot
   is off. `firmware/canary/scripts/check_route_security.py` also refuses
-  `custom_pio_lock`, a build key 55.03.312-1 reads and 55.03.38-1 did not.
+  `custom_pio_lock`, a build key 55.03.311 reads and 55.03.38-1 did not.
 - **Not yet on a bench.** Every board on this line is compile-tested on
   the new pin until a bench pass: canary-wap (camera, SD, LittleFS with
   A/B rollback, BLE pairing, mDNS, MQTT over TLS), the display's RGB

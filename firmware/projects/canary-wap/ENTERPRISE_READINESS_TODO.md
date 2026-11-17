@@ -168,7 +168,7 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
 - [x] **Stabilize Arduino dependency pinning** — the docs half and the CI
   half below (#1802); the PR row floats on purpose
   - [x] Tested core + libraries locked in the docs: `arduino/canary_wap/sketch.yaml` pins
-        `esp32:esp32 (3.3.12)` and lists ArduinoJson / Crypto / NimBLE-Arduino;
+        `esp32:esp32 (3.3.11)` and lists ArduinoJson / Crypto / NimBLE-Arduino;
         the firmware SBOM (`scripts/gen_firmware_sbom.py --check --validate`,
         `lint.yml`) asserts the pins against the workflows' rows.
   - [x] Compatibility notes: `README.md` "Install Libraries" names
@@ -176,7 +176,7 @@ repo, so they were replaced with the CI jobs that run each tool on every PR
         compiles with Bluetooth silently disabled).
   - [x] Locked in the CI scripts too (#1802, sweep F21): the WAP's release
         rows (`firmware-release.yml`, `flasher-release.yml`, `ram_audit.yml`,
-        `csi_module_disable_matrix.yml`) pass `core-version: "3.3.12"`, the
+        `csi_module_disable_matrix.yml`) pass `core-version: "3.3.11"`, the
         sketch's pin; the two release jobs install it exclusively, since they
         go on to install the display cores in the same job. `firmware.yml`'s
         PR row keeps floating on the weekly "latest" by design, as the early

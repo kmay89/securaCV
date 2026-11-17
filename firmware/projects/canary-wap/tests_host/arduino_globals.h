@@ -1,11 +1,11 @@
-// The global names arduino-esp32 3.3.12 puts in front of every line of
+// The global names arduino-esp32 3.3.11 puts in front of every line of
 // canary_wap.ino and of every header it includes: arduino-cli and PlatformIO
 // both open the sketch with Arduino.h. Transcribed from the core's
 // cores/esp32/Arduino.h (its macros, typedefs, declarations and
 // using-declarations), esp32-hal-gpio.h (pin levels, modes and interrupt
 // kinds), WString.h (F() and FPSTR()) and binary.h (the B0 … B11111111
 // enumerators, values left out) at the 3.3.8 tag; all four files are
-// byte-identical at 3.3.12, the core both of the sketch's builds install
+// byte-identical at 3.3.11, the core both of the sketch's builds install
 // (sketch.yaml's profile; [platform_core3] in
 // firmware/envs/platformio/platforms.ini, which canary-wap.ini takes).
 // Macro bodies are the core's; they only matter if a header spells the name.

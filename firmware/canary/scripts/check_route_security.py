@@ -4581,7 +4581,7 @@ def symbol_binding_problems(sources: dict, includes: dict) -> list:
 # include_dir, a linker script; a key in any case, as configparser lowercases
 # it), pioarduino's `custom_component_add` (each entry an ESP-IDF component the
 # IDF component manager fetches from Espressif's registry into [env:full]'s
-# build, platform-espressif32 55.03.312-1's espidf.py and component_manager.py:
+# build, platform-espressif32 55.03.311's espidf.py and component_manager.py:
 # code no rule reads, which library_problems does not hold, as it is no
 # library), its `custom_pio_lock` (true installs the pio-lock package into the
 # build's Python environment and registers its targets with SCons, the same
@@ -4595,7 +4595,7 @@ def symbol_binding_problems(sources: dict, includes: dict) -> list:
 # review, which found each slipped the first version of this rule;
 # `${sysenv.*}` anywhere, and a key in any case, in its eleventh round;
 # `custom_component_add` in that round's second review; `custom_pio_lock`
-# when platform_core3 moved to 55.03.312-1, which reads it; 55.03.38-1 did
+# when platform_core3 moved to 55.03.311, which reads it; 55.03.38-1 did
 # not.)
 _BUILD_INPUT = re.compile(
     r"(?<![\w-])(?:-Wl,|-Xlinker\b|--wrap\b|--defsym\b|-T(?=\s*[\w$./])"

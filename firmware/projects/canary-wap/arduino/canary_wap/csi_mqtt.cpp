@@ -808,7 +808,7 @@ bool open_client(bool* busy) {
    * hook, so caps.fingerprint is false and a pinned provisioning is refused
    * with "use the CA mode". caps.insecure is false too: the pinned Arduino
    * core builds esp-tls WITHOUT CONFIG_ESP_TLS_INSECURE (sdkconfig of
-   * every chip in framework-arduinoespressif32-libs 3.3.12), so an mqtts://
+   * every chip in framework-arduinoespressif32-libs 3.3.11), so an mqtts://
    * session with no verification option returns ESP_ERR_INVALID_STATE —
    * the lab mode could never connect here, and the header's own
    * InsecureUnsupported refusal says so instead of an opaque esp-tls error. */

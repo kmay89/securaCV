@@ -362,7 +362,7 @@ jobs:
         # builds canary/canary-vision on the official espressif32 platform
         # first — and the two ship a package literally named
         # `framework-arduinoespressif32` at incompatible versions (2.0.x vs
-        # 3.3.12). Sharing ~/.platformio, pioarduino sees the official copy
+        # 3.3.11). Sharing ~/.platformio, pioarduino sees the official copy
         # already "installed", skips its own, and fails with
         # FRAMEWORK_DIR=None before any compile. A warm cache masked this
         # until the cache was evicted (fw-v2.3.0, 2026-07-27). Isolate the
@@ -385,8 +385,8 @@ jobs:
           PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-canary-sense" \
             pio run -e canary-sense-default -e canary-sense-wellbeing
 
-      - name: Install Arduino CLI + ESP32 core 3.3.12 (WAP row, exclusive)
-        # Pinned to the WAP sketch.yaml's core (3.3.12, the core inside
+      - name: Install Arduino CLI + ESP32 core 3.3.11 (WAP row, exclusive)
+        # Pinned to the WAP sketch.yaml's core (3.3.11, the core inside
         # platform_core3), so a release builds on a core a PR has already
         # compiled the sketch on, not on whatever the action's weekly "latest"
         # is that day. firmware.yml's PR row keeps floating on "latest" by
@@ -399,10 +399,10 @@ jobs:
         # no-op) and the unversioned FQBN would take the newer
         # (RELEASE_LESSONS 2026-07-29 (k)). The action uninstalls the
         # installed esp32:esp32 release before installing, and fails the step
-        # unless 3.3.12 is the one installed afterwards.
+        # unless 3.3.11 is the one installed afterwards.
         uses: ./.github/actions/setup-arduino-esp32
         with:
-          core-version: "3.3.12"
+          core-version: "3.3.11"
           exclusive-core: "true"
           # Exact library pins, like the core: an unversioned name installs
           # whatever Library Manager has as newest on the day the tag is cut,
@@ -436,11 +436,11 @@ jobs:
         # NimBLE 1.4.3). SPI panel: no RGB-scanout mechanism, so the
         # bench-validated core-2 row is the right one. Runs AFTER the wap
         # build on purpose: it switches the installed esp32:esp32 platform,
-        # and wap builds on its own pinned core (3.3.12).
+        # and wap builds on its own pinned core (3.3.11).
         uses: ./.github/actions/setup-arduino-esp32
         with:
           core-version: "2.0.17"
-          # Exclusive: the wap row above installed core 3.3.12 into the
+          # Exclusive: the wap row above installed core 3.3.11 into the
           # same ~/.arduino15. Without this, both versions sit there, the
           # unversioned FQBN below takes the newest, and the watch compiles
           # against core 3 with the core-2 library row — which is exactly
@@ -495,7 +495,7 @@ jobs:
                echo "::error::canary-display 'watch' did not link $WEBSERVER_LIB (GHSA-8cmm-3887-r32j) — its image is withheld from this release" ;;
           esac
 
-      - name: Install ESP32 core 3.3.12 + display libraries (core-3 row, cached)
+      - name: Install ESP32 core 3.3.11 + display libraries (core-3 row, cached)
         # The RGB-panel boards (dash + modes, the Waveshare 4.3B) MUST ship
         # the core-3 pairing: only GFX 1.6.x's Arduino_ESP32RGBPanel takes
         # bounce buffers, and without them the panel visibly
@@ -508,7 +508,7 @@ jobs:
         # platform — see canary-display.ini's [env:canary-display-dash].
         uses: ./.github/actions/setup-arduino-esp32
         with:
-          core-version: "3.3.12"
+          core-version: "3.3.11"
           # Exclusive for the same reason as the core-2 row above — this one
           # happens to have worked (3.3.x was already the newest installed),
           # which is precisely why the defect stayed invisible on this side.

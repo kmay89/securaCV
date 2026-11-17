@@ -341,7 +341,7 @@ is **true 5-point multitouch** (the GT911 already reports up to 5; the pins carr
 
 - **The C6 build** (`canary-display-nightstand-c6`) — the core-3.x display base landed:
   `[canary_display_c6_core3]` in `envs/platformio/canary-display.ini` pins the pioarduino platform (same
-  `platform_core3` pin as canary-sense/canary-wap, today 55.03.312-1) with the core-3 library row the Arduino CI already
+  `platform_core3` pin as canary-sense/canary-wap, today 55.03.311) with the core-3 library row the Arduino CI already
   proves (`GFX@1.6.6` / `LVGL 9.x` / `NimBLE 2.x`), chain-mode LDF + an explicit `build_src_filter` for the
   shared `common/` TUs (the canary-sense pattern). In `flavors.json` `build_envs` **and**
   `isolated_core_envs` (the pioarduino platform cannot share a core dir with espressif32). Its own OTA

@@ -11,7 +11,7 @@ What is pinned and why:
   • the committed sbom/sbom-firmware.cdx.json matches the tree, is
     deterministic, has no timestamp, and its dependency graph is closed;
   • the audit claim that started this: the display and WAP products depend
-    on the pioarduino core-3 line (Arduino 3.3.12 / ESP-IDF 5.5.5), which the
+    on the pioarduino core-3 line (Arduino 3.3.11 / ESP-IDF 5.5.5), which the
     hand-typed template never said;
   • --check goes red on a byte of drift;
   • --validate: the committed document and the timestamped artifact variant
@@ -226,8 +226,8 @@ class CommittedDocument(unittest.TestCase):
         self.assertIn("platform:platform_s3c3", deps["product:canary-display"])
         self.assertEqual(deps["product:canary-wap"] & {r for r in deps if r.startswith("platform:")},
                          {"platform:platform_core3"})
-        self.assertEqual(deps["platform:platform_core3"], {"framework:arduino-esp32@3.3.12"})
-        self.assertEqual(deps["framework:arduino-esp32@3.3.12"], {"framework:esp-idf@5.5.5"})
+        self.assertEqual(deps["platform:platform_core3"], {"framework:arduino-esp32@3.3.11"})
+        self.assertEqual(deps["framework:arduino-esp32@3.3.11"], {"framework:esp-idf@5.5.5"})
         self.assertEqual(deps["platform:platform_s3c3"], {"framework:arduino-esp32@2.0.17"})
 
     def test_platform_facts_cover_every_literal_platforms_ini_declares_in_use(self):
@@ -258,7 +258,7 @@ class CheckMode(unittest.TestCase):
             copy.write_text(gs.OUT.read_text(encoding="utf-8"), encoding="utf-8")
             with redirect_stdout(io.StringIO()):
                 self.assertEqual(gs.main(["--check", "--out", str(copy)]), 0)
-            copy.write_text(copy.read_text(encoding="utf-8").replace('"3.3.12"', '"3.3.13"'),
+            copy.write_text(copy.read_text(encoding="utf-8").replace('"3.3.11"', '"3.3.13"'),
                             encoding="utf-8")
             out = io.StringIO()
             with redirect_stdout(out):
@@ -916,7 +916,7 @@ class ArduinoCorePins(unittest.TestCase):
 
     def test_sketch_profiles_are_read_from_yaml_not_grepped(self):
         by = {(p["sketch"], p["profile"]): p for p in self.sketch}
-        self.assertEqual(by[("canary_display", "watch-core3")]["version"], "3.3.12")
+        self.assertEqual(by[("canary_display", "watch-core3")]["version"], "3.3.11")
         self.assertEqual(by[("canary_display", "watch")]["libraries"]["GFX Library for Arduino"],
                          "1.4.9")
         self.assertEqual(by[("canary_wap", "xiao_sense")]["product"], "canary-wap")
@@ -928,7 +928,7 @@ class ArduinoCorePins(unittest.TestCase):
 
     def test_workflow_rows_carry_their_library_pins_and_the_sketch_they_compile(self):
         rows = {(w["where"], w["version"]): w for w in self.workflow}
-        display = rows[("firmware.yml:build-arduino-cli-display", "3.3.12")]
+        display = rows[("firmware.yml:build-arduino-cli-display", "3.3.11")]
         self.assertEqual(display["libraries"]["lvgl"], "9.5.0")    # ${{ matrix.core.lvgl }}
         self.assertEqual(display["products"], ["canary-display"])
         wap = rows[("firmware.yml:build-arduino-cli", None)]
@@ -938,18 +938,18 @@ class ArduinoCorePins(unittest.TestCase):
         # cores; the WAP and the display core-3 row pin one version
         release = [w for w in self.workflow if w["where"] == "firmware-release.yml:build-sign-release"]
         self.assertEqual(sorted((w["version"] or "latest", tuple(w["products"])) for w in release),
-                         [("2.0.17", ("canary-display",)), ("3.3.12", ("canary-display",)),
-                          ("3.3.12", ("canary-wap",))])
+                         [("2.0.17", ("canary-display",)), ("3.3.11", ("canary-display",)),
+                          ("3.3.11", ("canary-wap",))])
 
     def test_the_agreement_holds_on_the_tree(self):
         self.assertEqual(gs.check_core_pin_agreement(self.workflow, self.sketch, self.cores), [])
 
     def test_a_workflow_pin_no_profile_carries_is_a_finding(self):
-        rows = self.workflow + [{"version": "3.3.11", "where": "x.yml:job",
+        rows = self.workflow + [{"version": "3.3.10", "where": "x.yml:job",
                                  "libraries": {}, "products": ["canary-wap"]}]
         findings = gs.check_core_pin_agreement(rows, self.sketch, self.cores)
         self.assertEqual(len(findings), 1, findings)
-        self.assertIn("x.yml:job pins esp32:esp32 3.3.11", findings[0])
+        self.assertIn("x.yml:job pins esp32:esp32 3.3.10", findings[0])
 
     def _wap_pinned_rows(self):
         return [w for w in self.workflow if w["version"] and "canary-wap" in w["products"]]
@@ -958,29 +958,29 @@ class ArduinoCorePins(unittest.TestCase):
         doctored = [dict(p, version="3.3.9") if p["profile"] == "xiao_sense" else p
                     for p in self.sketch]
         findings = gs.check_core_pin_agreement(self.workflow, doctored, self.cores)
-        # the profile itself, and each WAP row whose 3.3.12 it no longer answers
+        # the profile itself, and each WAP row whose 3.3.11 it no longer answers
         rows = self._wap_pinned_rows()
         self.assertEqual(len(findings), 1 + len(rows), findings)
         profile = [f for f in findings if "xiao_sense" in f]
         self.assertEqual(len(profile), 1, findings)
         self.assertIn("3.3.9", profile[0])
         for w in rows:
-            self.assertTrue(any(f.startswith(f"{w['where']} pins esp32:esp32 3.3.12 for canary-wap")
+            self.assertTrue(any(f.startswith(f"{w['where']} pins esp32:esp32 3.3.11 for canary-wap")
                                 for f in findings), (w["where"], findings))
 
     def test_the_wap_release_rows_pin_the_sketch_core_and_the_pr_row_floats(self):
         # The release decision recorded in firmware/PLATFORMS.md (sweep F21,
         # #1802): the rows that make or measure a release pin the WAP
-        # sketch's 3.3.12, and firmware.yml's PR row stays on the action's
+        # sketch's 3.3.11, and firmware.yml's PR row stays on the action's
         # "latest" as the early warning for the next core. A row moved either
         # way is a change to that decision, so it fails here.
         wap = {w["where"]: w["version"] for w in self.workflow if "canary-wap" in w["products"]}
         self.assertEqual(wap, {
-            "csi_module_disable_matrix.yml:build-with-module-disabled": "3.3.12",
-            "firmware-release.yml:build-sign-release": "3.3.12",
+            "csi_module_disable_matrix.yml:build-with-module-disabled": "3.3.11",
+            "firmware-release.yml:build-sign-release": "3.3.11",
             "firmware.yml:build-arduino-cli": None,
-            "flasher-release.yml:factory-images": "3.3.12",
-            "ram_audit.yml:ram-audit": "3.3.12",
+            "flasher-release.yml:factory-images": "3.3.11",
+            "ram_audit.yml:ram-audit": "3.3.11",
         })
         # the pinned rows answer the sketch on their own, PlatformIO aside
         self.assertEqual(gs.check_core_pin_agreement(self.workflow, self.sketch,
@@ -988,49 +988,49 @@ class ArduinoCorePins(unittest.TestCase):
 
     def test_the_wap_sketch_may_track_the_platformio_core_when_its_rows_float(self):
         # Rule 2's allowance, held on the rows as they stood before #1802 (every
-        # WAP row on the action's latest): 3.3.12 is then no WAP row's pin
+        # WAP row on the action's latest): 3.3.11 is then no WAP row's pin
         # (the display's core-3 rows pin it, which answers only display
         # profiles), only platform_core3's core, and the sketch is legal
         # through it alone.
         floating = [dict(w, version=None) if "canary-wap" in w["products"] else w
                     for w in self.workflow]
-        self.assertNotIn("3.3.12", {w["version"] for w in floating
+        self.assertNotIn("3.3.11", {w["version"] for w in floating
                                     if "canary-wap" in w["products"]})
-        self.assertIn("3.3.12", {w["version"] for w in floating})
-        self.assertIn("3.3.12", self.cores["canary-wap"])
+        self.assertIn("3.3.11", {w["version"] for w in floating})
+        self.assertIn("3.3.11", self.cores["canary-wap"])
         self.assertEqual(gs.check_core_pin_agreement(floating, self.sketch, self.cores), [])
         findings = gs.check_core_pin_agreement(floating, self.sketch,
                                                {k: set() for k in self.cores})
         self.assertEqual(len(findings), 1, findings)
         self.assertIn("xiao_sense", findings[0])
         # and the allowance is per product: the display's platform carrying
-        # 3.3.12 does not excuse the WAP's sketch (today both carry it, so a
+        # 3.3.11 does not excuse the WAP's sketch (today both carry it, so a
         # union of the map would pass unnoticed without this)
         findings = gs.check_core_pin_agreement(
-            floating, self.sketch, {"canary-wap": set(), "canary-display": {"3.3.12"}})
+            floating, self.sketch, {"canary-wap": set(), "canary-display": {"3.3.11"}})
         self.assertEqual(len(findings), 1, findings)
         self.assertIn("xiao_sense", findings[0])
         self.assertEqual(gs.check_core_pin_agreement(
-            floating, self.sketch, {"canary-wap": {"3.3.12"}, "canary-display": set()}), [])
+            floating, self.sketch, {"canary-wap": {"3.3.11"}, "canary-display": set()}), [])
 
     def test_a_row_pin_is_answered_only_by_the_profiles_of_the_product_it_builds(self):
         # review round on #1686: a WAP row moved to a core only a display
         # profile pins must not stay green on that profile. The WAP and the
-        # display core-3 profiles now share 3.3.12, so the display side gets
+        # display core-3 profiles now share one core (3.3.11), so the display side gets
         # a profile (and a row to answer it) on a core of its own.
-        sketch = self.sketch + [{"version": "3.3.11", "product": "canary-display",
+        sketch = self.sketch + [{"version": "3.3.10", "product": "canary-display",
                                  "sketch": "canary_display", "profile": "x",
                                  "where": "x/sketch.yaml (x)", "libraries": {}}]
-        display_row = {"version": "3.3.11", "where": "x.yml:display",
+        display_row = {"version": "3.3.10", "where": "x.yml:display",
                        "libraries": {}, "products": ["canary-display"]}
         self.assertEqual(gs.check_core_pin_agreement(self.workflow + [display_row], sketch,
                                                      self.cores), [])
-        rows = self.workflow + [display_row, {"version": "3.3.11", "where": "x.yml:wap",
+        rows = self.workflow + [display_row, {"version": "3.3.10", "where": "x.yml:wap",
                                               "libraries": {}, "products": ["canary-wap"]}]
         findings = gs.check_core_pin_agreement(rows, sketch, self.cores)
         self.assertEqual(len(findings), 1, findings)
-        self.assertIn("x.yml:wap pins esp32:esp32 3.3.11 for canary-wap", findings[0])
-        self.assertIn("its profiles pin: 3.3.12", findings[0])
+        self.assertIn("x.yml:wap pins esp32:esp32 3.3.10 for canary-wap", findings[0])
+        self.assertIn("its profiles pin: 3.3.11", findings[0])
 
     def test_a_profile_pin_is_answered_only_by_rows_that_build_its_product(self):
         # a WAP profile on 2.0.17 — a display row's pin, never a WAP row's, and
@@ -1038,14 +1038,14 @@ class ArduinoCorePins(unittest.TestCase):
         doctored = [dict(p, version="2.0.17") if p["profile"] == "xiao_sense" else p
                     for p in self.sketch]
         findings = gs.check_core_pin_agreement(self.workflow, doctored, self.cores)
-        # the profile, and each WAP row whose 3.3.12 it no longer answers
+        # the profile, and each WAP row whose 3.3.11 it no longer answers
         self.assertEqual(len(findings), 1 + len(self._wap_pinned_rows()), findings)
         profile = [f for f in findings if "xiao_sense" in f]
         self.assertEqual(len(profile), 1, findings)
-        self.assertIn("builds canary-wap (3.3.12)", profile[0])
+        self.assertIn("builds canary-wap (3.3.11)", profile[0])
 
     def test_a_library_off_its_core_line_is_a_finding(self):
-        # lvgl 8.4 on a core-3 profile: one finding per workflow row on 3.3.12
+        # lvgl 8.4 on a core-3 profile: one finding per workflow row on 3.3.11
         # that builds the display (firmware, firmware-release, flasher-release;
         # the WAP rows on that core build the WAP, so they do not count)
         doctored = [dict(p, libraries=dict(p["libraries"], lvgl="8.4.0"))
@@ -1107,9 +1107,9 @@ class ArduinoCorePins(unittest.TestCase):
                                     if p["name"] == "securacv:build_paths")
                  for c in _doc()["components"]
                  if c["bom-ref"].startswith("framework:arduino-esp32@")}
-        self.assertIn("sketch.yaml (canary_wap/xiao_sense)", paths["framework:arduino-esp32@3.3.12"])
+        self.assertIn("sketch.yaml (canary_wap/xiao_sense)", paths["framework:arduino-esp32@3.3.11"])
         self.assertIn("sketch.yaml (canary_display/watch-core3)",
-                      paths["framework:arduino-esp32@3.3.12"])
+                      paths["framework:arduino-esp32@3.3.11"])
         self.assertIn("sketch.yaml (canary_display/watch)", paths["framework:arduino-esp32@2.0.17"])
         self.assertNotIn("sketch.yaml", paths["framework:arduino-esp32@latest"])
 
@@ -1135,7 +1135,7 @@ class ReleaseRowLibraryPins(unittest.TestCase):
     def test_the_wap_release_rows_install_what_the_wap_profile_pins(self):
         pins = {"Crypto": "0.4.0", "ArduinoJson": "7.4.3", "NimBLE-Arduino": "2.5.2"}
         wap = {w["where"]: w["libraries"] for w in self.workflow
-               if w["version"] == "3.3.12" and "canary-wap" in w["products"]
+               if w["version"] == "3.3.11" and "canary-wap" in w["products"]
                and w["where"].split(":")[0] in gs.RELEASE_WORKFLOWS + ("ram_audit.yml",)}
         self.assertEqual(sorted(wap), ["firmware-release.yml:build-sign-release",
                                        "flasher-release.yml:factory-images",
@@ -1155,7 +1155,7 @@ class ReleaseRowLibraryPins(unittest.TestCase):
                         for w in self.workflow]
                 findings = gs.check_release_rows_pinned(rows)
                 self.assertEqual(len(findings), 1, findings)
-                self.assertIn(f"{where} (core 3.3.12) installs NimBLE-Arduino with no exact "
+                self.assertIn(f"{where} (core 3.3.11) installs NimBLE-Arduino with no exact "
                               f"version", findings[0])
         # firmware.yml's PR row floats by design: it ships nothing
         pr = [w for w in self.workflow if w["where"] == "firmware.yml:build-arduino-cli"]
@@ -1306,7 +1306,7 @@ class VendoredLibraries(unittest.TestCase):
                    "run": 'arduino-cli compile --library "$LIB" a.ino'}
         self.assertEqual(gs._vendored_passed([lib_env], resolve), ["X"])
         self.assertEqual(gs._vendored_passed([lib_env], lambda t: gs._resolve_matrix(
-            t, "core", {"version": "3.3.12"})), [])
+            t, "core", {"version": "3.3.11"})), [])
         self.assertEqual(gs._vendored_passed(
             [{"run": "arduino-cli compile --libraries firmware/third_party/X a.ino"}], resolve), [])
         self.assertEqual(gs._vendored_passed(
@@ -1335,13 +1335,13 @@ class VendoredLibraries(unittest.TestCase):
 
     def test_a_link_on_another_core_is_refused(self):
         core2 = next(lit for lit, f in gs.PLATFORM_FACTS.items() if f["arduino_core"] == "2.0.17")
-        moved = dict(gs.PLATFORM_FACTS, **{core2: dict(gs.PLATFORM_FACTS[core2], arduino_core="3.3.12")})
+        moved = dict(gs.PLATFORM_FACTS, **{core2: dict(gs.PLATFORM_FACTS[core2], arduino_core="3.3.11")})
         msg = self._refused(mock.patch.object(gs, "PLATFORM_FACTS", moved))
-        self.assertIn("on core 3.3.12", msg)
-        rows = [dict(w, vendored=[VENDORED_DIR]) if w["version"] == "3.3.12"
+        self.assertIn("on core 3.3.11", msg)
+        rows = [dict(w, vendored=[VENDORED_DIR]) if w["version"] == "3.3.11"
                 and "canary-display" in w["products"] else w for w in self.workflow]
         msg = self._refused(mock.patch.object(gs, "arduino_core_pins", return_value=rows))
-        self.assertIn("on core 3.3.12", msg)
+        self.assertIn("on core 3.3.11", msg)
         self.assertIn("--library", msg)
 
     def test_a_row_naming_an_unknown_directory_is_refused(self):

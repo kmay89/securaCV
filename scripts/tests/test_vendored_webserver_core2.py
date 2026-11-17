@@ -422,7 +422,7 @@ class LinkCheck(unittest.TestCase):
         core = self._write("core.log", graph.format("WebServer @ 2.0.0"))
         ours = self._write("ours.log", graph.format("WebServer @ 2.0.17+securacv.1"))
         none = self._write("none.log", graph.format("ESPmDNS @ 2.0.0"))
-        core3 = self._write("core3.log", graph.format("WebServer @ 3.3.12"))
+        core3 = self._write("core3.log", graph.format("WebServer @ 3.3.11"))
         self.assertEqual(self._quiet(self.ck.pio, core), 1)
         self.assertEqual(self._quiet(self.ck.pio, ours), 0)
         self.assertEqual(self._quiet(self.ck.pio, none), 0)

@@ -17,7 +17,7 @@ SRC_DIR   = ../arduino/canary_wap
 # cuts out of the .ino, is compiled after `typedef bool boolean;`, `byte`,
 # `word`, the pin and bit macros and the rest; a suite compiled them without,
 # and F212's first identity_json.h passed every suite and could not compile
-# in the sketch. arduino_globals.h carries arduino-esp32 3.3.12's names;
+# in the sketch. arduino_globals.h carries arduino-esp32 3.3.11's names;
 # `-include` puts it first in each translation unit, the sketch's own .cpp
 # files a suite compiles included (stricter than the ESP32 builds, where a
 # sketch .cpp has Arduino.h's names only through its own includes).
@@ -471,7 +471,7 @@ clean: clean-wap-diagnostics
 # browse; results past the eighth are offered too; and the cache is a
 # complete document after every advert, never a cut list. Both this suite and
 # the identity one include arduino_globals.h (Arduino.h's global names, from
-# arduino-esp32 3.3.12) before the header they test, so a header that collides
+# arduino-esp32 3.3.11) before the header they test, so a header that collides
 # with one fails here.
 FSCACHE_BIN = test_fleet_scan_cache
 FSCACHE_SRC = test_fleet_scan_cache.cpp

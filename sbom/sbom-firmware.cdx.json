@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:45e8a7e9-08b7-5b98-b248-e453465b02be",
+  "serialNumber": "urn:uuid:a1cc91c7-fb25-5b81-915f-605b5508e7e7",
   "version": 1,
   "metadata": {
     "tools": {
@@ -1143,9 +1143,9 @@
       "type": "framework",
       "group": "espressif",
       "name": "arduino-esp32",
-      "version": "3.3.12",
+      "version": "3.3.11",
       "description": "Arduino core for the ESP32 (framework = arduino)",
-      "purl": "pkg:github/espressif/arduino-esp32@3.3.12",
+      "purl": "pkg:github/espressif/arduino-esp32@3.3.11",
       "licenses": [
         {
           "license": {
@@ -1153,7 +1153,7 @@
           }
         }
       ],
-      "bom-ref": "framework:arduino-esp32@3.3.12",
+      "bom-ref": "framework:arduino-esp32@3.3.11",
       "properties": [
         {
           "name": "securacv:build_paths",
@@ -1515,7 +1515,7 @@
       "externalReferences": [
         {
           "type": "distribution",
-          "url": "https://github.com/pioarduino/platform-espressif32/releases/download/55.03.312-1/platform-espressif32.zip"
+          "url": "https://github.com/pioarduino/platform-espressif32/releases/download/55.03.311/platform-espressif32.zip"
         }
       ],
       "properties": [
@@ -1529,7 +1529,7 @@
         },
         {
           "name": "securacv:platform_literal",
-          "value": "https://github.com/pioarduino/platform-espressif32/releases/download/55.03.312-1/platform-espressif32.zip"
+          "value": "https://github.com/pioarduino/platform-espressif32/releases/download/55.03.311/platform-espressif32.zip"
         },
         {
           "name": "securacv:platforms_ini_section",
@@ -1537,10 +1537,10 @@
         },
         {
           "name": "securacv:version_spec",
-          "value": "55.03.312-1"
+          "value": "55.03.311"
         }
       ],
-      "version": "55.03.312-1",
+      "version": "55.03.311",
       "bom-ref": "platform:platform_core3"
     },
     {
@@ -2006,7 +2006,7 @@
       ]
     },
     {
-      "ref": "framework:arduino-esp32@3.3.12",
+      "ref": "framework:arduino-esp32@3.3.11",
       "dependsOn": [
         "framework:esp-idf@5.5.5"
       ]
@@ -2066,7 +2066,7 @@
     {
       "ref": "platform:platform_core3",
       "dependsOn": [
-        "framework:arduino-esp32@3.3.12"
+        "framework:arduino-esp32@3.3.11"
       ]
     },
     {
@@ -2218,7 +2218,7 @@
       "ref": "securacv-firmware",
       "dependsOn": [
         "framework:arduino-esp32@2.0.17",
-        "framework:arduino-esp32@3.3.12",
+        "framework:arduino-esp32@3.3.11",
         "framework:arduino-esp32@latest",
         "product:canary",
         "product:canary-display",

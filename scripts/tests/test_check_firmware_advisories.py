@@ -22,7 +22,7 @@ What is pinned and why:
     check weekly with the job's own token and no secret;
   • every REVIEWED key is a well-formed GHSA id and every verdict names a
     file or a version, and a repository file it names exists;
-  • the verdicts that rest on the 3.3.12 core's prebuilt sdkconfig keep their
+  • the verdicts that rest on the 3.3.11 core's prebuilt sdkconfig keep their
     footing: no .ini rebuilds the IDF (custom_sdkconfig, board_espidf.*,
     custom_component*, boards_dir, a project boards/ JSON with an espidf key,
     framework = arduino, espidf on a core-3 env), and every core-3 env and
@@ -323,7 +323,7 @@ class Reviewed(unittest.TestCase):
 
 class PrebuiltSdkconfigVerdicts(unittest.TestCase):
     """The REVIEWED verdicts for the ESP-IDF 5.5.5 advisories rest on the
-    sdkconfig the 3.3.12 core ships prebuilt for the ESP32-S3 and the
+    sdkconfig the 3.3.11 core ships prebuilt for the ESP32-S3 and the
     ESP32-C6 (DNS cache of one address, no ESP-TEE, NimBLE host, no
     Bluedroid). They hold only while no env rebuilds the IDF with its own
     sdkconfig and every core-3 build is one of those two chips; a change to
@@ -341,7 +341,7 @@ class PrebuiltSdkconfigVerdicts(unittest.TestCase):
         for ghsa in self.VERDICTS:
             self.assertIn(ghsa, ca.REVIEWED)
 
-    # pioarduino 55.03.312-1 recompiles the IDF for an env's custom_sdkconfig,
+    # pioarduino 55.03.311 recompiles the IDF for an env's custom_sdkconfig,
     # for an espidf.custom_sdkconfig in the board manifest (which an env's
     # board_espidf.* key, or a board JSON from boards_dir or the project's own
     # boards/, puts there) and for custom_component_* keys; `framework =

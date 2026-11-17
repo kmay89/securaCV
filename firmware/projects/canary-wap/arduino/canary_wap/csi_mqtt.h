@@ -119,7 +119,7 @@ constexpr size_t MAX_CONFIG_BODY_LEN = 640 + 2 * MAX_CA_LEN + 63;
  * watchdog (WATCHDOG_TIMEOUT_SEC in canary_wap.ino).
  *
  * From esp-mqtt's source at the commit ESP-IDF 5.5.5 pins (0e9ec17; the
- * pinned core 3.3.12 is built on IDF 5.5.5, and this path reads as it did
+ * pinned core 3.3.11 is built on IDF 5.5.5, and this path reads as it did
  * at IDF 5.5.4's 6af4446), not probed on a device:
  * esp_mqtt_client_publish() takes the client's API lock and, while
  * connected, writes the message on the caller's task through

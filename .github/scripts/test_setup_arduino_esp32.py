@@ -6,7 +6,7 @@ Run:  python3 -m unittest discover -s .github/scripts -p 'test_setup_arduino_esp
 The release jobs (firmware-release.yml, flasher-release.yml) call
 .github/actions/setup-arduino-esp32 three times in one job, each with
 exclusive-core: then core 3.3.8, 2.0.17 and 3.3.10 (the model most classes
-below keep), today 3.3.12, 2.0.17 and 3.3.12 again
+below keep), today 3.3.11, 2.0.17 and 3.3.11 again
 (TheFirstAndThirdRowsShareOneCore). While the action cached with one
 combined actions/cache step, every key was saved in the job's post phase, with
 whatever ~/.arduino15 held when the job ended, so on a cold cache all three
@@ -394,11 +394,11 @@ class EachKeyStoresItsOwnCore(Sim):
 
 class TheFirstAndThirdRowsShareOneCore(Sim):
     """The release jobs as they stand since the core-3 rows moved together:
-    the WAP row and the display core-3 row both pin 3.3.12, with the 2.0.17
+    the WAP row and the display core-3 row both pin 3.3.11, with the 2.0.17
     row between them, so two of the three exclusive calls name one key. The
     three-version model above stays as the case that found the bug."""
 
-    ROWS = ("3.3.12", "2.0.17", "3.3.12")
+    ROWS = ("3.3.11", "2.0.17", "3.3.11")
 
     def run_rows(self, j: Job) -> None:
         for v in self.ROWS:
@@ -412,8 +412,8 @@ class TheFirstAndThirdRowsShareOneCore(Sim):
         self.run_rows(j)
         j.end()
         self.assertEqual([k.rsplit("-core-", 1)[1] for k in j.saves],
-                         ["3.3.12", "2.0.17"], j.saves)
-        self.assertEqual(self.entry("-core-3.3.12")["platforms"], ["3.3.12"])
+                         ["3.3.11", "2.0.17"], j.saves)
+        self.assertEqual(self.entry("-core-3.3.11")["platforms"], ["3.3.11"])
         self.assertEqual(self.entry("-core-2.0.17")["platforms"], ["2.0.17"])
         # The third call hit the entry the first saved: a miss would have run
         # the save step against a key that exists.
@@ -434,10 +434,10 @@ class TheFirstAndThirdRowsShareOneCore(Sim):
         # exclusive, on a runner whose cache the release job filled.
         self.run_rows(self.job())
         j = self.job()
-        j.call(self.action, core_version="3.3.12")
+        j.call(self.action, core_version="3.3.11")
         j.end()
         self.assertEqual(j.saves, [])
-        self.assertEqual(self.tree(j)["platforms"], ["3.3.12"])
+        self.assertEqual(self.tree(j)["platforms"], ["3.3.11"])
 
 
 class TheActionIsTwoSteps(unittest.TestCase):

@@ -162,9 +162,9 @@ jobs:
   #                        espressif32 platform with the pioarduino fork:
   #                        both ship a package literally named
   #                        `framework-arduinoespressif32` at incompatible
-  #                        versions (2.0.17 vs 3.3.12). Sharing
+  #                        versions (2.0.17 vs 3.3.11). Sharing
   #                        ~/.platformio, pioarduino sees 2.0.17 already
-  #                        "installed", skips its own 3.3.12, and its build
+  #                        "installed", skips its own 3.3.11, and its build
   #                        script fails with FRAMEWORK_DIR=None before any
   #                        compile. (canary's `full` env hits this; a
   #                        project that is pioarduino-only, like
@@ -641,7 +641,7 @@ jobs:
             # The Boards Manager default line — everything-latest pairing:
             # GFX 1.6.x / NimBLE 2.x / LVGL 9.x (the source is dual-major
             # for all three splits; see lvgl_port.cpp + core_compat.h).
-            version: "3.3.12"
+            version: "3.3.11"
             gfx: "1.6.6"
             nimble: "2.5.2"
             lvgl: "9.5.0"

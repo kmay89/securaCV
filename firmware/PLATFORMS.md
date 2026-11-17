@@ -27,7 +27,7 @@ every copy; now it is structural.
 | Section | Literal | Who builds on it | Why this literal, and why it is distinct |
 |---|---|---|---|
 | `platform_s3c3` | `espressif32@6.9.0` | `common_esp32s3` / `common_esp32c3` in `common.ini`, so every env that extends them: canary-vision (all envs), canary-display's core-2 SPI panels (`watch`, `watch-modes`, `watch-debug`, `nightstand-s3`, `touch169`, `amoled241`) and `nightlight-c3`, `canary-sentinel-lite`; `firmware/canary` `[env]` default: `dev`, `release`, `dev_ha`, `release_ha`, `minimal`, `usb-onboard`, `esp32cam`, `esp32-wroom`, `freenove-s3`; `provisioning/platformio_secure.ini` (`secure`, `secure_ha`), which `firmware/canary/platformio.ini` includes through `extra_configs` | Official platform, **exact** pin: arduino-esp32 core 2.0.17 / ESP-IDF 4.4.7, the bench-validated release path that `projects/canary-display/arduino/PARITY.md` and the two `core_compat.h` name by number. End of life upstream, and its WebServer users link a patched copy ([below](#the-core-2-line-is-end-of-life)). The canary tree and the secure envs joined on 2026-09-22 (the decision below); until then they floated on `^7.0.0` (the same 2.0.17 core) and `^6.5.0` (the newest 6.x at build time: `6.9.0` or later, never recorded). |
-| `platform_core3` | pioarduino release `55.03.312-1` (`platform-espressif32.zip`) | every ESP32-C6 env (canary-sense, canary-sentinel `door`/`window`/`hallway`/`demo-head`, canary-display `nightstand-c6`); canary-wap (all envs); canary-display's dash family incl. `dash7` / `nightstand7`; canary `[env:full]` | The only PlatformIO platform that packages arduino-esp32 3.x (3.3.12 / ESP-IDF 5.5.5). The official platform has no C6 support for `framework = arduino`; canary-wap calls IDF5-only APIs unconditionally; canary-wap and `[env:full]` link NimBLE-Arduino 2.x, which needs core 3; the dash family needs GFX 1.6.x's RGB bounce buffers, which need core 3. Moved from `55.03.38-1` (3.3.8 / ESP-IDF 5.5.4) on 2026-11-16 for GHSA-g764-gwc3-75m5 (an out-of-bounds read in ESP-IDF 5.5.4's lwIP DHCP-server option parser, reached by every core-3 product that runs a SoftAP; fixed in ESP-IDF 5.5.5). Nothing built on the new pin has been on a bench yet. |
+| `platform_core3` | pioarduino release `55.03.311` (`platform-espressif32.zip`) | every ESP32-C6 env (canary-sense, canary-sentinel `door`/`window`/`hallway`/`demo-head`, canary-display `nightstand-c6`); canary-wap (all envs); canary-display's dash family incl. `dash7` / `nightstand7`; canary `[env:full]` | The only PlatformIO platform that packages arduino-esp32 3.x (3.3.11 / ESP-IDF 5.5.5). The official platform has no C6 support for `framework = arduino`; canary-wap calls IDF5-only APIs unconditionally; canary-wap and `[env:full]` link NimBLE-Arduino 2.x, which needs core 3; the dash family needs GFX 1.6.x's RGB bounce buffers, which need core 3. Moved from `55.03.38-1` (3.3.8 / ESP-IDF 5.5.4) on 2026-11-16 for GHSA-g764-gwc3-75m5 (an out-of-bounds read in ESP-IDF 5.5.4's lwIP DHCP-server option parser, reached by every core-3 product that runs a SoftAP; fixed in ESP-IDF 5.5.5). Not `55.03.312` (3.3.12): its platform.json requires PlatformIO Core >= 6.2.0, and this tree pins 6.1.19 (`check_route_security.py`'s reader with it), so moving to it is a PlatformIO bump first. Nothing built on the new pin has been on a bench yet. |
 | `platform_ota_idf` | `espressif32@6.5.0` | `projects/canary-ota` (`dev`, `production`, `test`) | `framework = espidf`, not arduino: this pin selects an ESP-IDF release, and the project's `sdkconfig` is written against it. Exact pin, left where it was on 2026-09-22 (below). |
 
 The env lists are what `pio project config --json-output` reports per project
@@ -92,7 +92,7 @@ the reason written beside it — one section per *distinct* literal, never a
 second section for the same one (the lint refuses duplicates).
 
 **Two lines cannot share a PlatformIO core directory.** Both platforms ship a
-package named `framework-arduinoespressif32`, at 2.0.17 and 3.3.12; a core-3
+package named `framework-arduinoespressif32`, at 2.0.17 and 3.3.11; a core-3
 build that finds the core-2 copy already installed fails with
 `FRAMEWORK_DIR=None` before compiling anything. That is handled *outside*
 this file — `flavors.json`'s `isolated_core_envs` / `core_dir_groups`,
@@ -182,7 +182,7 @@ images are compile-tested on the pin until a bench pass. Rolling back is one
   release decision, made in #1802, sweep F21; maintainer to confirm). The
   rows that make or measure what a release ships (`firmware-release.yml`,
   `flasher-release.yml`, `ram_audit.yml`, `csi_module_disable_matrix.yml`)
-  pass `core-version: "3.3.12"`, the WAP sketch's pin and the core inside
+  pass `core-version: "3.3.11"`, the WAP sketch's pin and the core inside
   `platform_core3`, so a release's Arduino-CLI WAP build rides the core the
   PR's PlatformIO `canary-wap-*` builds and `sketch.yaml` already use (a
   release builds the WAP through Arduino-CLI only). The two release jobs
@@ -199,8 +199,8 @@ images are compile-tested on the pin until a bench pass. Rolling back is one
   next core breaks the sketch, before anyone moves the pin. The cost is
   stated, not hidden: **a cut release can differ from its PR build's core**.
   On a PR the Arduino-CLI row proves the sketch on "latest"; the same sources
-  compile on 3.3.12 through the PlatformIO `canary-wap-*` envs and the
-  CSI-module matrix, but the release's own Arduino-CLI invocation on 3.3.12
+  compile on 3.3.11 through the PlatformIO `canary-wap-*` envs and the
+  CSI-module matrix, but the release's own Arduino-CLI invocation on 3.3.11
   runs only when a release does. Moving the pin is one edit per row plus the
   sketch's `sketch.yaml` (the SBOM refuses a row pin no WAP profile shares,
   and `scripts/tests/test_gen_firmware_sbom.py` names which rows pin and
@@ -210,7 +210,7 @@ images are compile-tested on the pin until a bench pass. Rolling back is one
   that week, a core no PR had necessarily compiled the sketch on). Since
   2026-11-16 the core-3 lines sit on one patch release: the WAP (both build
   paths), the display's core-3 Arduino-CLI rows and `sketch.yaml` profiles,
-  and `platform_core3` all name 3.3.12, so the SBOM lists one arduino-esp32
+  and `platform_core3` all name 3.3.11, so the SBOM lists one arduino-esp32
   3.x component. They moved together, in one change, because the SBOM's
   agreement check refuses a partial move; a later bump moves them together
   too, or the release builds a core the bench never ran (the release-vs-bench

@@ -19,7 +19,7 @@ description: >
 # under that name (RELEASE_LESSONS 2026-11-04 (b)). Now each key is saved
 # straight after its own install, only on a miss, and only while ~/.arduino15
 # holds exactly one esp32:esp32 platform, the one this call asked for (today
-# the first and third release rows both pin 3.3.12, with 2.0.17 between them:
+# the first and third release rows both pin 3.3.11, with 2.0.17 between them:
 # the first saves that key on a miss and the third restores it). An exclusive
 # call clears the esp32 packager's tree BEFORE its restore, never after it:
 # the restore layers this key's entry over what the previous call left, and
@@ -40,7 +40,7 @@ description: >
 inputs:
   core-version:
     description: >
-      esp32:esp32 core version to install (e.g. "3.3.12"). Empty means
+      esp32:esp32 core version to install (e.g. "3.3.11"). Empty means
       "latest": the cache key then carries the ISO week, so a cached
       "latest" can never go stale for more than a week and the first run
       of each week refreshes it.
@@ -54,7 +54,7 @@ inputs:
       version is not the one installed afterwards. Needed whenever ONE job
       installs more than one core version (the canary-display rows: SPI
       panels on core 2.0.17,
-      RGB panels on core 3.3.12) — otherwise both versions sit in
+      RGB panels on core 3.3.11) — otherwise both versions sit in
       ~/.arduino15 and an unversioned FQBN takes the newest, compiling a
       row against the other line's libraries. Costs a re-download when it
       actually has to switch; correctness beats the cache in a release.

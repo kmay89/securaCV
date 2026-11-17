@@ -57,7 +57,7 @@ the remedy):
       profile;
   (b) every core a sketch profile pins is a workflow pin, or the Arduino core
       inside that product's PlatformIO platform (PLATFORM_FACTS) — the WAP
-      sketch's 3.3.12 tracks the pioarduino platform while firmware.yml's
+      sketch's 3.3.11 tracks the pioarduino platform while firmware.yml's
       Arduino-CLI PR row builds on the action's "latest", a recorded release
       decision (firmware/PLATFORMS.md), not a drift;
   (c) every library a workflow row pins on its core line (GFX / lvgl / NimBLE
@@ -192,11 +192,11 @@ PLATFORM_FACTS: dict[str, dict] = {
         "website": "https://registry.platformio.org/platforms/platformio/espressif32",
     },
     "https://github.com/pioarduino/platform-espressif32/releases/download/"
-    "55.03.312-1/platform-espressif32.zip": {
+    "55.03.311/platform-espressif32.zip": {
         "name": "pioarduino/platform-espressif32",
-        "version": "55.03.312-1",
+        "version": "55.03.311",
         "exact": True,
-        "arduino_core": "3.3.12",
+        "arduino_core": "3.3.11",
         "esp_idf": "5.5.5",
         "website": "https://github.com/pioarduino/platform-espressif32",
     },
