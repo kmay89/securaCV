@@ -925,7 +925,7 @@ WITKEY_BIN      = $(BUILD_DIR)/test_witness_key_load_projects
 # linked with securacv_thermal.cpp, the shared die-temperature provider,
 # built as is once per chip target over stubs/idf_tsens: the classic ESP32
 # of env:esp32cam (no sensor), and the ESP32-S3 on ESP-IDF 4.4.7 (the stock
-# units' Arduino 2.0.17 core, driver/temp_sensor.h) and on ESP-IDF 5.5.4
+# units' Arduino 2.0.17 core, driver/temp_sensor.h) and on ESP-IDF 5.5.5
 # ([env:full]'s core 3, driver/temperature_sensor.h), each with the
 # sdkconfig.h that names the target, the esp_idf_version.h that picks the
 # driver, and a fake of that driver the suite drives. The provider's
@@ -1244,6 +1244,36 @@ run-canary-ota-outcome: $(CANOTA_BINS)
 	./$(CANOTA_BIN)_update
 	./$(CANOTA_BIN)_none
 run: run-canary-ota-outcome
+
+# firmware/third_party/WebServer-2.0.17-securacv: arduino-esp32 2.0.17's
+# WebServer with the GHSA-8cmm-3887-r32j multipart-boundary fix backported, the
+# copy every core-2 build that serves HTTP links instead of the core's own (its
+# README.md). The library's own WebServer.cpp, Parsing.cpp and mimetable.cpp,
+# compiled against host fakes (stubs/webserver_2017/) under AddressSanitizer
+# (below), so a boundary buffer one byte short is a stack-buffer-overflow here
+# rather than a pass. The -Wno-* flags are upstream's warnings in upstream's code
+# (unused parameters, signed/unsigned compares, a size_t printed with %x, which
+# is an unsigned int on the ESP32), not ours to edit in a vendored copy.
+WS2017_DIR = ../third_party/WebServer-2.0.17-securacv/src
+WS2017_SRC = $(WS2017_DIR)/WebServer.cpp $(WS2017_DIR)/Parsing.cpp \
+             $(WS2017_DIR)/detail/mimetable.cpp
+WS2017_WNO = -Wno-unused-parameter -Wno-sign-compare -Wno-format -Wno-unused-function
+WS2017_BIN = $(BUILD_DIR)/test_webserver_boundary
+# GCC and Apple's clang carry the AddressSanitizer runtime; a Linux clang
+# without compiler-rt does not, and there the suite still runs, without the
+# overflow check (CI builds with GCC).
+ifeq ($(shell echo 'int main(){}' | $(CXX) -x c++ - -fsanitize=address -o /dev/null 2>/dev/null; echo $$?),0)
+WS2017_ASAN = -fsanitize=address -fno-omit-frame-pointer
+endif
+
+$(WS2017_BIN): test_webserver_boundary.cpp $(WS2017_SRC) Makefile | $(BUILD_DIR)
+	$(call with_deps,$(CXX) $(CXXFLAGS) $(WS2017_WNO) $(WS2017_ASAN) \
+	    -I stubs/webserver_2017 -I $(WS2017_DIR) test_webserver_boundary.cpp $(WS2017_SRC) -o $@)
+
+.PHONY: run-webserver-boundary
+run-webserver-boundary: $(WS2017_BIN)
+	ASAN_OPTIONS=detect_leaks=0 ./$(WS2017_BIN)
+run: run-webserver-boundary
 
 $(SDMOUNT_BIN): test_sd_mount_policy.cpp $(SDMOUNT_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -I ../common test_sd_mount_policy.cpp -o $@

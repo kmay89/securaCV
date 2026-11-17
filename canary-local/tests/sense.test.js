@@ -378,10 +378,23 @@ test("each sandbox scene, played through the radar lab, publishes the rows sense
       // every event the lab signs, online or not, oldest first
       const signed = [];
       bus.on("labevent", (e) => signed.push(e.event));
-      buildRadarLab(data, bus);
-      const pane = buildMqtt(data, bus);
-      const pad = buildSandbox(data, bus);
-      let t = performance.now();
+      // The frames run on an integer clock, as the firmware's millis() does
+      // and as onLabBench below pins it. This bench used to start from the
+      // real performance.now(), a fraction of a millisecond, and add 50 per
+      // frame: each time the sum crossed a power of two the float dropped a
+      // bit, so four vitals periods could measure 3999.999999999999 ms, the
+      // lock (now - validSince >= lock_ms) waited one more period, and the
+      // wellbeing scene missed its window on about one run in five.
+      const T0 = 1000;
+      const realNow = performance.now;
+      performance.now = () => T0;
+      let pane, pad;
+      try {
+        buildRadarLab(data, bus);
+        pane = buildMqtt(data, bus);
+        pad = buildSandbox(data, bus);
+      } finally { performance.now = realNow; }
+      let t = T0;
       const run = async (ms) => { for (let e = 0; e < ms; e += 50) { t += 50; clock.frame(t); } await clock.advance(ms); };
       const click = (id) => pad.all("wap-sand-card").find((c) => c.children[0].textContent === scene(id).label).click();
       // the chain length the lab has reached; next() is the seq the next

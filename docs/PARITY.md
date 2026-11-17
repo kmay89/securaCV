@@ -215,7 +215,7 @@ for f in canary-local/tests/*.test.js; do node --test "$f"; done
 ## 3. Builds — every target, size and slot fit
 
 Built in this container with the repo's own `platformio.ini` files, from an
-offline mirror of the pinned platforms (pioarduino core 3.3.8 for the C6
+offline mirror of the pinned platforms (pioarduino core 3.3.8, the pin then, for the C6
 boards and the WAP; `espressif32@6.9.0` / Arduino 2.0.17 for the rest); CI's
 `firmware.yml` builds the same env list on the pushed branch and applies the
 `flavors.json` slot guards after each. "Slot" is the app partition the env's

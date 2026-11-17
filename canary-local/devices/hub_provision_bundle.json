@@ -20,14 +20,14 @@
       "source": "canary-local/devices/hub_seed.json",
       "bundle_path": "hub_seed.json",
       "card_path": "CONFIG/securacv/hub_seed.json",
-      "sha256": "bcafbc75b5350603948eeae444d0a35541e4d87eea8d141566e1fa9a886d12cb"
+      "sha256": "f046383491b46bd4fe36afbc8100f2f5cf92947dd662f839fc1c5e02cca7511b"
     },
     {
       "role": "frigate-config",
       "source": "homeassistant/frigate/config.yaml",
       "bundle_path": "homeassistant/frigate/config.yaml",
       "card_path": "CONFIG/securacv/homeassistant/frigate/config.yaml",
-      "sha256": "863ac2b33f70b8814d85bb92dbe656f796ab7054ab8a40c662df0109df75feef"
+      "sha256": "4c88c71a33c07070092c5aecf3f3f09b434125fefc94122e20fe84187e81dd2e"
     },
     {
       "role": "executor",

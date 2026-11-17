@@ -30,6 +30,12 @@ struct Topics {
   char aim[96];
   char aim_state[96];
   char aim_cmd[96];
+  // Beacon detection opt-in (canary/detect_config.h beacon_detect): the
+  // retained ON/OFF state and HA's "Broadcast detection" switch command.
+  // Off by default: on, the cleartext fleet beacon carries the live
+  // detection (ALERT flag, class, confidence).
+  char beacon_state[96];
+  char beacon_cmd[96];
   // Identify (the wizard's "which device is which" moment — HAP-style):
   // HA's identify button / the companion app writes identify/set; the
   // non-retained echo mirrors the blink window so dashboards can pulse
@@ -66,6 +72,8 @@ static inline Topics build_topics(const char* device_id) {
   snprintf(t.aim,       sizeof(t.aim),       "securacv/%s/aim",       device_id);
   snprintf(t.aim_state, sizeof(t.aim_state), "securacv/%s/aim/state", device_id);
   snprintf(t.aim_cmd,   sizeof(t.aim_cmd),   "securacv/%s/aim/set",   device_id);
+  snprintf(t.beacon_state, sizeof(t.beacon_state), "securacv/%s/beacon/state", device_id);
+  snprintf(t.beacon_cmd,   sizeof(t.beacon_cmd),   "securacv/%s/beacon/set",   device_id);
   snprintf(t.cfg_state,      sizeof(t.cfg_state),      "securacv/%s/cfg/state",      device_id);
   snprintf(t.cfg_target_cmd, sizeof(t.cfg_target_cmd), "securacv/%s/cfg/target/set", device_id);
   snprintf(t.cfg_score_cmd,  sizeof(t.cfg_score_cmd),  "securacv/%s/cfg/score/set",  device_id);

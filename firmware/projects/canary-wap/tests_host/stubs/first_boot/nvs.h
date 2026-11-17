@@ -13,7 +13,7 @@
  *
  * Two answers here are ones IDF does not give. Once the open succeeded,
  * IDF's size query answers only ESP_OK, ESP_ERR_NVS_NOT_FOUND or
- * ESP_ERR_NVS_INVALID_HANDLE (v4.4.7, v5.5.1 and v5.5.4 nvs_api.cpp
+ * ESP_ERR_NVS_INVALID_HANDLE (v4.4.7, v5.5.1, v5.5.4 and v5.5.5 nvs_api.cpp
  * nvs_get_str_or_blob(), nvs_storage.cpp Storage::findItem()): its lookup
  * skips an entry stored as another type and one whose header fails its
  * check (erasing that one first), sets aside for the boot a page it cannot

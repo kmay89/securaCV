@@ -7,7 +7,8 @@ What is pinned:
     viewer and the README when W5's files exist, and WITNESS_KEY.txt in the
     contract's exact shape;
   - index.json lists the packs newest first with the contract's fields;
-    keep-N removes the oldest zips and the notification says so;
+    keep-N removes the oldest zips and the notification says so, per
+    entry: one kernel entry's export never removes another's packs;
   - the notification is worded exactly as the contract words it and carries
     a 24-hour signed link to the authenticated view — no /local/ URL;
   - the view refuses anything but an eight-hex id it knows, requires auth,
@@ -228,6 +229,89 @@ def test_the_index_is_newest_first_and_keep_n_removes_the_oldest(tmp_path):
     assert not (directory / "securacv-evidence-2026-10-12-00000001.zip").exists()
     assert [r.export_id for r in evidence.read_index(directory)] == ["00000003", "00000002"]
     assert [r.export_id for r in third.records] == ["00000003", "00000002"]
+
+
+def _ids(directory: Path) -> list[str]:
+    return [r.export_id for r in evidence.read_index(directory)]
+
+
+def test_one_entry_s_export_never_prunes_another_entry_s_packs(tmp_path):
+    """Two kernel entries share the directory and index.json, but each one's
+    evidence_keep bounds only its own packs. Before, entry B's export pruned
+    the shared index to B's limit, so B at keep=1 deleted every pack entry A
+    kept for its limit of 200, and B's notification blamed "your limit"."""
+    directory = tmp_path / "ev"
+    for n, created in enumerate((1700000400, 1700001000, 1700001600), start=1):
+        _compose(directory, f"a000000{n}", created, keep=200, entry_id="A",
+                 other_entry_ids=frozenset({"B"}))
+    _compose(directory, "b0000001", 1700002200, keep=1, entry_id="B",
+             other_entry_ids=frozenset({"A"}))
+    second_b = _compose(directory, "b0000002", 1700002800, keep=1, entry_id="B",
+                        other_entry_ids=frozenset({"A"}))
+
+    assert second_b.removed == ["securacv-evidence-2026-10-12-b0000001.zip"]
+    assert _ids(directory) == ["b0000002", "a0000003", "a0000002", "a0000001"]
+    assert sorted(p.name for p in directory.glob("*.zip")) == sorted(
+        r.file for r in evidence.read_index(directory)
+    )
+    # And A's own limit still bounds A, without touching B's pack.
+    third_a = _compose(directory, "a0000004", 1700003400, keep=2, entry_id="A",
+                       other_entry_ids=frozenset({"B"}))
+    assert third_a.removed == [
+        "securacv-evidence-2026-10-12-a0000001.zip",
+        "securacv-evidence-2026-10-12-a0000002.zip",
+    ]
+    assert _ids(directory) == ["a0000004", "b0000002", "a0000003"]
+
+
+def test_rows_no_configured_entry_owns_are_pruned_with_the_exporter_s_overflow(tmp_path):
+    """A row written before rows carried an entry_id, or by an entry since
+    removed, counts toward nobody's limit; it goes with the exporter's
+    overflow (oldest first) rather than staying forever, while a newer one
+    waits until the exporter's own packs pass it."""
+    directory = tmp_path / "ev"
+    _compose(directory, "0000aaa1", 1700000400, entry_id="")        # legacy row
+    _compose(directory, "0000aaa2", 1700001000, entry_id="removed")  # entry since removed
+    _compose(directory, "e1000001", 1700001600, keep=1, entry_id="e1")
+    _compose(directory, "0000aaa3", 1700002200, entry_id="")         # newer than e1's first
+    assert _ids(directory) == ["0000aaa3", "e1000001", "0000aaa2", "0000aaa1"]
+
+    composed = _compose(directory, "e1000002", 1700002800, keep=1, entry_id="e1")
+    assert composed.removed == [
+        "securacv-evidence-2026-10-12-0000aaa1.zip",
+        "securacv-evidence-2026-10-12-0000aaa2.zip",
+        "securacv-evidence-2026-10-12-e1000001.zip",
+    ]
+    assert _ids(directory) == ["e1000002", "0000aaa3"]
+
+    composed = _compose(directory, "e1000003", 1700003400, keep=1, entry_id="e1")
+    assert composed.removed == [
+        "securacv-evidence-2026-10-12-0000aaa3.zip",
+        "securacv-evidence-2026-10-12-e1000002.zip",
+    ]
+    assert _ids(directory) == ["e1000003"]
+
+
+def test_the_export_protects_every_other_configured_entry_loaded_or_not(monkeypatch):
+    """async_export_evidence names every other configured entry to the prune,
+    including one that is not loaded (a kernel briefly unreachable at start
+    keeps its packs)."""
+    hass = HomeAssistant()
+    hass.data = {}
+    entry, _api = _entry(hass, **{CONF_EVIDENCE_KEEP: 1})
+    other = make_entry(hass, "e2")
+    del other.runtime_data  # configured, not loaded
+    seen: list[frozenset] = []
+    real_compose = evidence.compose_export
+
+    def spying_compose(*args, **kwargs):
+        seen.append(kwargs["other_entry_ids"])
+        return real_compose(*args, **kwargs)
+
+    monkeypatch.setattr(evidence, "compose_export", spying_compose)
+    monkeypatch.setattr(evidence, "new_export_id", lambda: "0badf00d")
+    run(evidence.async_export_evidence(hass, entry, window_hours=24))
+    assert seen == [frozenset({"e2"})]
 
 
 def test_the_index_survives_junk_and_an_unknown_version(tmp_path):

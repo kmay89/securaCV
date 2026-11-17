@@ -434,7 +434,7 @@ fb_seed_frigate_config() {
   fi
   mkdir -p "$dest_dir"
   if cp "$src" "${dest_dir}/config.yml"; then
-    log_ok "Curated Frigate config placed at ${dest_dir}/config.yml (recordings and snapshots OFF by default — claims, not recordings)"
+    log_ok "Curated Frigate config placed at ${dest_dir}/config.yml (recordings, snapshots and the example camera's MQTT images OFF by default — claims, not recordings)"
   else
     log_warn "Could not write ${dest_dir}/config.yml — paste the curated config into Frigate's Web UI config editor instead."
     add_leftover "Give Frigate its config: paste homeassistant/frigate/config.yaml into the Frigate Web UI config editor."
