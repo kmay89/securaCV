@@ -212,6 +212,8 @@ it, and a tap no page was asking for goes to the first address that asks
 after it, sweep F342), a 2 s hold prints the identity on serial, and a 10 s hold is
 the factory reset (`factory_reset_by_hold()`). The hold clears the saved
 Wi-Fi networks, the broker row, the device name and the first-boot flag,
+and, from 2.4.21, the camera vault's recipient key (the public key frames are
+sealed to; every vault trigger saved off) and the update-manifest override (2.4.20 and earlier keep both); it
 keeps the identity key and the API token (derived from the key, or the
 one a flasher seeded), and restarts into first-boot setup when BOOT is
 released. It clears the Wi-Fi through

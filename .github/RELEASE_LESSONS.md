@@ -13,6 +13,24 @@ any platform.
 > same shape (symptom → cause → fix → applies-to), and generalize it to the
 > other app targets rather than fixing only the one that broke.
 
+## 2026-11-16 — An upstream add-on's documented security recipe was a no-op on the version the hub plan installs
+
+- **Symptom:** the audit's fix for the shared `canary` broker login was the Mosquitto add-on's own documented ACL (`customize: {active: true}` plus `/share/mosquitto/acl.conf` holding `acl_file`). Read against the add-on's rootfs and the broker source, it restricts nothing on add-on 7.x.
+- **Cause:** add-on 7.0 moved to Mosquitto 2.1.2, which runs plugin ACL checks before `acl_file` (its man page says so; `plugin__load_all` registers the plugin's callback before `mosquitto_security_init_default` registers the file's). The add-on's go-auth plugin grants every check, because the add-on's own nginx answers go-auth's `/acl` and `/superuser` with 200. On 6.x (Mosquitto 2.0.x) the built-in check ran first and the recipe worked. Upstream home-assistant/addons#4721 reports the same and was closed 'not planned'.
+- **Fix:** nothing shipped. Shipping it would have promised a restriction that does not exist. The docs that called the broker a trusted, closed room were corrected, and the gap is stated as open.
+- **Applies to:** any plan step or doc that leans on a third-party add-on's security option. Read its rootfs (the generated broker config, the init scripts, anything it proxies) and the check order of the broker version the plan installs, not only its DOCS.md, before writing the step or the sentence that promises it.
+
+## 2026-11-16 (b) — 'snapshots off' in a Frigate config does not keep images off the broker
+
+- **Symptom:** every Frigate config SecuraCV wrote or shipped set `snapshots.enabled: false` and `record.enabled: false`, and the docs said no raw media crossed MQTT. Frigate still published a cropped JPEG of every tracked object, retained, to `frigate/<camera>/<label>/snapshot`.
+- **Cause:** that publish is gated by the camera-level `mqtt.enabled`, which defaults to true. It is a different switch from `snapshots` (the JPEGs saved to disk), and from the top-level `mqtt:` (the broker connection). It has no global form. The tests pinned only `"snapshots" not in text`.
+- **Fix:** `mqtt: enabled: false` under every camera in the wizard's writer, the hub's curated config and the Docker stack's config, each pinned by a test that parses the YAML. The wizard names any camera that lacks it where Frigate keeps its own config.
+- **Applies to:** any third-party config we write for privacy. Pin the behavior (what gets published, and where), not the absence of one key name, and check upstream's per-entity defaults, not only its global ones.
+
+## 2026-11-16 (c) — A bare library name on a firmware release row ships whatever Library Manager has that day
+
+A bare name in an arduino-cli release row's `libraries:` list (`Crypto`, not `Crypto@0.4.0`) runs `arduino-cli lib install Crypto`, which installs Library Manager's newest release on the day the tag is cut. That library goes into a signed image, and only that run's log records its version. Pin every library on a firmware-release.yml or flasher-release.yml row exactly, and pin the same version in the sketch.yaml profile on that core. gen_firmware_sbom.py now refuses a bare name on those rows. Take the version from the last green release log (`|-- Name @ X.Y.Z` / `Installed Name@X.Y.Z`), never from the registry's current newest.
+
 ## 2026-11-16 — The new notices job's first run installed nothing: `cargo-about` builds its binary only with the `cli` feature
 
 - **Symptom:** the 2.4.20 train's Flasher 0.12.6 and Lab 0.4.2 release runs

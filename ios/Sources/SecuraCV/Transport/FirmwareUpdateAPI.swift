@@ -4,9 +4,10 @@
 // has the contract and the honesty rules). Same three routes, two trust
 // models:
 //   * a display answers on the home network without a credential, like its
-//     other writes (glass_web.cpp: the LAN is the trust boundary, and the
-//     worst a caller can do is start a check for firmware the device then
-//     verifies against its pinned release key). It refuses a request whose
+//     other writes (glass_web.cpp: the LAN is the trust boundary, and a direct
+//     LAN caller can start a check, or the install of a newer release the
+//     device verifies against its pinned release key, even with Auto Update
+//     off). It refuses a request whose
 //     Host is not its own name or whose Origin is another site — a native
 //     URLSession request sends no Origin and dials the device by its own
 //     name, so neither guard is in the way;

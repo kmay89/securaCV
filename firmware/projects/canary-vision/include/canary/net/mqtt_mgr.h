@@ -66,6 +66,11 @@ namespace canary::net {
   long take_pending_cfg_lost();    // -1 none; else ms
   long take_pending_cfg_dwell();   // -1 none; else ms
   long take_pending_cfg_profile(); // -1 none; else watch profile id
+  // The beacon's detection opt-in (canary/detect_config.h beacon_detect):
+  // HA's switch writes beacon/set; the retained beacon/state mirrors the
+  // stored value, republished on every reconnect.
+  int  take_pending_beacon_detect();  // -1 none; 0/1 = switch set off/on
+  bool publish_beacon_detect_retained(const Topics& topics);
 
   // ── Vision Doorbell (canary/doorbell.h) ────────────────────────────────
   // publish_doorbell_press: one non-retained {"event_type":"press"} per

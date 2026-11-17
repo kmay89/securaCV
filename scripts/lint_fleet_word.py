@@ -47,7 +47,24 @@ EXTS = {".rs", ".py", ".js", ".mjs", ".ts", ".c", ".h", ".cpp", ".hpp", ".md",
         ".webmanifest"}
 EXTRA_NAMES = {"Makefile", "makefile", "GNUmakefile", "Dockerfile"}
 SKIP_DIRS = {".git", "node_modules", "target", "build", "dist", ".venv",
-             "__pycache__", ".pytest_cache", "third_party"}
+             "__pycache__", ".pytest_cache"}
+# A third_party/ directory is a tree a build fetched (the emulator's LVGL,
+# ArduinoJson and arduinolibs; glass_turn_lvgl9.sh's second LVGL) and is
+# skipped, except firmware/third_party/: that one is committed (the patched
+# core-2 WebServer) and is checked like any tracked file. The same rule and
+# its reasons: lint_spelling.py's fetched_third_party().
+COMMITTED_THIRD_PARTY = ("firmware", "third_party")
+
+
+def fetched_third_party(f):
+    """True for a file under a fetched third_party/ (not firmware/third_party/)."""
+    if "third_party" not in f.parts:
+        return False
+    parts = f.resolve().parts
+    return any(p == "third_party" and parts[i - 1:i + 1] != COMMITTED_THIRD_PARTY
+               for i, p in enumerate(parts) if i)
+
+
 # This file names the banned word, so it cannot police itself.
 SKIP_FILES = {"lint_fleet_word.py"}
 
@@ -136,7 +153,8 @@ def walk(paths):
             if (f.is_file()
                     and (f.suffix in EXTS or f.name in EXTRA_NAMES)
                     and f.name not in SKIP_FILES
-                    and not any(d in f.parts for d in SKIP_DIRS)):
+                    and not any(d in f.parts for d in SKIP_DIRS)
+                    and not fetched_third_party(f)):
                 yield f
 
 

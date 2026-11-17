@@ -17,6 +17,25 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.12.8 — 2026-11-16
+
+**Firmware 2.4.21, and a hub that keeps camera images off its broker.**
+
+- **A hub it sets up keeps Frigate's camera images off the broker.** The
+  Frigate config the hub setup writes now also turns off each camera's
+  MQTT images, the cropped picture of every tracked object that Frigate
+  otherwise publishes to your broker (a switch separate from snapshots).
+  A camera you add beside the example needs the same line, and the setup
+  step says so.
+- **Firmware 2.4.21** is the catalog this version carries. In it: a
+  display no longer lets an unsigned nearby broadcast raise a lasting red
+  alarm or push a real Canary off its screen; a Canary Vision no longer
+  broadcasts whether a room is occupied unless you turn on **Broadcast
+  detection**; a display's settings and logs refuse a page served under
+  another name; the WAP's 10-second hold also clears the camera vault's
+  key and a custom update server; and every library in the release
+  builds is pinned to an exact version.
+
 ## 0.12.7 — 2026-11-16
 
 **Hub setup from the hub's own console says plainly what is left for you.**
