@@ -1,6 +1,62 @@
 # Changelog
 
 ## [Unreleased]
+### Device details: the design is on main, and each of its 24 privacy findings has a home: an open backlog item, or the PRs that fixed it (#1987)
+
+- **`docs/design/device_details.md` is the design for showing every chip,
+  radio and sensor fact a Canary can honestly report, in every app.** One
+  record per Canary (`securacv.canary.details/v1`) cut into small parts, one
+  vocabulary file to generate every copy from, privacy classes and tiers that
+  decide who sees each fact, and a plan of 22 PRs. Four of them merged before
+  the design did: PR 1 (#1970), PR 2 (#1891), PR 6 (#1971) and PR 7 (#1892);
+  #1961 built one slice of PR 3. The record, its routes and every Details
+  screen are still plan. The document was read against `0a06c14b`, and then
+  against `62bc0bc7` (the 2.4.20 train, #1972, with #1969 and #1983) on
+  2026-11-16, with its §1 measured again there. Nothing in it was checked on
+  a device. `docs/README.md` indexes it.
+- **Its privacy review's findings, P1 to P24, each have a home** (its §11).
+  Fourteen are filed as new open items in
+  `docs/audit/repo_todo_sweep_2026-09.md`: F375 to F377, F379 to F383, F389,
+  F390 and F393 to F396. Four are held by items already there, which now cite
+  their finding: F357 (a dated note, P4), F430 (P15), A132 (P14) and A133
+  (P12). Six were fixed before the design landed: P8 by #1887, P11 by #1892
+  (sweep F384), P13 and P24 by #1970, P18 by #1891, #1916 and #1961 (F391),
+  and P19 by #1891 (F392). #1970 also fixed part of P12 and P14; A133 and A132
+  hold the rest. Nothing is fixed here.
+- **Nine more open items, from reading the design against the tree.** F479:
+  the `/admin` page's gzip is 2,102 B past 65,536 B, and the budget gate the
+  design gave PR 6 was not built. F480: `improv_ble.cpp`'s reset guard and
+  its comments take IDF 5.1.0 as the floor for three reset reasons that
+  5.1.0 does not have. F481: the
+  Wi-Fi sensing probe broadcasts a counter that dates the boot. F482: the
+  Chirp channel leaves under the unit's fixed address, against its spec's
+  "unlinkable", and puts the uptime in its header when the clock is unset.
+  F483: Vision's beacon broadcasts what it sees, which the two security docs
+  leave out. A134: the iPhone app's glass-knob writes carry no CSRF token, so
+  the display refuses them. D24 to D26: the 4.3B's microSD rating, the MR60
+  notes on oversized frames and a `platformio.ini` comment on which flagship
+  image is published disagree with the code. The new ids skip F469 to F478
+  and D23, which open #1966 files.
+- **The backlog no longer says the design is missing.** F430 is the identifier
+  lint with the rest of finding P15 (the `mac_address` slot in `boot_info_t`),
+  and it stays `[code+decision]`: its scope is written in the design's §10
+  item 3, and its deny list waits on PR 3's `never` rows, which wait on HA62
+  and the class question (§2.2). HA62 and HA63 point at the vocabulary
+  questions the design leaves open, and HA63 names six uptime keys, not four.
+  F22's note says Home Assistant's redaction set has held `last_frame_age_ms`
+  since #1916. F353 no longer says a session can start the firmware install
+  over HTTP, which the 2.4.20 train took to the bearer, and F379 names each
+  self-test row's `code` beside its `detail`.
+- **`scripts/tests/test_ledger_numbers.py` (new)** holds the backlog to one
+  heading per id, under every prefix; each §11 row to a home that exists, an
+  open backlog entry that cites the row back or `fixed in #N`; each backlog
+  entry that cites a finding to the row that names it; and the counts and
+  lists in §11's opening sentence and in the index line to the table. A
+  heading, a cite, a row, a list or a sentence it cannot read fails, and so
+  does a backlog line that looks like a heading written another way. In the
+  backlog the phrase "finding P<n>" belongs to the one entry the row names;
+  any other entry cites that entry's id.
+- Docs and one test. No code, firmware or generated file changes.
 ### Every disclosed file carries its handoff sidecar; the device records the decrypt; a quorum export names its grant
 
 - **Release coupling — merge gate.** This change adds a receipt outcome
