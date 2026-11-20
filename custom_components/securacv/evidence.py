@@ -21,8 +21,10 @@ integration makes, a disclosure act) and composes ONE zip,
 The zip lands under ``hass.config.path("securacv", "evidence")`` — a
 directory Home Assistant does not serve — created 0700, files 0600, written
 to a temp name and renamed (never a half-written pack). ``index.json`` lists
-every pack newest first; the ``evidence_keep`` option bounds how many stay
-(the oldest zip goes, and the notification says so). The pack is served by
+every pack newest first; each kernel entry's ``evidence_keep`` option bounds
+how many of that entry's own packs stay (its oldest zip goes, and the
+notification says so), and one entry's export never removes another
+configured entry's packs. The pack is served by
 one authenticated view, ``/api/securacv/evidence/{export_id}``
 (``requires_auth``), and the persistent notification carries a 24-hour
 signed link to it — never a ``/local/`` URL (``/config/www`` is served with
@@ -359,8 +361,9 @@ def compose_export(
     exported_at: datetime | None = None,
     local: LocalClock | None = None,
     integration_version: str = "",
+    other_entry_ids: frozenset[str] = frozenset(),
 ) -> ComposedExport:
-    """Write the zip, the index and prune to `keep` (blocking; executor).
+    """Write the zip, the index and prune `entry_id`'s packs to `keep` (blocking; executor).
 
     Every write is a temp file renamed into place; the directory is 0700
     and the files 0600. A viewer or README W5 has not shipped yet is left
@@ -368,6 +371,16 @@ def compose_export(
     than failing the export. The statement is written from the bundle
     itself, so it is always present; `chain_state`, `exported_at` and
     `local` (the owner's clock) only shape its wording.
+
+    The prune is per entry: `keep` is the exporting entry's own limit, so
+    only its rows count toward it. `other_entry_ids` names every other
+    configured entry; their rows are never removed here. A row whose
+    entry_id is in neither (written before rows carried one, or by an
+    entry since removed) counts toward nobody's limit and is removed with
+    the exporter's overflow: the walk goes oldest first, removing the
+    exporter's rows and those unowned rows, and stops as soon as the
+    exporter's own count is within `keep`. So an unowned row goes once it is
+    older than the newest pack an export prunes.
     """
     _ensure_private_dir(directory)
     filename = zip_filename(date, export_id)
@@ -425,8 +438,15 @@ def compose_export(
     records.sort(key=lambda r: r.created_bucket_start, reverse=True)
     keep = max(MIN_EVIDENCE_KEEP, min(MAX_EVIDENCE_KEEP, keep))
     removed: list[str] = []
-    while len(records) > keep:
-        oldest = records.pop()
+    own = sum(1 for r in records if r.entry_id == entry_id)
+    for oldest in reversed(list(records)):
+        if own <= keep:
+            break
+        if oldest.entry_id != entry_id and oldest.entry_id in other_entry_ids:
+            continue  # another configured entry's pack: its own limit governs it
+        records.remove(oldest)
+        if oldest.entry_id == entry_id:
+            own -= 1
         try:
             (directory / oldest.file).unlink()
         except FileNotFoundError:
@@ -459,8 +479,10 @@ def _cache_records(hass: HomeAssistant, records: list[ExportRecord]) -> None:
 def export_lock(hass: HomeAssistant) -> asyncio.Lock:
     """The instance-wide lock every export's compose + index update holds.
 
-    Instance-wide, not per entry: the index (and the keep-N pruning that
-    rewrites it) is shared by every kernel entry on this Home Assistant.
+    Instance-wide, not per entry: index.json is one file shared by every
+    kernel entry on this Home Assistant, read-modified-written per export.
+    The keep-N pruning is not shared: each export prunes only its own
+    entry's packs (and rows no configured entry owns), to its own limit.
     """
     store = hass.data.setdefault(DOMAIN, {})
     lock = store.get(DATA_EXPORT_LOCK)
@@ -511,6 +533,13 @@ async def async_export_evidence(
     kernel_device_id = entry.data.get(CONF_KERNEL_DEVICE_ID)
     export_id = new_export_id()
     now = time.time()
+    # Every other configured entry, loaded or not: a kernel that is briefly
+    # unreachable keeps its packs; only rows no entry owns are anyone's to prune.
+    other_entry_ids = frozenset(
+        other.entry_id
+        for other in hass.config_entries.async_entries(DOMAIN)
+        if other.entry_id != entry.entry_id
+    )
     # The download runs concurrently with anything; the pack + index write
     # is one export at a time (index.json is a shared read-modify-write).
     async with export_lock(hass):
@@ -531,6 +560,7 @@ async def async_export_evidence(
                 chain_state=chain_state_words(runtime.verification),
                 exported_at=dt_util.now(),
                 local=lambda epoch_s: dt_util.as_local(dt_util.utc_from_timestamp(epoch_s)),
+                other_entry_ids=other_entry_ids,
             )
         )
         _cache_records(hass, composed.records)

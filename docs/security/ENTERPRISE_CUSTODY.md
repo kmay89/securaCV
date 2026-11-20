@@ -125,6 +125,10 @@ truncation but can never cause a false verify failure.
   (receipt-chain heads as leaves = the cross-binding item below), C2SP
   checkpoint notes, fleet-internal witness cosigning as the default, and one
   fleet-level aggregate checkpoint anchored outward (TSA + OpenTimestamps).
+  The per-device OpenTimestamps leg has shipped (`anchor-all` with an `ots`
+  policy block; `docs/design/opentimestamps_leg.md`), and the structural fold
+  into `run_full_verify` covers both anchor tables; the fleet aggregate stays
+  open.
   *Design specified:* `spec/quorum_unseal_v2.md` §4; standards research
   `PROVENANCE_INTEROP.md` §1.5.
 - **Fold anchor verification into `run_full_verify`.** *Shipped (structural):*
@@ -163,6 +167,14 @@ truncation but can never cause a false verify failure.
   remains a declaration). Binding the heads *into* the sealed-event chain
   (Merkle leaves) remains tracked — it is also what removes the last
   TSA-visible imprint residual of scheduled anchoring.
+- **The disclosure seam.** *Shipped:* every unseal leaves three
+  device-signed rows (grant, redemption, `Unsealed` record) and every quorum
+  export names its grant (`authorizing_receipt`); the verifiers check those
+  links (`token_redemption`, `export_authorization`). The file that crosses
+  the custody boundary carries them in its handoff sidecar
+  (`docs/handoff_sidecars.md`), checkable with `sha256sum`, `openssl` and
+  `jq`. The recipient in a sidecar is a declaration fixed by a salted
+  commitment, not a verified identity.
 
 ---
 

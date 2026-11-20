@@ -676,7 +676,6 @@ mod tests {
     mod tls_active {
         use super::*;
         use crate::break_glass::{Approval, QuorumPolicy, UnlockRequest};
-        use std::path::PathBuf;
 
         /// Minimal ops: break-glass not provisioned. The console page needs
         /// no auth and no policy, which is all this transport test exercises.
@@ -694,7 +693,7 @@ mod tests {
                 _approvals: &[Approval],
                 _now_bucket: TimeBucket,
                 _output_dir: &str,
-            ) -> Result<PathBuf> {
+            ) -> Result<crate::handoff::UnsealOutput> {
                 Err(anyhow!("not provisioned"))
             }
         }

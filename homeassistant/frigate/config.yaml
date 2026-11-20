@@ -46,12 +46,17 @@ go2rtc:
   #     - rtsp://USER:PASS@10.0.0.20:554/stream
 
 # securaCV is "claims, not recordings" — the hub emits semantic events, it does
-# NOT retain raw imagery by default. So BOTH recordings and snapshots are OFF:
-# detection and MQTT events still work fully, and no identifiable images are
-# stored. Turn either on ONLY if you deliberately accept storing raw imagery
-# (and use an NVMe/SSD if you do — continuous recording on an SD card is the
-# endurance failure this design fights). Retained imagery should ideally go
-# through the quorum-controlled vault, not sit on disk here.
+# NOT retain raw imagery by default. So recordings, snapshots AND each camera's
+# MQTT images are OFF: detection and MQTT events still work fully. `snapshots`
+# below covers only the JPEGs Frigate saves to disk. The images it publishes to
+# the broker are a separate, per-camera switch (`mqtt:` under a camera, see the
+# example camera at the bottom): ON unless the camera turns it off, they put a
+# cropped JPEG of every tracked object on frigate/<camera>/<label>/snapshot as a
+# retained message, which the broker keeps. Turn any of these on ONLY if you
+# deliberately accept storing raw imagery (and use an NVMe/SSD if you do —
+# continuous recording on an SD card is the endurance failure this design
+# fights). Retained imagery should ideally go through the quorum-controlled
+# vault, not sit on disk here.
 record:
   enabled: false
 
@@ -69,6 +74,8 @@ objects:
 
 # One disabled example so the config is valid out of the box. Add your camera's
 # RTSP URL, set `enabled: true`, and Frigate + securaCV pick it up automatically.
+# Every camera you add needs the `mqtt: enabled: false` this one carries: there
+# is no global switch for it, and the events securaCV seals flow either way.
 cameras:
   example_camera:
     enabled: false
@@ -81,3 +88,5 @@ cameras:
       width: 1280
       height: 720
       fps: 5
+    mqtt:
+      enabled: false

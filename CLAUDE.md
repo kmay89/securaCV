@@ -28,8 +28,8 @@ brief when you touch a file in it (its one-line `CLAUDE.md` imports the
   `.claude/settings.json` hides compiled and binary artifacts from the file
   tools; `.ignore` keeps ripgrep out of the dumps (`rg --no-ignore -g <file>`
   when you mean one).
-- The lesson ledgers (`.github/RELEASE_LESSONS.md`, 107 entries;
-  `firmware/LESSONS_LEARNED.md`, 182) are grepped for the target you are on,
+- The lesson ledgers (`.github/RELEASE_LESSONS.md`, 111 entries;
+  `firmware/LESSONS_LEARNED.md`, 192) are grepped for the target you are on,
   never read whole. Append an entry when you pay for a new lesson.
 - A long read belongs in a subagent: it returns the paragraph, not the file.
 

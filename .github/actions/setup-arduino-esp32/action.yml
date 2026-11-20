@@ -12,22 +12,25 @@ description: >
 
 # The cache is two steps, restore before the install and save right after it,
 # never one actions/cache step. A combined step saves in the job's post phase,
-# with whatever ~/.arduino15 holds when the job ENDS. The release jobs call
-# this action three times (3.3.8, 2.0.17, 3.3.10, each exclusive), so on a
-# cold cache all three keys were saved holding the last call's 3.3.10 install,
-# and a later single-core job that restored "core-3.3.8" got 3.3.10 under that
-# name (RELEASE_LESSONS 2026-11-04 (b)). Now each key is saved straight after
-# its own install, only on a miss, and only while ~/.arduino15 holds exactly one
-# esp32:esp32 platform, the one this call asked for. An exclusive call clears
-# the esp32 packager's tree BEFORE its restore, never after it: the restore
-# layers this key's entry over what the previous call left, and `arduino-cli
-# core uninstall esp32:esp32` after it removes only the NEWEST version (the
-# CLI refuses a version on uninstall and picks the greatest installed one), so
-# on a warm row it threw away the core just restored whenever that was the
-# newest on the tree — the first release row (3.3.8, alone) and the third
-# (3.3.10 over 2.0.17) — and downloaded it again, and the third row also ended
-# with two platforms and warned about a mixed tree on every run. The key
-# carries a schema tag (v2) so no entry saved the old way is ever restored.
+# with whatever ~/.arduino15 holds when the job ENDS. The release jobs called
+# this action three times (then 3.3.8, 2.0.17, 3.3.10, each exclusive), so on
+# a cold cache all three keys were saved holding the last call's 3.3.10
+# install, and a later single-core job that restored "core-3.3.8" got 3.3.10
+# under that name (RELEASE_LESSONS 2026-11-04 (b)). Now each key is saved
+# straight after its own install, only on a miss, and only while ~/.arduino15
+# holds exactly one esp32:esp32 platform, the one this call asked for (today
+# the first and third release rows both pin 3.3.11, with 2.0.17 between them:
+# the first saves that key on a miss and the third restores it). An exclusive
+# call clears the esp32 packager's tree BEFORE its restore, never after it:
+# the restore layers this key's entry over what the previous call left, and
+# `arduino-cli core uninstall esp32:esp32` after it removes only the NEWEST
+# version (the CLI refuses a version on uninstall and picks the greatest
+# installed one), so on a warm row it threw away the core just restored
+# whenever that was the newest on the tree — the first release row (then
+# 3.3.8, alone) and the third (then 3.3.10 over 2.0.17) — and downloaded it
+# again, and the third row also ended with two platforms and warned about a
+# mixed tree on every run. The key carries a schema tag (v2) so no entry
+# saved the old way is ever restored.
 # Edits here run firmware.yml, ram_audit.yml and csi_module_disable_matrix.yml
 # (each lists this directory in its path filter); the three-core release case
 # shows only in a release run. .github/scripts/test_setup_arduino_esp32.py
@@ -37,7 +40,7 @@ description: >
 inputs:
   core-version:
     description: >
-      esp32:esp32 core version to install (e.g. "3.3.10"). Empty means
+      esp32:esp32 core version to install (e.g. "3.3.11"). Empty means
       "latest": the cache key then carries the ISO week, so a cached
       "latest" can never go stale for more than a week and the first run
       of each week refreshes it.
@@ -51,7 +54,7 @@ inputs:
       version is not the one installed afterwards. Needed whenever ONE job
       installs more than one core version (the canary-display rows: SPI
       panels on core 2.0.17,
-      RGB panels on core 3.3.10) — otherwise both versions sit in
+      RGB panels on core 3.3.11) — otherwise both versions sit in
       ~/.arduino15 and an unversioned FQBN takes the newest, compiling a
       row against the other line's libraries. Costs a re-download when it
       actually has to switch; correctness beats the cache in a release.

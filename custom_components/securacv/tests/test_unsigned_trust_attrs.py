@@ -152,6 +152,35 @@ def test_mesh_and_chirp_sensors_stamp() -> None:
     _assert_unsigned(chirp._attr_extra_state_attributes)
 
 
+def test_occupancy_state_publish_stamps_unsigned_not_the_events_verdict() -> None:
+    """The retained `state` snapshot's `presence` bool is outside the
+    firmware's signature (canary-sense signs the `presence_state` word), and
+    the entity runs no verifier. Before, a state publish stamped the device's
+    last events verdict, so a forged retained `{"presence": false}` sent right
+    after a good signed event read `verified: true, trust_reason: ok`."""
+    trusted = {"verify": {"canary01": {"trusted": True, "reason": "ok",
+                                       "pinned_fingerprint": FP, "received_fingerprint": FP}}}
+    inst = _entity(bs_platform.SecuraCVCanaryOccupancySensor, hass=_hass(trusted))
+    inst._handle_state(_msg('{"presence": false, "presence_state": "absent"}'))
+    assert inst._attr_is_on is False
+    _assert_unsigned(inst._attr_extra_state_attributes)
+
+    inst._handle_state(_msg('{"presence": true}'))
+    assert inst._attr_is_on is True
+    _assert_unsigned(inst._attr_extra_state_attributes)
+
+    # The events path is unchanged: a signed event still carries its verdict.
+    inst._handle_event(_msg('{"event_type": "PresenceInRestrictedZone"}'))
+    assert inst._attr_extra_state_attributes["verified"] is True
+    assert inst._attr_extra_state_attributes["trust_reason"] == "ok"
+
+    # A pinned device (ENTRY's runtime is rebuilt here, so this goes last):
+    # the slice still names the enrolled identity.
+    pinned = _entity(bs_platform.SecuraCVCanaryOccupancySensor, hass=_store_hass(pinned=True))
+    pinned._handle_state(_msg('{"presence": true}'))
+    _assert_unsigned(pinned._attr_extra_state_attributes, FP)
+
+
 # ─── sensor: the health-topic family ───────────────────────────────────
 
 

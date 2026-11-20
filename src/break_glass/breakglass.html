@@ -1023,7 +1023,7 @@ function applyStatus(s) {
 
 // The granted moment: make success feel earned and explain the receipt that
 // was just written, instead of a one-line banner.
-function showGrantView(outputPath) {
+function showGrantView(outputPath, sidecarPath) {
   const gv = $("grant-view");
   gv.innerHTML =
     '<div class="head">' +
@@ -1034,6 +1034,9 @@ function showGrantView(outputPath) {
     '<div style="margin-top:12px"><strong>Your evidence was written to:</strong>' +
       '<div class="hash mono" style="margin-top:6px; border-style:solid">' + escapeHtml(outputPath) + '</div>' +
       '<div class="muted" style="margin-top:4px">On the server — it was never sent over the network.</div></div>' +
+    (sidecarPath
+      ? '<div style="margin-top:8px">Handoff sidecar: <span class="mono">' + escapeHtml(sidecarPath) + '</span> — hand it over with the evidence file.</div>'
+      : '') +
     '<ul class="assure" style="margin-top:12px">' +
       '<li>A signed receipt of this unseal — who approved it, and the purpose you gave — is now part of the tamper-evident log.</li>' +
       '<li>Anyone who later verifies the record will see this access. That transparency is what keeps the rest of the record credible.</li>' +
@@ -1056,7 +1059,7 @@ $("btn-unseal").onclick = async () => {
     // Stays disabled: the request is consumed.
     stopPolling();
     setStep(5);
-    showGrantView(json.output_path);
+    showGrantView(json.output_path, json.handoff_sidecar);
   } else if (status === 409) {
     banner("unseal-msg", "warn", "Quorum not met yet (" + (json.collected ? json.collected.length : 0) + "/" + (json.needed || state.needed) + ").");
     btn.disabled = false;

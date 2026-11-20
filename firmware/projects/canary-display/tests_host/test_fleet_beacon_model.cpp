@@ -348,6 +348,151 @@ int main() {
     CHECK(g.count() == 1, "one row for the WAP after the chain lands");
   }
 
+  // ── Audit A2-09: unsigned frames draw attention, never a lasting alarm ──
+  // Every receive path above (BLE advert, LAN multicast, ESP-NOW) is
+  // unsigned, so a neighbor's Canary through the wall or any host on the
+  // Wi-Fi can seat a "SCV-XXXX" pseudo witness. These pin what such a row
+  // may and may not do to the household's glass.
+  const FleetLimits lim{};   // the shipped defaults: stale 3 min, lost 10 min
+
+  // A ghost heard once over LAN multicast, then silent: Warn while stale, and
+  // at the lost deadline it leaves the roster. It never goes red and never
+  // cancels the household's ack (the old ladder did both at 10 min).
+  {
+    Model m;
+    BeaconStatus s = mk_status(-1, -1, 0, /*tamper=*/false);
+    m.on_beacon("ab12", s, true, /*now=*/0, Via::Wifi);
+    m.acknowledge(0);
+    const uint32_t stale = lim.stale_after_ms + 1000;
+    m.tick(stale);
+    CHECK(m.worst(stale) == Sev::Warn, "silent ghost reads Warn while stale");
+    const uint32_t lost = lim.lost_after_ms + 60000;
+    m.tick(lost);
+    CHECK(m.worst(lost) < Sev::Alert, "silent ghost never climbs to the witness-lost Alert");
+    CHECK(m.ack_active(lost), "silent ghost does not cancel the household's ack");
+    CHECK(find(m, "SCV-ab12") == nullptr, "ghost is retired at the lost deadline");
+    CHECK(m.count() == 0, "its slot is free again");
+  }
+
+  // A real Canary on the same glass still climbs the ladder exactly as before.
+  {
+    Model m;
+    m.on_status("canary_door", "canary-wap", true, -1, /*now=*/0);
+    m.on_chain("canary_door", 7, Badge::Verified, /*now=*/0, nullptr, 0,
+               "00112233445566aa");
+    m.acknowledge(0);
+    const uint32_t lost = lim.lost_after_ms + 60000;
+    m.tick(lost);
+    const Witness* w = find(m, "canary_door");
+    CHECK(w && w->link == Link::Lost, "a silent real Canary still goes Lost");
+    CHECK(m.worst(lost) == Sev::Alert, "a lost real Canary still alerts");
+    CHECK(!m.ack_active(lost), "a lost real Canary still cancels the ack");
+  }
+
+  // A roster full of ghosts: a real Canary arriving later takes the
+  // longest-silent ghost's slot instead of being dropped.
+  {
+    Model m;
+    const char* sfx[8] = {"a001", "a002", "a003", "a004",
+                          "a005", "a006", "a007", "a008"};
+    BeaconStatus s;
+    for (int i = 0; i < 8; i++)
+      m.on_beacon(sfx[i], s, false, /*now=*/1000 + (uint32_t)i * 100, Via::Wifi);
+    CHECK(m.count() == 8, "eight forged suffixes fill an 8-slot roster");
+    m.on_chain("canary_real", 3, Badge::Verified, /*now=*/5000, nullptr, 0,
+               "0011223344556677");
+    CHECK(find(m, "canary_real") != nullptr, "a real Canary still seats on a ghost-full roster");
+    CHECK(m.count() == 8, "it takes a slot, the roster does not grow");
+    CHECK(find(m, "SCV-a001") == nullptr, "the longest-silent ghost made room");
+    CHECK(find(m, "SCV-a002") != nullptr, "the other ghosts stay");
+    m.on_status("canary_sense_2", "canary-sense", true, -1, /*now=*/5100);
+    CHECK(find(m, "canary_sense_2") != nullptr, "a status row seats a real Canary too");
+    CHECK(find(m, "SCV-a002") == nullptr, "...taking the next-oldest ghost");
+    CHECK(m.set_mute("canary_cam_3", true, 900000), "a persisted mute re-applies on a ghost-full roster");
+
+    // An unsigned frame never displaces anyone: a ninth suffix is dropped.
+    m.on_beacon("ffff", s, false, /*now=*/6000, Via::Wifi);
+    CHECK(find(m, "SCV-ffff") == nullptr, "a new forged suffix cannot evict a ghost or a Canary");
+    CHECK(find(m, "canary_real") != nullptr, "the real Canary keeps its slot");
+
+    // A roster of real Canaries is still never rotated.
+    Model r;
+    char id[16];
+    for (int i = 0; i < 8; i++) {
+      snprintf(id, sizeof(id), "canary_%d", i);
+      r.on_status(id, "canary-wap", true, -1, /*now=*/100);
+    }
+    r.on_status("canary_9", "canary-wap", true, -1, /*now=*/200);
+    CHECK(find(r, "canary_9") == nullptr, "over-cap real Canaries are dropped, not rotated");
+    CHECK(r.count() == 8, "a real roster keeps its eight");
+  }
+
+  // The mDNS discovery browse is unauthenticated LAN input too: it passes
+  // may_evict=false, so its rows take a free slot or nothing. On a hub-less
+  // glass every household Canary is a pseudo witness; announced role=witness
+  // services must not push them off the roster.
+  {
+    Model m;
+    BeaconStatus s;
+    m.on_beacon("aa01", s, false, /*now=*/1000, Via::Ble);
+    m.on_beacon("aa02", s, false, /*now=*/1100, Via::Ble);
+    char id[16];
+    for (int i = 0; i < 8; i++) {
+      snprintf(id, sizeof(id), "fake_%d", i);
+      m.on_status(id, "canary-wap", true, -1, /*now=*/2000, /*may_evict=*/false);
+      m.on_meta(id, "Front door", "", /*now=*/2000, /*may_evict=*/false);
+    }
+    CHECK(m.count() == 8, "mDNS rows fill only the free slots");
+    CHECK(find(m, "SCV-aa01") != nullptr && find(m, "SCV-aa02") != nullptr,
+          "an mDNS row never evicts a beacon-heard Canary");
+    CHECK(find(m, "fake_6") == nullptr && find(m, "fake_7") == nullptr,
+          "over-cap mDNS rows are dropped");
+    m.on_beacon("aa01", s, false, /*now=*/3000, Via::Ble);
+    const Witness* a = find(m, "SCV-aa01");
+    CHECK(a && a->last_seen_ms == 3000, "the household Canary's next beacon still lands on its row");
+
+    // A ghost-full roster: a may_evict=false status or meta row seats
+    // nothing and evicts nothing.
+    Model g;
+    const char* sfx[8] = {"b001", "b002", "b003", "b004",
+                          "b005", "b006", "b007", "b008"};
+    for (int i = 0; i < 8; i++)
+      g.on_beacon(sfx[i], s, false, /*now=*/1000 + (uint32_t)i * 100, Via::Wifi);
+    g.on_status("lan_host", "canary-wap", true, -1, /*now=*/5000, /*may_evict=*/false);
+    g.on_meta("lan_name", "Kitchen", "", /*now=*/5000, /*may_evict=*/false);
+    CHECK(find(g, "lan_host") == nullptr && find(g, "lan_name") == nullptr,
+          "a may_evict=false row seats nothing on a ghost-full roster");
+    CHECK(g.count() == 8 && find(g, "SCV-b001") != nullptr,
+          "...and evicts nothing, not even the longest-silent ghost");
+  }
+
+  // One LAN datagram with the tamper flag on a real Canary: Tamper now, and
+  // it decays on the Warn clock instead of holding until reboot.
+  {
+    Model m;
+    m.on_chain("canary_door", 7, Badge::Verified, /*now=*/0, nullptr, 0,
+               "00112233445566aa");
+    BeaconStatus t = mk_status(-1, -1, 0, /*tamper=*/true);
+    m.on_beacon("66aa", t, true, /*now=*/1000, Via::Wifi);
+    CHECK(m.worst(1000) == Sev::Tamper, "a UDP tamper draws Tamper attention");
+    CHECK(m.worst(1000 + lim.warn_decay_ms - 1) == Sev::Tamper,
+          "it holds for the Warn decay window");
+    CHECK(m.worst(1000 + lim.warn_decay_ms) == Sev::Ok,
+          "an unsigned tamper decays like a Warn");
+    CHECK(m.worst(1000 + 6UL * 3600UL * 1000UL) == Sev::Ok, "and is gone hours later");
+
+    // An unsigned chirp ALERT on the same Canary decays the same way.
+    m.on_chirp("66aa", 0x01, /*now=*/2000000);
+    CHECK(m.worst(2000000) == Sev::Alert, "a chirp alert draws Alert attention");
+    CHECK(m.worst(2000000 + lim.warn_decay_ms) == Sev::Ok, "an unsigned chirp alert decays");
+
+    // A broker-fed tamper event keeps the full rule: no decay.
+    Model b;
+    b.on_event("canary_door", "enclosure_tamper", /*signed_flag=*/true, /*now=*/1000);
+    CHECK(b.worst(1000 + 6UL * 3600UL * 1000UL) == Sev::Tamper,
+          "a broker tamper event does not decay");
+  }
+
   printf(g_failures == 0 ? "\nALL PASS\n" : "\n%d FAILURE(S)\n", g_failures);
   return g_failures == 0 ? 0 : 1;
 }

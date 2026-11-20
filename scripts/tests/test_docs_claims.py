@@ -118,8 +118,9 @@ BANNED = (
      "with_no_client_auth() and the WAP's httpd_ssl_config_t carries only the "
      "server certificate and key; the iPhone app pins the receipt's tls_cert_fp"),
     ("a witness's clock comes from GPS",
-     "only the flagship and the WAP take time from GPS; sense and vision have "
-     "no clock source of their own; the displays sync SNTP"),
+     "only the flagship and the WAP take time from GPS; every product without "
+     "GPS syncs SNTP: the displays, and the Sense, the Vision and the Sentinel "
+     "through the shared Wi-Fi supervisor's start_clock()"),
     ("WiFi AP BSSID derived from device identity",
      "nothing in the firmware sets a derived or random MAC; the BSSID is the "
      "radio's factory address and carries Espressif's OUI"),
@@ -5029,7 +5030,7 @@ MUST_PASS_IN = [
     ('CHANGELOG.md',
      "  template-trampoline pattern *(amended 2026-10-26, #1843's sweep: behind `api_auth_check()`, which also takes the landing session any host on the network can mint, F346)*; wired into `canary_wap.ino`."),
     ('docs/audit/mesh_and_chirp_audit_v1.md',
-     "**Fix in this branch:** register `chirp_api::register_routes()` in `canary_wap.ino` using the same Bearer-token template trampoline as `bluetooth_api.h` (PR #437) and `household_api.h` (PR #438) *(amended 2026-10-26, #1843's sweep: behind `api_auth_check()`, which also takes the landing session any host on the network can mint, F346)*. `POST /api/chirp/send` additionally requires a 2-second hold timestamp from the UI per `spec/chirp_channel_v0.md` §4.1."),
+     "**Fix in this branch:** register `chirp_api::register_routes()` in `canary_wap.ino` using the same Bearer-token template trampoline as `bluetooth_api.h` (PR #437) and `household_api.h` (PR #438) *(amended 2026-10-26, #1843's sweep: behind `api_auth_check()`, which also takes the landing session any host on the network can mint, F346)*. *(Amended 2026-11-16, audit A2-10: this fix also said `POST /api/chirp/send` requires a 2-second hold timestamp from the UI per `spec/chirp_channel_v0.md` §4.1. No such check was written: `handle_chirp_send` reads no hold or timestamp, and a timestamp the page supplied would be forgeable by any caller holding a session.)*"),
     ('docs/audit/v0.3_closeout.md',
      "| C12 | High (latent) | Bearer-token template trampoline; wired in INO *(amended 2026-10-26, #1843's sweep: behind `api_auth_check()`, which also takes the landing session any host on the network can mint, F346)* | `chirp_api.h::chirp_auth_gated<>` | manual: cURL with/without auth |"),
     ('docs/audit/v0.3_closeout.md',

@@ -133,4 +133,7 @@ mosquitto_sub -h localhost -u securacv -P <password> -t 'witness/#' -v
 ## Notes
 
 - This setup keeps MQTT as the shared event bus across Frigate, SecuraCV, and Home Assistant.
-- The Frigate config disables recordings and snapshots to avoid storing raw media.
+- The Frigate config disables recordings and snapshots to avoid storing raw media, and turns
+  off the camera's MQTT images (`mqtt: enabled: false` under the camera), which Frigate
+  otherwise publishes to the broker as a retained JPEG of every tracked object whatever
+  `snapshots` says. A camera you add needs the same block.

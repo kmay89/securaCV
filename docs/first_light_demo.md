@@ -3,8 +3,9 @@
 Two devices, one desk, nothing else: a **Canary Vision** (XIAO host + Grove
 Vision AI V2 — the NPU camera module) and a **Canary Nightlight** (the 1.47"
 pocket glass). Power both, wave at the camera, and the glass says **PERSON**
-with the trigger timing in milliseconds — no WiFi, no hub, no broker, no app,
-no account. It is the smallest possible demonstration of what SecuraCV *is*:
+with the trigger timing in milliseconds — at demo time no WiFi, no hub, no
+broker, no app, no account (once beforehand, the Vision's Broadcast
+detection is turned on over MQTT; see [Running it](#running-it)). It is the smallest possible demonstration of what SecuraCV *is*:
 a camera that tells you **what it saw**, never shows anyone what it recorded,
 and does it fast enough to watch.
 
@@ -20,7 +21,8 @@ with the two boards can run it today.
    its own NPU. No pixels leave the camera — the host firmware receives
    boxes and scores over I2C, nothing else.
 2. **The edge, on air, immediately.** The Vision's presence FSM debounces
-   the detection; the moment it flips, the fleet-link presence beacon
+   the detection; with the Vision's Broadcast detection on (off by default,
+   step 1 below), the moment it flips, the fleet-link presence beacon
    (alert + class + confidence, 13 bytes) goes out on every carrier at once
    — including ESP-NOW, the router-free band this demo rides.
 3. **The glass reacts.** The Nightlight's pair-demo card pulses amber,
@@ -73,16 +75,27 @@ data or the Lab's Vision bench).
 
 **Then:**
 
-1. Power both devices. Factory-fresh (no WiFi provisioned), both radios
+1. **Before you start (once):** turn on the Vision's **Broadcast
+   detection**, either with Home Assistant's switch on its device page or
+   by publishing `ON` to `securacv/<device_id>/beacon/set`. It is off by
+   default because the beacon is cleartext: while it is on, anyone in radio
+   range or on the LAN reads the detection too. Without it the glass hears
+   the camera but never a detection. The switch is set only over MQTT, so
+   the Vision needs Wi-Fi and a broker this once. Then hold the Vision's
+   BOOT for 10 s so it is factory-fresh again: the hold forgets the Wi-Fi
+   and the broker but keeps the setting, which is stored on the Vision, so
+   the Vision then meets the glass router-free (read from the code, not yet
+   run on the pair).
+2. Power both devices. Factory-fresh (no WiFi provisioned), both radios
    park on the same fallback channel — that is the whole rendezvous.
-2. On a factory-fresh Nightlight the demo card **walks up to you**: the
+3. On a factory-fresh Nightlight the demo card **walks up to you**: the
    moment the glass hears a camera on the router-free band, the wizard
    opens by itself. On a provisioned Nightlight, hold BOOT for 5 seconds.
-3. The card adopts the first Vision it hears and shows its witness name
+4. The card adopts the first Vision it hears and shows its witness name
    (`SCV-XXXX`). **Tap** to keep it — the lock is remembered across
    reboots, and the card ignores every other camera from then on.
    **Double-press** forgets it; **hold** leaves the demo.
-4. Wave at the camera. On a host with a user LED, watch the LED, then the
+5. Wave at the camera. On a host with a user LED, watch the LED, then the
    glass; on the XIAO ESP32-C3, watch the glass and read the camera's side
    on serial.
 
