@@ -169,6 +169,7 @@
           "  \u2713 2 trustees approved; two break-glass tokens minted (one to seal, one to unseal)",
           "  \u2713 sealed a throwaway envelope",
           "  \u2713 unsealed it with a fresh quorum token",
+          "  \u2713 recorded the unseal and verified its handoff sidecar",
           "  \u2713 recovered payload matches the original, byte for byte",
           "Result: DRILL PASSED \u2014 break-glass works end to end on this build."
         ],

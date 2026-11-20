@@ -86,6 +86,29 @@ recipient can check without our tools.
 → [the operator guide](operator_guide.md) ·
 [evidence lifecycle](evidence_lifecycle.md)
 
+### What do I hand the receiving party with an unsealed file?
+
+The file **and its handoff sidecar** — `<file>.securacv-handoff.json`,
+written beside it by `break_glass unseal` (and by every `export_events` run;
+an API bundle gets one through `handoff_sidecar emit`). The sidecar
+carries the device-signed records of that disclosure: the trustees' grant,
+the redemption that spent the token, and the device's unseal record, which
+pairs this exact file to the envelope it decrypted through a salted
+commitment only the sidecar can open. The receiving party checks it with
+`handoff_sidecar verify --file <file> --public-key-file <device.pub>` or
+with `sha256sum`, `openssl` and `jq` alone (the recipe in
+[handoff sidecars](handoff_sidecars.md)). To forward a sidecar without the
+recipient's name, `handoff_sidecar redact` it first.
+
+### Can the device prove who we gave footage to?
+
+No — and it does not pretend to. It proves what was decrypted (the unseal
+record, device-signed) and under whose consent (the grant), and it **fixes
+what you declared** about the recipient: the name you give at unseal is
+committed, salted, into the signed record, so it cannot be swapped later.
+But the device never checks who actually received the file; the sidecar
+says "declared by the operator, not verified" for exactly that reason.
+
 ### Does it phone home? Any telemetry, any accounts?
 
 No. Logs stay local, there is no remote indexing and no telemetry (Invariant
@@ -213,6 +236,26 @@ empty ledger anchored over a fixed sentinel), so the count carries no signal.
 The TSA does see the digests, so it can notice a receipt-ledger digest that
 stops repeating; anchoring a single per-run ledger-heads leaf (planned with the
 Merkle tree) removes that.
+→ [timestamping](timestamping.md)
+
+### Does an OpenTimestamps calendar learn my ledger head or when things happened?
+
+No. A calendar receives `SHA256(hash ‖ 16 fresh random bytes)` — a fresh
+nonce per subject, calendar and run — so it never sees a ledger head or an
+empty-ledger sentinel, cannot tell whether a head changed, and cannot link
+two runs or two calendars. What it does learn: your address, your cadence,
+and the per-run count, which is a configuration constant (subjects ×
+calendars, plus a bounded number of upgrade fetches). The Bitcoin chain holds
+the calendar's merkle root, not yours.
+→ [timestamping](timestamping.md)
+
+### Why does `verify` say UNVERIFIED for a proof with a block height?
+
+Because a block height alone is a claim anyone can write into a file. A proof
+is `confirmed` only when its path reaches the merkle root of that block's
+header — and `log_anchor verify` reads headers only from a file you supply
+(`--bitcoin-headers`, from a node you run); it never looks a block up on the
+network. Only confirmed proofs count toward an anchor policy.
 → [timestamping](timestamping.md)
 
 ### What if someone says the device's clock was wrong?
@@ -581,10 +624,21 @@ off no phone reaches the door. Holding a WAP's BOOT button
 for 10 seconds (the serial console says "keep holding" at 3 s) is its
 factory reset: the saved Wi-Fi networks, the broker settings, the device
 name and the first-boot flag are cleared and the setup wizard runs again;
+on a release after 2.4.20 the hold also removes the camera vault's
+recipient key (the public key frames are sealed to), turns every vault capture trigger off and erases an update-server
+override (2.4.20 and earlier keep all three, so first press Remove key
+under Camera → Sealed Alarm Snapshots, and empty Settings → Device →
+Advanced: update server, then Save Update Settings);
 the Ed25519 identity key, the witness chain and the sealed records are
 kept, so every hub and display that pinned the key still recognizes it
 (every Canary with a BOOT button has the same 10-second hold —
-`docs/OTA.md` and `docs/TRUST_MODEL.md` say why the key survives). The
+`docs/OTA.md` and `docs/TRUST_MODEL.md` say why the key survives). Handing
+a WAP to someone else? The hold keeps its identity key and its API token,
+so whoever held that token still holds it; an install in either flasher
+starts its on-board settings and keys over instead (its factory image
+starts NVS over: a new key, a new token), and neither empties the microSD
+card, so copy what you want from its `/WITNESS` and `/VAULT` folders and
+then delete them. The
 hold needs no token and no tap and works whatever the lockout is doing, but
 it keeps the API token and opens the setup door to whichever Bluetooth
 device connects first, so it is the last way out when BOOT taps keep

@@ -18,6 +18,7 @@ pub fn ledger_name(ledger: FailedLedger) -> &'static str {
         FailedLedger::HighWaterMark => "signed external high-water-mark",
         FailedLedger::Anchors => "RFC 3161 anchor table",
         FailedLedger::ClockProvenance => "clock-provenance ledger",
+        FailedLedger::OtsAnchors => "OpenTimestamps anchor table",
     }
 }
 
@@ -121,12 +122,13 @@ pub fn explain_failure(kind: FailureKind) -> FailureExplanation {
                    Do NOT re-sign a shorter chain to clear the error.",
         },
         FailureKind::AnchorRegression => FailureExplanation {
-            what: "an RFC 3161 anchor row covers a ledger head that is no longer in that \
-                   ledger's history: the hash is in no live row and in no retention \
-                   checkpoint whose device signature verifies. The anchor is auxiliary \
-                   evidence about the ledger — a state the ledger once had, countersigned \
-                   by a time-stamping authority — and this database no longer contains \
-                   that state. The interior chain itself verified.",
+            what: "an anchor row (RFC 3161 token or OpenTimestamps proof) covers a \
+                   ledger head that is no longer in that ledger's history: the hash is \
+                   in no live row and in no retention checkpoint whose device signature \
+                   verifies. The anchor is auxiliary evidence about the ledger — a state \
+                   the ledger once had, countersigned by a time-stamping authority or \
+                   committed to an OpenTimestamps calendar — and this database no longer \
+                   contains that state. The interior chain itself verified.",
             likely_causes: "an older whole-database snapshot was restored (rollback); the \
                    tail was truncated past the anchored head; the ledger was regenerated \
                    as a different history than the one that was anchored. One benign \
@@ -146,14 +148,24 @@ pub fn explain_failure(kind: FailureKind) -> FailureExplanation {
         },
         FailureKind::TokenRedemption => FailureExplanation {
             what: "the break-glass chain's record of spent tokens is inconsistent: a nonce \
-                   redeemed twice, a redemption naming no earlier Granted receipt, or a nonce \
-                   burned in the anti-replay table with no signed redemption row behind it.",
+                   redeemed twice, a redemption naming no earlier Granted receipt, a nonce \
+                   burned in the anti-replay table with no signed redemption row behind it, \
+                   or an unseal record that names no redemption or repeats one.",
             likely_causes: "a single-use token was replayed (its burn row deleted and the \
                    token presented again); a redemption row was forged or removed from the \
                    chain tail; the token was spent by a build that wrote no redemption rows.",
             next_steps: "treat the unseal as possibly repeated. Compare the chain head \
                    against its last anchor, ask who held the token file, and check the \
                    vault for an unsealed artifact that no redemption row accounts for.",
+        },
+        FailureKind::ExportAuthorization => FailureExplanation {
+            what: "an export receipt's link to the break-glass grant that authorized it does \
+                   not hold: the grant is missing, is for another envelope, was never spent, \
+                   authorized two exports, or the receipt restates an operator beside it.",
+            likely_causes: "a forged or edited export receipt; a grant or redemption row \
+                   removed from the break-glass chain.",
+            next_steps: "compare both chain heads against their last anchors and list who held \
+                   the device key.",
         },
     }
 }
@@ -191,11 +203,15 @@ pub fn warning_hint(kind: WarningKind) -> Option<&'static str> {
              tail-truncation and clock checks were skipped.",
         ),
         WarningKind::AnchorAnomaly => Some(
-            "this anchor row cannot vouch for anything — its token does not parse, does not \
-             cover the hash the row claims, or the row itself is damaged. The ledgers still \
-             verified and no anchored head is missing. `log_anchor verify` reports a token \
-             problem as FAIL on that row; a malformed row stops it with `corrupt anchor N: …` \
-             and must be restored from a backup (export tokens alongside your DB backups).",
+            "this anchor row cannot vouch for anything — its token or proof does not parse, \
+             does not cover the hash the row claims, its cached attestation columns disagree \
+             with the proof (OpenTimestamps rows), or the row itself is damaged. The ledgers \
+             still verified and no anchored head is missing. `log_anchor verify` reports a \
+             token or proof problem as FAIL on that row. A malformed RFC 3161 row stops it \
+             with `corrupt anchor N: …`; a malformed OpenTimestamps row prints \
+             `ots anchor #N: FAIL` with `row is malformed: corrupt ots anchor N: …`. Either \
+             must be restored from a backup (export tokens and proofs alongside your DB \
+             backups).",
         ),
         WarningKind::ClockProvenance => Some(
             "a clock-provenance record (the device's own clock measured against a TSA token) \
@@ -220,6 +236,82 @@ pub fn format_failure_diagnosis(failure: &VerifyFailure) -> String {
          What this means: {}\n\
          Likely causes:   {}\n\
          Next steps:      {}",
-        location, explanation.what, explanation.likely_causes, explanation.next_steps
+        location,
+        explanation.what,
+        explanation.likely_causes,
+        next_steps(failure)
     )
+}
+
+/// The `next_steps` text for this failure. The kind's text names the RFC
+/// 3161 remedy; an anchor regression on the OpenTimestamps table names the
+/// `--ots` form instead, because `relabel --id N` without it acts on the
+/// `tsa_anchors` row with that id — a different row, or none.
+fn next_steps(failure: &VerifyFailure) -> &'static str {
+    match (failure.kind, failure.ledger) {
+        (FailureKind::AnchorRegression, FailedLedger::OtsAnchors) => {
+            OTS_ANCHOR_REGRESSION_NEXT_STEPS
+        }
+        (kind, _) => explain_failure(kind).next_steps,
+    }
+}
+
+const OTS_ANCHOR_REGRESSION_NEXT_STEPS: &str = "run `log_anchor verify` for the per-anchor \
+     picture, and check where this database file came from. Only for a head at or below the \
+     retention cutoff of a database pruned by an older build (one that kept only RFC 3161 \
+     anchored heads as checkpoints) is `log_anchor relabel --ots --id N --subject digest` the \
+     remedy, where N is the `ots_anchors` row id above: it records that membership is no \
+     longer asserted and leaves the proof untouched. Without `--ots`, `relabel --id N` acts on \
+     the RFC 3161 table's row N, a different row. Upgrade witnessd before stamping chain heads \
+     again. A head NEWER than the cutoff, or a receipt-ledger or policy head (those ledgers \
+     are never pruned), is a rollback or truncation — do NOT relabel it, and never delete the \
+     anchor row: that destroys evidence, it never clears a finding.";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn regression(ledger: FailedLedger) -> VerifyFailure {
+        VerifyFailure {
+            ledger,
+            kind: FailureKind::AnchorRegression,
+            entry_id: Some(3),
+            detail: String::new(),
+        }
+    }
+
+    #[test]
+    fn anchor_regression_next_steps_name_the_table_the_failure_is_on() {
+        let ots = format_failure_diagnosis(&regression(FailedLedger::OtsAnchors));
+        assert!(ots.contains("Where:           OpenTimestamps anchor table at entry id 3"));
+        assert!(
+            ots.contains("`log_anchor relabel --ots --id N --subject digest`"),
+            "{ots}"
+        );
+        assert!(ots.contains("leaves the proof untouched"), "{ots}");
+        let steps = ots.split("Next steps:").nth(1).unwrap();
+        assert!(!steps.contains("token"), "{steps}");
+        let tsa = format_failure_diagnosis(&regression(FailedLedger::Anchors));
+        assert!(
+            tsa.contains("`log_anchor relabel --id N --subject digest`"),
+            "{tsa}"
+        );
+        assert!(!tsa.contains("--ots"), "{tsa}");
+        assert!(tsa.contains("leaves the token untouched"), "{tsa}");
+    }
+
+    #[test]
+    fn anchor_anomaly_hint_covers_tokens_and_proofs() {
+        let hint = warning_hint(WarningKind::AnchorAnomaly).unwrap();
+        for needle in [
+            "token or proof does not parse",
+            "cached attestation columns disagree with the proof",
+            "`corrupt anchor N: …`",
+            "`ots anchor #N: FAIL`",
+            "`row is malformed: corrupt ots anchor N: …`",
+            "tokens and proofs",
+        ] {
+            assert!(hint.contains(needle), "{needle}: {hint}");
+        }
+    }
 }

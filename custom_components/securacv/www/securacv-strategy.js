@@ -364,11 +364,17 @@
   function markdown(content) {
     return { type: "markdown", content };
   }
-  function pressTile(entityId, name, icon) {
+  // `confirm` (optional) is the text Home Assistant's action confirmation
+  // asks before the press is sent. It is a speed bump against a stray tap,
+  // never the authorization: the Export evidence button refuses a user who
+  // is not an administrator itself (button.py).
+  function pressTile(entityId, name, icon, confirm) {
+    const press = { action: "perform-action", perform_action: "button.press", target: { entity_id: entityId } };
+    if (confirm) press.confirmation = { text: confirm };
     return {
       type: "tile", entity: entityId, name, icon, vertical: false,
-      tap_action: { action: "perform-action", perform_action: "button.press", target: { entity_id: entityId } },
-      icon_tap_action: { action: "perform-action", perform_action: "button.press", target: { entity_id: entityId } },
+      tap_action: press,
+      icon_tap_action: Object.assign({}, press),
     };
   }
 
@@ -543,7 +549,12 @@
       cards.push(markdown(statusMarkdown(kernel)));
       const buttons = [];
       if (kernel.entity.verifyNow) buttons.push(pressTile(kernel.entity.verifyNow, "Verify now", "mdi:shield-search"));
-      if (kernel.entity.exportEvidence) buttons.push(pressTile(kernel.entity.exportEvidence, "Export evidence", "mdi:file-certificate"));
+      if (kernel.entity.exportEvidence) {
+        buttons.push(pressTile(
+          kernel.entity.exportEvidence, "Export evidence", "mdi:file-certificate",
+          "Export a signed evidence pack of the last 24 hours? Packs past this kernel's keep limit are removed, oldest first.",
+        ));
+      }
       if (buttons.length) cards.push(...buttons);
       if (kernel.entity.exportEvidence) {
         cards.push(markdown(

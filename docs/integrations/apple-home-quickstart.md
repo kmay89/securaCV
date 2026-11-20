@@ -191,7 +191,7 @@ same treatment.
 | Bridge never appears in "Add Accessory" | Phone and bridge must be on the same subnet — mDNS does not cross VLANs. Check the host firewall allows UDP 5353 and TCP 51826. |
 | The wizard found no Apple TV | Same reason, usually. It's a warning, not a blocker: pairing still works from a phone on the same network. |
 | The wizard found no Canaries | Broker details, or the fleet hasn't published since it last started. Check with `mosquitto_sub -h <broker> -t 'securacv/+/status' -v`. You can always add them by hand. |
-| "Accessory not found" after entering the code | Something else may be paired to it already. An accessory that is already paired refuses new pairings by design; delete it from the Home app first, or start from a fresh state file. |
+| "Accessory not found" after entering the code | Something else may be paired to it already. An accessory that is already paired refuses new pairings by design; delete it from the Home app first, or start from a fresh state file. Once the last pairing is removed the bridge advertises itself as unpaired again on its next tick; a `hap_bridge` from a kernel older than 0.9.3 keeps advertising the pairing state it started with, so restart it after removing it from the Home app. |
 | Paired, but every sensor is blank | Events are not arriving. Confirm the device ids in `hap.toml` match the MQTT topics exactly. |
 | Occupancy never turns on | Presence rides in the retained `state` snapshot (`securacv/<id>/state`, field `presence`), not a `presence` topic. Confirm your firmware publishes it. |
 | Worked, then stopped after a restart | The state path changed, so the bridge minted a new identity. Point it back at the original file. |

@@ -743,8 +743,27 @@ class SupervisorClient:
         self._req("POST", f"/addons/{slug}/restart")
 
 
-def observe(client: SupervisorClient, seed: dict, files_root: Path = DEFAULT_FILES_ROOT) -> dict:
-    """Snapshot the hub so plan_actions can decide what still needs doing."""
+# Why a run without Home Assistant's API leaves an integration for a click.
+# The HAOS host console borrows Core's own Supervisor token (host_provision.sh),
+# and the Supervisor's proxy to Core (`/core/api/...`) admits only an APP's
+# token with Home Assistant API access, so every config-entry call from there
+# is refused. Saying so is better than a lookup and a flow that cannot pass.
+NO_CORE_API_REASON = (
+    "this run cannot reach Home Assistant's API (the host console uses Core's "
+    "own Supervisor token, which the Supervisor's proxy to Home Assistant refuses)"
+)
+
+
+def observe(
+    client: SupervisorClient,
+    seed: dict,
+    files_root: Path = DEFAULT_FILES_ROOT,
+    core_api: bool = True,
+) -> dict:
+    """Snapshot the hub so plan_actions can decide what still needs doing.
+
+    `core_api=False` (the host console's run) skips the integration lookup:
+    the call cannot be authorized there, so its answer would say nothing."""
     check_plan_paths(seed)
     dests = [s["dest"] for s in seed.get("steps", []) if s.get("dest")]
     # Files a step REQUIRES (and never writes): present if they exist under
@@ -773,7 +792,7 @@ def observe(client: SupervisorClient, seed: dict, files_root: Path = DEFAULT_FIL
     # connect step would re-run on every pass and pile up duplicate entries —
     # the executor's whole contract is that a second run is a no-op.
     wants_entries = any(s.get("core_config_entry") for s in seed.get("steps", []))
-    config_entries = client.get_config_entry_domains() if wants_entries else set()
+    config_entries = client.get_config_entry_domains() if wants_entries and core_api else set()
 
     return {
         "repositories": client.get_repositories(),
@@ -827,6 +846,7 @@ def execute(
     client: SupervisorClient,
     assets_root: Path,
     files_root: Path = DEFAULT_FILES_ROOT,
+    core_api: bool = True,
 ) -> list[str]:
     """Perform the plan, narrating as it goes. Fail-closed: on the first error,
     stop and say so — re-running is safe because every action is idempotent.
@@ -844,6 +864,15 @@ def execute(
         for a in s.actions:
             if a.already:
                 print(f"    - skip: {describe(a, client.base)}  ({a.reason})")
+                continue
+            if a.kind == "core_config_entry" and not core_api:
+                # Never attempted: from here the call is refused before Home
+                # Assistant sees it. An integration step is optional, so it is
+                # left for a click and reported like any optional step that
+                # did not finish.
+                print(f"    - leave for you: {describe(a, client.base)}")
+                print(f"      ({NO_CORE_API_REASON})")
+                incomplete.append(a.label)
                 continue
             print(f"    - {describe(a, client.base)}")
             try:
@@ -1023,6 +1052,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--format", choices=["text", "json"], default="text", help="dry-run output format")
     ap.add_argument(
+        "--no-core-api",
+        dest="core_api",
+        action="store_false",
+        help="this run's token cannot reach Home Assistant's API (the HAOS host console borrows "
+        "Core's own token): leave integration steps for a click instead of attempting them",
+    )
+    ap.add_argument(
         "--with",
         dest="features",
         action="append",
@@ -1074,7 +1110,7 @@ def main(argv: list[str] | None = None) -> int:
             if not args.token:
                 print("--observe needs a token (SUPERVISOR_TOKEN) to query the hub", file=sys.stderr)
                 return 2
-            observed = observe(SupervisorClient(args.base_url, args.token), seed, args.files_root)
+            observed = observe(SupervisorClient(args.base_url, args.token), seed, args.files_root, args.core_api)
         steps = plan_actions(seed, observed, features)
         if args.format == "json":
             print(steps_to_json(steps))
@@ -1093,12 +1129,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     client = SupervisorClient(args.base_url, args.token)
     try:
-        observed = observe(client, seed, args.files_root)
+        observed = observe(client, seed, args.files_root, args.core_api)
     except SupervisorError as e:
         print(f"hub_seed_apply.py: cannot reach the hub: {e}", file=sys.stderr)
         return 1
     steps = plan_actions(seed, observed, features)
-    incomplete = execute(steps, client, Path(args.assets_root), args.files_root)
+    incomplete = execute(steps, client, Path(args.assets_root), args.files_root, args.core_api)
     todo, done = counts(steps)
     print(f"\nHub provisioned: {done} step-action(s) were already in place, {todo} applied.")
     if incomplete:

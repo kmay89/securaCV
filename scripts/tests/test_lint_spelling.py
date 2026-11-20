@@ -325,6 +325,26 @@ class Gate(unittest.TestCase):
         self.assertIn(f"CMakeLists.txt:1: {SHIPPED}", r.stderr)
         self.assertIn(f"notes.txt:1: {SHIPPED}", r.stderr)
 
+    def test_a_walk_reads_firmware_third_party_and_skips_a_fetched_one(self):
+        # firmware/third_party/ is committed (the patched core-2 WebServer,
+        # its READMEs first-party prose), so the walk reads it; any other
+        # third_party/ is a tree a build fetched (the emulator's LVGL and
+        # ArduinoJson), and the walk skips it.
+        tree = self.dir / "tree"
+        committed = tree / "firmware" / "third_party" / "Lib"
+        fetched = tree / "canary-local" / "emulator" / "third_party" / "Lib"
+        for d in (committed, fetched):
+            d.mkdir(parents=True)
+            (d / "README.md").write_text(f"The beacon {SHIPPED} home.\n",
+                                         encoding="utf-8")
+        (tree / "firmware" / "third_party" / "README.md").write_text(
+            f"{SHIPPED} as far as a radio carries it.\n", encoding="utf-8")
+        r = run_lint(tree)
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn(f"firmware/third_party/README.md:1: {SHIPPED}", r.stderr)
+        self.assertIn(f"firmware/third_party/Lib/README.md:1: {SHIPPED}", r.stderr)
+        self.assertNotIn("emulator", r.stderr)
+
     def test_main_passes_the_us_forms(self):
         f = self.dir / "note.md"
         f.write_text(" ".join(us for us, _ in L.family_pairs()[::11]) + "\n",

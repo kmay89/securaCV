@@ -30,7 +30,10 @@ namespace canary::net {
 //
 // Honest sourcing, no fabricated fields: degraded comes from the diagnostics
 // level, on_wifi_sta from the real STA link, alert/class/score from the
-// presence FSM below, chain height from the witness chain, and the fingerprint
+// presence FSM below (only while the owner has opted in: detect_config.h
+// beacon_detect, default off; otherwise the ALERT flag is clear, the class is
+// FLEET_BEACON_DETECT_NONE and the score unknown), chain height from the
+// witness chain, and the fingerprint
 // suffix from the witness identity once it is ready (0x00 until then — never
 // invented). Battery and health are the 0xFF unknown sentinel: this is a
 // mains-powered witness with no gauge and no 0..100 self-test at this layer.
@@ -46,7 +49,10 @@ uint32_t fleet_beacon_payload_generation();
 // Feed the live detection state in. Cheap to call every vision tick: a mere
 // confidence wobble rides the next refresh, while an EDGE bumps the generation
 // so carriers republish at once. detect_class is a FLEET_BEACON_DETECT_* token
-// — a class and a percentage, never anything identifying.
+// — a class and a percentage, never anything identifying. While the owner has
+// not opted in (detect_config.h beacon_detect) the input is recorded as
+// "nothing seen": the frame carries no detection and the generation does not
+// move, so not even the timing of a send marks a detection edge.
 void fleet_beacon_note_detection(bool active, uint8_t detect_class,
                                  int score_pct, uint32_t now);
 

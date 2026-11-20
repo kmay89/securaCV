@@ -182,6 +182,10 @@ enum Command {
         /// signing seed, not only the database key.
         #[arg(long, env = "DEVICE_KEY_SEED", hide_env_values = true)]
         device_key_seed: String,
+        /// Who receives the unsealed file (declared; committed, salted, into
+        /// the signed unseal record and named only in the handoff sidecar).
+        #[command(flatten)]
+        recipient: crate::handoff::RecipientArgs,
     },
 
     /// Manage break-glass quorum policy stored in the kernel database
@@ -619,6 +623,7 @@ pub fn run() -> Result<()> {
             vault_path,
             output_dir,
             device_key_seed,
+            recipient,
         } => {
             let _stage = ui.stage("Unseal envelope");
             cmd_unseal(
@@ -629,6 +634,7 @@ pub fn run() -> Result<()> {
                 &ruleset_id,
                 &vault_path,
                 &output_dir,
+                &recipient,
             )
         }
         Command::Policy { command } => match command {
@@ -2549,18 +2555,62 @@ fn cmd_drill(threshold: u8, trustees: u8) -> Result<()> {
 
     // Burn-first, exactly as `unseal` does — nonce burned and the signed
     // redemption receipt appended — then recover.
-    kernel.redeem_token_durably(&unseal_token)?;
-    let clear = vault.unseal(
+    let granted_entry_hash = unseal_token.receipt_entry_hash();
+    let created_bucket = crate::handoff::handoff_bucket_now()?;
+    let redemption_entry_hash = kernel.redeem_token_durably(&unseal_token)?;
+    let clear = zeroize::Zeroizing::new(vault.unseal(
         envelope,
         &mut unseal_token,
         ruleset_hash,
         &device_vk,
         |hash| kernel.break_glass_receipt_outcome(envelope, ruleset_hash, hash),
-    )?;
+    )?);
     println!("  {} unsealed it with a fresh quorum token", DR_OK);
 
+    // The production release tail: the device-signed unseal record, the
+    // handoff sidecar, then the cleartext — into the sandbox — and the
+    // sidecar must verify under the drill's pinned device key.
+    let matches = *clear == payload;
+    let raw_path = temp.path().join("drill.raw");
+    let out = crate::handoff::release_unsealed(
+        &mut kernel,
+        clear,
+        &crate::handoff::UnsealRelease {
+            raw_path: &raw_path,
+            redemption_entry_hash,
+            granted_entry_hash,
+            recipient: None,
+            created_bucket,
+            tool_version: env!("CARGO_PKG_VERSION"),
+        },
+        &mut crate::handoff::FsReleaseIo,
+    )?;
+    let sidecar = std::fs::read(&out.sidecar_path)?;
+    let report = crate::handoff::verify_sidecar(
+        &sidecar,
+        &out.raw_path,
+        &crate::handoff::VerifyOptions {
+            pinned: Some(device_vk),
+            anchors_dir: None,
+            tsa_cas: &[],
+        },
+    )?;
+    if report.verdict() != "valid" {
+        return Err(anyhow!(
+            "drill failed: the handoff sidecar did not verify ({})",
+            report
+                .first_failure()
+                .map(|c| format!("{}: {}", c.subject, c.detail))
+                .unwrap_or_else(|| report.verdict().to_string())
+        ));
+    }
+    println!(
+        "  {} recorded the unseal and verified its handoff sidecar",
+        DR_OK
+    );
+
     println!();
-    if clear == payload {
+    if matches {
         println!(
             "  {} recovered payload matches the original, byte for byte",
             DR_OK
@@ -2965,6 +3015,7 @@ fn cmd_receipts(
             BreakGlassOutcome::Granted => "GRANTED",
             BreakGlassOutcome::Denied { .. } => "DENIED",
             BreakGlassOutcome::TokenRedeemed { .. } => "REDEEMED",
+            BreakGlassOutcome::Unsealed { .. } => "UNSEALED",
         };
 
         let mut status = "VALID";
@@ -3106,7 +3157,17 @@ fn cmd_receipts(
         invalid_count += 1;
         println!("  verification: {}", err);
     }
-    println!("Total: {}{}", n, provenance.verdict_suffix());
+    let unsealed = redemptions.unsealed();
+    println!(
+        "Total: {}{}{}",
+        n,
+        if unsealed > 0 {
+            format!(", {} unsealed", unsealed)
+        } else {
+            String::new()
+        },
+        provenance.verdict_suffix()
+    );
     if invalid_count > 0 {
         return Err(anyhow!(
             "receipt verification failed for {} entr{} (run log_verify for full audit)",
@@ -3147,6 +3208,7 @@ fn read_token_from_file(path: &str) -> Result<BreakGlassTokenFile> {
     Ok(token_file)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_unseal(
     envelope: &str,
     token_path: &str,
@@ -3155,6 +3217,7 @@ fn cmd_unseal(
     ruleset_id: &str,
     vault_path: &str,
     output_dir: &str,
+    recipient: &crate::handoff::RecipientArgs,
 ) -> Result<()> {
     let token_file = read_token_from_file(token_path)?;
     if token_file.vault_envelope_id != envelope {
@@ -3173,6 +3236,22 @@ fn cmd_unseal(
         ));
     }
     let mut token = token_file.into_token()?;
+    // A bad recipient spends nothing: resolve it before the kernel opens.
+    let recipient = recipient.resolve()?;
+
+    // The output paths, and the stale-sidecar rule, BEFORE the burn: an old
+    // sidecar is moved aside (restored on any failure below, so a re-run
+    // with a spent or wrong token never destroys an earlier disclosure's
+    // salts), and the sidecar path is proven writable before anything is
+    // spent. The sidecar's one time value is read here too, so no fallible
+    // step sits between the decrypt and the fail-closed release.
+    let sanitized = crate::vault::sanitize_envelope_id(envelope)?;
+    let output_dir_path = std::path::Path::new(output_dir);
+    std::fs::create_dir_all(output_dir_path)?;
+    let output_path = output_dir_path.join(format!("{}.raw", sanitized));
+    let stale = prepare_unseal_output(&output_path)?;
+    let created_bucket = crate::handoff::handoff_bucket_now()?;
+
     // Read-write, with the signing key: redeeming the token burns its nonce
     // durably AND appends a device-signed redemption receipt to the chain.
     let cfg = kernel_config(db_path, ruleset_id, device_key_seed);
@@ -3187,30 +3266,88 @@ fn cmd_unseal(
         key_material: crate::VaultKeyMaterial::from_env(),
     })?;
     let verifying_key = kernel.device_verifying_key();
+    let granted_entry_hash = token.receipt_entry_hash();
     // Burn-first (durable anti-replay): the token file just re-parsed as
     // unconsumed, so this is THE gate that stops a granted token from
     // authorizing repeated unseals across separate CLI runs within its
     // validity bucket. Record the nonce — and the signed redemption row that
     // a deleted nonce row cannot undo — before any cleartext exists.
-    kernel.redeem_token_durably(&token)?;
-    let clear = vault.unseal(envelope, &mut token, ruleset_hash, &verifying_key, |hash| {
-        kernel.break_glass_receipt_outcome(envelope, ruleset_hash, hash)
-    })?;
+    let redemption_entry_hash = kernel.redeem_token_durably(&token)?;
+    let clear = zeroize::Zeroizing::new(vault.unseal(
+        envelope,
+        &mut token,
+        ruleset_hash,
+        &verifying_key,
+        |hash| kernel.break_glass_receipt_outcome(envelope, ruleset_hash, hash),
+    )?);
 
-    let sanitized = crate::vault::sanitize_envelope_id(envelope)?;
-    let output_dir_path = std::path::Path::new(output_dir);
-    std::fs::create_dir_all(output_dir_path)?;
-    let output_path = output_dir_path.join(format!("{}.raw", sanitized));
-
-    // Unsealed raw media is the most sensitive artifact break-glass produces —
-    // write it symlink-safe and 0600-guaranteed, then zeroize the plaintext.
-    let mut clear = clear;
-    let write_result = write_secret_file(&output_path.to_string_lossy(), &clear);
-    clear.zeroize();
-    write_result?;
-
-    println!("Unsealed envelope written to {}", output_path.display());
+    // The device-signed unseal record, then the handoff sidecar, then the
+    // cleartext (0600, symlink-safe) — fail-closed, zeroized on every path.
+    let out = crate::handoff::release_unsealed(
+        &mut kernel,
+        clear,
+        &crate::handoff::UnsealRelease {
+            raw_path: &output_path,
+            redemption_entry_hash,
+            granted_entry_hash,
+            recipient: recipient.as_ref(),
+            created_bucket,
+            tool_version: env!("CARGO_PKG_VERSION"),
+        },
+        &mut crate::handoff::FsReleaseIo,
+    )?;
+    stale.discard();
+    print!("{}", unseal_success_lines(&out));
     Ok(())
+}
+
+/// The unseal output's stale-sidecar rule and write probe, run before the
+/// burn (CLI and console share it): move an earlier sidecar at
+/// `<raw>.securacv-handoff.json` aside, then prove a sidecar can be created
+/// there. Either failure refuses with nothing recorded; the returned guard
+/// restores the earlier sidecar unless the caller discards it on success.
+pub(crate) fn prepare_unseal_output(
+    raw_path: &std::path::Path,
+) -> Result<crate::handoff::StaleSidecar> {
+    let sidecar = crate::handoff::sidecar_path_for(raw_path);
+    let stale = crate::handoff::set_aside_stale_sidecar(raw_path).map_err(|e| {
+        anyhow!(
+            "refusing to unseal: a stale handoff sidecar at {} could not be moved aside ({}); \
+             nothing was recorded and the token is not spent",
+            sidecar.display(),
+            e
+        )
+    })?;
+    crate::handoff::probe_sidecar_path(raw_path).map_err(|e| {
+        anyhow!(
+            "refusing to unseal: a handoff sidecar cannot be created at {} ({}); nothing was \
+             recorded and the token is not spent",
+            sidecar.display(),
+            e
+        )
+    })?;
+    Ok(stale)
+}
+
+/// The lines `break_glass unseal` prints on success (the first is pinned by
+/// canary-local; keep it verbatim).
+pub(crate) fn unseal_success_lines(out: &crate::handoff::UnsealOutput) -> String {
+    format!(
+        "Unsealed envelope written to {raw}\n  sha256:          {sha} ({n} bytes)\n  unseal \
+         record:   {u}… appended to the receipt chain (device-signed; pairs this file to its \
+         grant)\n  handoff sidecar: {side} (mode 0600; hand it over with the file)\n  \
+         recipient:       {recipient}\n",
+        raw = out.raw_path.display(),
+        sha = hex::encode(out.file_sha256),
+        n = out.bytes,
+        u = &hex::encode(out.unsealed_entry_hash)[..16],
+        side = out.sidecar_path.display(),
+        recipient = if out.recipient_named {
+            "committed in the signed unseal record; named only in the handoff sidecar"
+        } else {
+            "none named"
+        }
+    )
 }
 
 /// Where the verifying key an audit ran under came from. A key read out of

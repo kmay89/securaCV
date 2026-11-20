@@ -6603,9 +6603,14 @@ test("F384: the module-id deny reaches every Vision source, and reads code, not 
   assert.ok(!tus.includes("common/ota/src/securacv_ota.cpp") && files.includes("common/ota/src/securacv_ota.cpp"),
     "securacv_ota.cpp reaches the Vision as a library source, and the scan reads it");
   // Nothing from another product's tree: no -I, build_src_filter entry or
-  // lib_extra_dirs reaches firmware/canary or another project.
-  assert.deepStrictEqual(files.filter((f) => !/^(?:projects\/canary-vision|common|configs\/canary-vision|boards)\//.test(f)), [],
-    "the scan reads a file outside the Vision's own tree, its config, its board pins and firmware/common");
+  // lib_extra_dirs reaches firmware/canary or another project. The one
+  // library outside them is the patched core-2.0.17 WebServer the Vision's
+  // lib_extra_dirs names (firmware/third_party/WebServer-2.0.17-securacv,
+  // GHSA-8cmm-3887-r32j), which the scan reads like any library it links.
+  assert.deepStrictEqual(files.filter((f) => !/^(?:projects\/canary-vision|common|configs\/canary-vision|boards|third_party\/WebServer-2\.0\.17-securacv)\//.test(f)), [],
+    "the scan reads a file outside the Vision's own tree, its config, its board pins, firmware/common and its patched WebServer");
+  assert.ok(files.includes("third_party/WebServer-2.0.17-securacv/src/Parsing.cpp"),
+    "the scan no longer reads the patched WebServer the Vision's lib_extra_dirs names");
   assert.ok(files.filter((f) => f.startsWith("projects/canary-vision/src/")).length > 5, `the scan reads ${files.length} files`);
   // Where the tree names ID( today (vision_mgr.cpp and its header explain
   // why it is never called), it does so in comments: the code has none.

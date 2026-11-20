@@ -1036,6 +1036,92 @@ def test_write_frigate_config_is_detection_only(monkeypatch):
         assert "snapshots" not in parsed["cameras"][cam]
 
 
+# Frigate's camera-level `mqtt.enabled` (default on) publishes a cropped JPEG
+# of every tracked object to frigate/<camera>/<label>/snapshot as a retained
+# message, whatever `snapshots.enabled` says; the top-level `mqtt:` is only
+# the broker connection. The written config turns it off under every camera
+# and keeps the broker connection on, so frigate/events still flows. Fails on
+# the old writer, which wrote no camera-level mqtt key.
+def test_write_frigate_config_turns_off_per_camera_mqtt_images(monkeypatch):
+    written = {}
+    monkeypatch.setattr(
+        serve_wizard.Path, "write_text",
+        lambda self, text: written.update(text=text), raising=False,
+    )
+    handler = _bare_handler()
+    handler._write_frigate_config(
+        [{"name": "Front Door", "url": "rtsp://10.0.0.9/a"},
+         {"name": "back", "url": "rtsp://10.0.0.9/b"},
+         {"name": "dropped", "url": "file:///etc/passwd"}],
+    )
+    text = written["text"]
+    cameras_block = text.split("\ncameras:\n", 1)[1].split("\ndetectors:\n", 1)[0]
+    assert cameras_block.count("    mqtt:\n      enabled: false\n") == 2
+    assert text.startswith("# Frigate NVR configuration")
+    assert "\nmqtt:\n  enabled: true\n" in text
+    try:
+        import yaml
+    except ImportError:
+        return  # the structural assertions above already hold the text
+    parsed = yaml.safe_load(text)
+    assert parsed["mqtt"]["enabled"] is True
+    assert sorted(parsed["cameras"]) == ["back", "front_door"]
+    for cam, conf in parsed["cameras"].items():
+        assert conf["mqtt"] == {"enabled": False}, cam
+
+
+# Where Frigate keeps its own config, the wizard writes nothing to it but
+# reads it: a camera that leaves the per-camera MQTT images on is named on
+# the done screen. A camera that turns them off, block or flow style, is not;
+# a file the reader cannot resolve says nothing rather than guess.
+FRIGATE_MQTT_IMAGES = """\
+mqtt:
+  enabled: true
+  host: core-mosquitto
+cameras:
+  front_door:
+    detect:
+      width: 1280
+  driveway:
+    mqtt:
+      enabled: false
+  "back yard":
+    mqtt: {enabled: false}
+  garage:
+    mqtt:
+      enabled: true
+      height: 270
+"""
+
+
+def test_frigate_mqtt_images_names_the_cameras_that_leave_them_on(tmp_path):
+    config = tmp_path / "config.yml"
+    config.write_text(FRIGATE_MQTT_IMAGES, encoding="utf-8")
+    assert serve_wizard.frigate_mqtt_images(config) == ["front_door", "garage"]
+    note = serve_wizard.frigate_mqtt_images_note(config)
+    assert "front_door, garage" in note
+    assert "driveway" not in note and "back yard" not in note
+    assert "retained message" in note
+    assert "mqtt: {enabled: false}" in note and str(config) in note
+
+    config.write_text(
+        "cameras:\n  front_door:\n    mqtt:\n      enabled: false\n", encoding="utf-8"
+    )
+    assert serve_wizard.frigate_mqtt_images(config) == []
+    assert serve_wizard.frigate_mqtt_images_note(config) == ""
+
+    for unreadable in (
+        "cameras:\n  front_door:\n    mqtt: &off\n      enabled: false\n",
+        "cameras:\n  front_door:\n    mqtt:\n      enabled: '{FRIGATE_MQTT_IMAGES}'\n",
+        "objects:\n  track: [person]\n",
+    ):
+        config.write_text(unreadable, encoding="utf-8")
+        assert serve_wizard.frigate_mqtt_images(config) is None
+        assert serve_wizard.frigate_mqtt_images_note(config) == ""
+    assert serve_wizard.frigate_mqtt_images(tmp_path / "missing.yml") is None
+    assert serve_wizard.frigate_mqtt_images_note(None) == ""
+
+
 # ---------------------------------------------------------------------------
 # Ingress trust gate: the wizard port is reachable on the Supervisor Docker
 # network, so a co-resident container must not be able to call ANY endpoint

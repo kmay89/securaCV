@@ -1217,6 +1217,13 @@ class SecuraCVCanaryOccupancySensor(SecuraCVCanaryProjectedSensorBase):
     presence (canary-sense's topics.h builds `securacv/<id>/state` and its own
     HA discovery reads `value_json.presence`). A snapshot without the field
     leaves the sensor alone rather than asserting "nobody is there".
+
+    Trust on the state path: the `presence` bool this reads sits outside the
+    firmware's signature (the signed word is `presence_state`), and this
+    entity runs no verifier, so a state publish stamps the unsigned slice
+    (`verified: false`, `trust_reason: unsigned`), never the device's last
+    events verdict. Otherwise a forged retained state, sent right after a
+    good signed event, would read `verified: true`.
     """
 
     _attr_device_class = BinarySensorDeviceClass.OCCUPANCY
@@ -1252,7 +1259,9 @@ class SecuraCVCanaryOccupancySensor(SecuraCVCanaryProjectedSensorBase):
             self._cancel_clear()
             self._cancel_clear = None
         self._attr_is_on = bool(present)
-        self._stamp_trust()
+        self._attr_extra_state_attributes = unsigned_trust_attrs(
+            self.hass, self._entry, self._device_id
+        )
         self.async_write_ha_state()
 
 

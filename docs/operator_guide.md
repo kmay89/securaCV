@@ -138,7 +138,9 @@ cargo run --bin break_glass -- drill --threshold 2 --trustees 3
 **throwaway sandbox** — a temporary database, a temporary vault, and ephemeral
 trustee keys, all discarded when it finishes. It touches nothing real. It seals a
 dummy payload behind a fresh `n`-of-`m` quorum, unseals it with a second quorum
-token, and confirms the recovered bytes match byte-for-byte, then prints
+token, records the unseal and verifies its handoff sidecar under the drill's
+device key (`✓ recorded the unseal and verified its handoff sidecar`), and
+confirms the recovered bytes match byte-for-byte, then prints
 **DRILL PASSED** (exit 0) or fails non-zero. Use it to confirm a build/host can
 actually execute break-glass, and to let trustees practice the flow with zero risk.
 
@@ -183,8 +185,30 @@ cargo run --bin break_glass -- unseal \
   --db witness.db \
   --ruleset-id ruleset:v0.3.0 \
   --vault-path vault/envelopes \
-  --output-dir vault/unsealed
+  --output-dir vault/unsealed \
+  --recipient-file recipient.json
 ```
+
+`--recipient-file` (`{"name": "…", "organization": "…"}`, optionally `"key"`)
+names who receives the file; prefer it to `--recipient-name` /
+`--recipient-org` / `--recipient-key`, which land in shell history. The
+recipient is declared, not verified, and is checked before anything is
+spent. After the decrypt the device appends a signed **unseal record** and
+writes a **handoff sidecar** beside the file — first, then the `.raw`, both
+0600:
+
+```
+Unsealed envelope written to vault/unsealed/<envelope>.raw
+  sha256:          <hex> (<n> bytes)
+  unseal record:   <16 hex>… appended to the receipt chain (device-signed; pairs this file to its grant)
+  handoff sidecar: vault/unsealed/<envelope>.raw.securacv-handoff.json (mode 0600; hand it over with the file)
+  recipient:       committed in the signed unseal record; named only in the handoff sidecar
+```
+
+Hand over the file and its sidecar together; the receiving party checks them
+with `handoff_sidecar verify --file <raw> --public-key-file <device.pub>` or
+the shell recipe in [`handoff_sidecars.md`](handoff_sidecars.md). Then anchor
+the disclosure record: `log_anchor … --subject break_glass_receipt_head`.
 
 ### Break-glass web console
 
@@ -217,7 +241,10 @@ that walks the same four phases without file shuffling, after a one-time setup:
    their key seed and sends you back the signature to paste. Offline trustees can keep using
    `break_glass approve --request`.
 4. **Quorum & unseal** — status now auto-refreshes every few seconds with a per-trustee
-   signed/pending table and a progress bar; **Unseal** enables when quorum is met.
+   signed/pending table and a progress bar; **Unseal** enables when quorum is met. A granted
+   unseal writes the file and its handoff sidecar side by side on the server (the reply's
+   `handoff_sidecar` names it; the page says "hand it over with the evidence file"). The console
+   takes no recipient yet, so its sidecar names none.
 
 Every attempt, granted or denied, is recorded as a tamper-evident receipt either way.
 
@@ -239,6 +266,17 @@ DEVICE_KEY_SEED=devkey:your-seed \
   --self-export \
   --output witness_export.json
 ```
+
+A self-export can record who exported it and why — `--requested-by "Dana Owner" --reason
+owner-recovery [--case-ref HOA-114] [--requester-key <hex>]` — signed into the receipt as a
+**declared** context (it is the device-key holder's own statement, not trustee-consented), and
+either mode can name a recipient (`--recipient-file`, or `--recipient-name` with `--recipient-org`
+/ `--recipient-key`), committed into the receipt salted and named only in the **handoff sidecar**
+written beside the bundle (`<output>.securacv-handoff.json`, 0600). A quorum export refuses
+`--requested-by` (exit 2, nothing spent): its requester is the one the grant recorded, named by
+reference — the receipt's `authorizing_receipt` is the grant's entry hash. If the sidecar cannot
+be written the bundle is kept, the tool exits 1, and the error prints the recovery command
+(`handoff_sidecar emit --file <bundle> --db <db>`).
 
 **Break-glass export** — trustee-quorum authorization for the same artifact, when you want a
 disclosure countersigned by your trustees (e.g. handing evidence to a third party).

@@ -238,6 +238,11 @@ struct Witness {
   uint32_t last_event_ms = 0;
   bool     has_event = false;
   Sev      event_sev = Sev::Ok;
+  // The last event arrived on an unsigned direct band (a chirp or a beacon),
+  // not from the broker. Anyone in radio range or on the LAN can send those
+  // bytes, so such an Alert or Tamper decays on warn_decay_ms instead of
+  // holding the glass until reboot (witness_sev).
+  bool     event_direct = false;
 
   // Level-triggered conditions
   bool     tamper = false;
@@ -327,9 +332,12 @@ class FleetModel {
     w->link = next;
   }
 
+  // may_evict=false is for an unauthenticated source (the mDNS discovery
+  // browse): it seats only in a free slot and never displaces a pseudo
+  // witness (see upsert).
   void on_status(const char* id, const char* device_type, bool online,
-                 int battery_soc, uint32_t now) {
-    Witness* w = upsert(id);
+                 int battery_soc, uint32_t now, bool may_evict = true) {
+    Witness* w = upsert(id, may_evict);
     if (!w) return;
     copy_str(w->device_type, sizeof(w->device_type), device_type);
     if (battery_soc >= 0) { w->battery_pct = (int16_t)battery_soc; w->battery_present = true; }
@@ -386,6 +394,7 @@ class FleetModel {
     copy_str(w->last_event, sizeof(w->last_event), event_name);
     w->last_event_ms = now;
     w->has_event = true;
+    w->event_direct = false;   // broker-fed: keeps the full Alert/Tamper rules
     w->event_sev = classify_event(event_name);
     push_event(id, event_name, w->event_sev, signed_flag, now);
     dirty_ = true;
@@ -408,9 +417,10 @@ class FleetModel {
   // Rooms & names (spec §8): retained securacv/<id>/meta. Deliberately
   // does NOT touch last_seen_ms: meta is human-authored (HA, companion
   // app) and retained — renaming a dead witness must not revive it.
+  // may_evict: as on_status.
   void on_meta(const char* id, const char* name, const char* room,
-               uint32_t /*now*/) {
-    Witness* w = upsert(id);
+               uint32_t /*now*/, bool may_evict = true) {
+    Witness* w = upsert(id, may_evict);
     if (!w) return;
     copy_str(w->name, sizeof(w->name), name);
     copy_str(w->room, sizeof(w->room), room);
@@ -496,7 +506,10 @@ class FleetModel {
   // so it feeds liveness and attention but never trust ("via chirp" names,
   // badge untouched). fp4 = 4 hex chars (the advert's 2-byte fingerprint
   // prefix); an unknown prefix becomes a pseudo witness "SCV-XXXX" so the
-  // glass still shows *something* screamed in the dark.
+  // glass still shows *something* screamed in the dark. A pseudo witness
+  // takes only a free slot (it never displaces anyone), stays below the
+  // witness-lost alarm and is retired after lost_after_ms of silence (tick);
+  // its chirp Alert/Tamper decays like a Warn (event_direct).
   void on_chirp(const char fp4[5], uint8_t chirp_type, uint32_t now) {
     Witness* w = nullptr;
     for (int i = 0; i < MAX_DEVICES; i++) {
@@ -507,7 +520,7 @@ class FleetModel {
       pseudo[0] = 'S'; pseudo[1] = 'C'; pseudo[2] = 'V'; pseudo[3] = '-';
       for (int i = 0; i < 4; i++) pseudo[4 + i] = fp4[i];
       pseudo[8] = '\0';
-      w = upsert(pseudo);
+      w = upsert(pseudo, /*may_evict=*/false);
       if (!w) return;
     }
     w->last_seen_ms = now;
@@ -531,6 +544,7 @@ class FleetModel {
     copy_str(w->last_event, sizeof(w->last_event), name);
     w->last_event_ms = now;
     w->has_event = true;
+    w->event_direct = true;
     w->event_sev = sev;
     push_event(w->id, name, sev, false, now);
   }
@@ -539,8 +553,9 @@ class FleetModel {
   // coarse and UNSIGNED, same trust rules as on_chirp (badge untouched, "via
   // ble" liveness). fp4 = 4 hex chars (the beacon's 2-byte fingerprint
   // suffix); an unknown suffix becomes a pseudo witness "SCV-XXXX", retired
-  // by on_chain once a real identity claims the suffix (same as on_chirp's
-  // ghosts). When have_status the beacon's battery/health/chain/mic/degraded
+  // by on_chain once a real identity claims the suffix, or by tick after
+  // lost_after_ms of silence (same as on_chirp's ghosts, with the same limits
+  // — see is_pseudo). When have_status the beacon's battery/health/chain/mic/degraded
   // fields are stored; tamper rides the same 60 s edge-dedupe as a chirp so a
   // CONTINUOUS beacon can't spam the log or re-cancel acks.
   void on_beacon(const char fp4[5], const BeaconStatus& s, bool have_status,
@@ -554,7 +569,7 @@ class FleetModel {
       pseudo[0] = 'S'; pseudo[1] = 'C'; pseudo[2] = 'V'; pseudo[3] = '-';
       for (int i = 0; i < 4; i++) pseudo[4 + i] = fp4[i];
       pseudo[8] = '\0';
-      w = upsert(pseudo);
+      w = upsert(pseudo, /*may_evict=*/false);
       if (!w) return;
     }
     // Identity is the fingerprint suffix, so the lookup above already collapsed
@@ -609,6 +624,7 @@ class FleetModel {
       copy_str(w->last_event, sizeof(w->last_event), name);
       w->last_event_ms = now;
       w->has_event = true;
+      w->event_direct = true;   // unsigned: decays on warn_decay_ms
       w->event_sev = Sev::Tamper;
       push_event(w->id, name, Sev::Tamper, false, now);
     }
@@ -634,6 +650,7 @@ class FleetModel {
       copy_str(w->last_event, sizeof(w->last_event), name);
       w->last_event_ms = now;
       w->has_event = true;
+      w->event_direct = true;
       w->event_sev = Sev::Warn;
       push_event(w->id, name, Sev::Warn, false, now);
     }
@@ -724,6 +741,16 @@ class FleetModel {
       }
       if (w.link == Link::Offline || w.link == Link::Unknown) continue;
       const int32_t silent = (int32_t)(now - w.last_seen_ms);
+      // A pseudo witness is only an unsigned suffix heard on a direct band:
+      // a neighbor's Canary through the wall, or a forged frame. It never
+      // climbs to Lost (a red "witness lost" and a canceled ack for a device
+      // this household may not own); it leaves the roster at the lost
+      // deadline instead, freeing its slot.
+      if (is_pseudo(w) && silent >= (int32_t)limits_.lost_after_ms) {
+        w.used = false;
+        dirty_ = true;
+        continue;
+      }
       Link next = Link::Online;
       if (silent >= (int32_t)limits_.lost_after_ms)       next = Link::Lost;
       else if (silent >= (int32_t)limits_.stale_after_ms) next = Link::Stale;
@@ -812,6 +839,17 @@ class FleetModel {
     return false;
   }
 
+  // A pseudo witness is the "SCV-XXXX" row on_chirp/on_beacon seat for a
+  // fingerprint suffix no signed identity has claimed (its fp stays empty;
+  // on_chain retires it once one does). Nothing about it is authenticated, so
+  // it may draw attention but it can never hold a slot a Canary from the
+  // broker or the signed chain needs (upsert), raise the witness-lost alarm
+  // (witness_sev) or outlive lost_after_ms of silence (tick).
+  static bool is_pseudo(const Witness& w) {
+    return w.id[0] == 'S' && w.id[1] == 'C' && w.id[2] == 'V' &&
+           w.id[3] == '-' && w.fp[0] == '\0';
+  }
+
   Sev witness_sev(const Witness& w, uint32_t now) const {
     Sev s = Sev::Ok;
     if (w.tamper) s = worst_of(s, Sev::Tamper);
@@ -823,6 +861,13 @@ class FleetModel {
       if (w.link == Link::Lost || w.link == Link::Offline ||
           w.link == Link::Stale) {
         s = worst_of(s, Sev::Notice);
+      }
+    } else if (is_pseudo(w)) {
+      // Link loss on an unsigned suffix is at most a Warn (tick retires it at
+      // the lost deadline, so Lost is not normally reached at all).
+      if (w.link == Link::Lost || w.link == Link::Offline ||
+          w.link == Link::Stale) {
+        s = worst_of(s, Sev::Warn);
       }
     } else if (w.link == Link::Lost) {
       s = worst_of(s, Sev::Alert);
@@ -844,10 +889,17 @@ class FleetModel {
     if (w.has_event) {
       const int32_t age = (int32_t)(now - w.last_event_ms);
       Sev es = w.event_sev;
-      // Informational attention decays; Alert/Tamper only clear via their
-      // level-triggered condition or the fleet-wide ack residual rules.
+      // Informational attention decays; a broker-fed Alert/Tamper only
+      // clears via its level-triggered condition or the fleet-wide ack
+      // residual rules. An unsigned direct-band Alert/Tamper (chirp 0x01 /
+      // 0x03, beacon tamper) decays on the Warn clock: it can draw attention,
+      // but a forged frame cannot hold the glass red until reboot.
       if (es == Sev::Notice && age >= (int32_t)limits_.notice_decay_ms) es = Sev::Ok;
       if (es == Sev::Warn   && age >= (int32_t)limits_.warn_decay_ms)   es = Sev::Ok;
+      if (w.event_direct && (uint8_t)es >= (uint8_t)Sev::Alert &&
+          age >= (int32_t)limits_.warn_decay_ms) {
+        es = Sev::Ok;
+      }
       s = worst_of(s, es);
     }
     return s;
@@ -1074,19 +1126,36 @@ class FleetModel {
     return nullptr;
   }
 
-  Witness* upsert(const char* id) {
+  // Find or seat a witness. With may_evict (the default: the broker's rows,
+  // on_chain, set_mute) a full roster gives up its longest-silent pseudo
+  // witness rather than drop the newcomer, so unsigned direct-band frames
+  // cannot crowd a Canary from the broker or the signed chain off the glass.
+  // Unauthenticated sources pass may_evict=false: on_chirp, on_beacon and the
+  // mDNS discovery browse (on_status/on_meta) take a free slot or nothing,
+  // and never displace anyone.
+  Witness* upsert(const char* id, bool may_evict = true) {
     if (!id || !id[0]) return nullptr;
     for (int i = 0; i < MAX_DEVICES; i++)
       if (slots_[i].used && str_eq(slots_[i].id, id)) return &slots_[i];
+    Witness* seat = nullptr;
     for (int i = 0; i < MAX_DEVICES; i++) {
-      if (slots_[i].used) continue;
-      slots_[i] = Witness{};
-      slots_[i].used = true;
-      copy_str(slots_[i].id, sizeof(slots_[i].id), id);
-      dirty_ = true;
-      return &slots_[i];
+      if (!slots_[i].used) { seat = &slots_[i]; break; }
     }
-    return nullptr;  // fleet full — over-cap devices are dropped, not rotated
+    if (!seat && may_evict) {
+      for (int i = 0; i < MAX_DEVICES; i++) {
+        Witness& g = slots_[i];
+        if (!g.used || !is_pseudo(g)) continue;
+        if (!seat || (int32_t)(g.last_seen_ms - seat->last_seen_ms) < 0) seat = &g;
+      }
+    }
+    // No free slot and nothing this caller may evict: over-cap devices are
+    // dropped, not rotated.
+    if (!seat) return nullptr;
+    *seat = Witness{};
+    seat->used = true;
+    copy_str(seat->id, sizeof(seat->id), id);
+    dirty_ = true;
+    return seat;
   }
 
   void push_event(const char* id, const char* name, Sev sev, bool signed_flag,

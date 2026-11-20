@@ -29,3 +29,12 @@ indent_style = tab
 # Markdown: trailing whitespace can be a hard line break; don't strip it.
 [*.md]
 trim_trailing_whitespace = false
+
+# Vendored upstream code is kept byte for byte (its README records each file's
+# upstream sha256, and scripts/tests/test_vendored_webserver_core2.py checks
+# them): an editor must not reformat it.
+[firmware/third_party/**]
+trim_trailing_whitespace = false
+insert_final_newline = unset
+indent_style = unset
+indent_size = unset

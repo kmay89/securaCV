@@ -189,6 +189,7 @@ COPY --from=builder /build/target/release/export_events /usr/local/bin/
 COPY --from=builder /build/target/release/export_verify /usr/local/bin/
 COPY --from=builder /build/target/release/log_anchor /usr/local/bin/
 COPY --from=builder /build/target/release/court_export /usr/local/bin/
+COPY --from=builder /build/target/release/handoff_sidecar /usr/local/bin/
 
 # The carried integration and blueprints (read by run.sh / serve_wizard.py)
 COPY --from=carry /carry/integration /usr/share/securacv/integration

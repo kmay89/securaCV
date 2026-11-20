@@ -144,7 +144,7 @@
       "id": "write-frigate-config",
       "title": "Write Frigate's configuration",
       "what": "Copy the curated config to `/addon_configs/ccab4aaf_frigate/config.yml`, then start Frigate.",
-      "why": "A stock Frigate knows nothing about your hub. This config points it at the Mosquitto broker (so securaCV hears its detections), tracks the same objects the witness kernel labels, and \u2014 importantly \u2014 leaves recordings AND snapshots OFF: securaCV is 'claims, not recordings', so nothing stores raw imagery unless you deliberately turn it on. It also uses a distinct MQTT client id, so a second detector (say a Jetson) can join without the two knocking each other offline.",
+      "why": "A stock Frigate knows nothing about your hub. This config points it at the Mosquitto broker (so securaCV hears its detections), tracks the same objects the witness kernel labels, and \u2014 importantly \u2014 leaves recordings AND snapshots OFF, and the camera's MQTT images too (the cropped JPEG of every tracked object Frigate otherwise publishes to the broker, a separate switch from snapshots): securaCV is 'claims, not recordings', so nothing stores raw imagery unless you deliberately turn it on. It also uses a distinct MQTT client id, so a second detector (say a Jetson) can join without the two knocking each other offline.",
       "for_what": "Makes Frigate talk to your hub instead of sitting idle.",
       "source": "homeassistant/frigate/config.yaml",
       "dest": "/addon_configs/ccab4aaf_frigate/config.yml",
@@ -152,7 +152,7 @@
       "never_overwrite": true,
       "then_start": "ccab4aaf_frigate",
       "then_start_supervisor_slug": "ccab4aaf_frigate",
-      "user_must_finish": "Add your camera's RTSP URL and set `enabled: true` on it \u2014 the shipped example camera is disabled so the config is valid before you've added anything. Frigate ignores a disabled camera silently, so this is the one edit nobody can make for you.",
+      "user_must_finish": "Add your camera's RTSP URL and set `enabled: true` on it \u2014 the shipped example camera is disabled so the config is valid before you've added anything. Frigate ignores a disabled camera silently, so this is the one edit nobody can make for you. A camera you add beside it needs the `mqtt: enabled: false` the example carries, or Frigate publishes a JPEG of every object it tracks there to the broker.",
       "reversible": true
     },
     {

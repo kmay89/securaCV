@@ -69,3 +69,8 @@ cameras:
       width: 1280
       height: 720
       fps: 5
+    # No JPEG of each tracked object on the hub's broker: Frigate publishes
+    # one per camera and label, retained, unless the camera says off, and
+    # `snapshots` above does not cover it. Events still flow.
+    mqtt:
+      enabled: false
