@@ -135,6 +135,60 @@ pub fn lineage_verifying_keys(
         .collect()
 }
 
+/// Open a kernel database READ-ONLY for an offline tool (`court_export`,
+/// `handoff_sidecar`): explicit `db_key` wins; otherwise the database key is
+/// derived from `device_key_seed` exactly as the kernel does; otherwise the
+/// seed file beside the database is tried; otherwise the database is opened
+/// unkeyed. Never creates a database or a table, so a typo'd path fails
+/// cleanly and a forensic copy on read-only media works. `tool` names the
+/// caller in the one line it may print.
+pub fn open_db_read_only(
+    db: &str,
+    device_key_seed: Option<&str>,
+    db_key: Option<&str>,
+    tool: &str,
+) -> Result<Connection> {
+    let seed_for_db_key: Option<String> = match (db_key, device_key_seed) {
+        (Some(_), _) => None,
+        (None, Some(seed)) => Some(seed.to_string()),
+        (None, None) => crate::crypto::find_device_seed(db, None)?.map(|found| {
+            eprintln!("{}: database key from the {}", tool, found.source);
+            found.seed.to_string()
+        }),
+    };
+    let db_key: Option<String> = match (db_key, seed_for_db_key.as_deref()) {
+        (Some(key), _) => Some(key.to_string()),
+        (None, Some(seed)) => {
+            let signing_key = crate::signing_key_from_seed(seed)?;
+            let seed_env = crate::db_key_seed_from_env();
+            Some(
+                crate::resolve_db_encryption_key(
+                    &signing_key,
+                    seed_env.as_ref().map(|s| s.as_str()),
+                )
+                .to_string(),
+            )
+        }
+        (None, None) => None,
+    };
+    let conn = Connection::open_with_flags(
+        db,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|e| anyhow!("could not open database {}: {}", db, e))?;
+    if let Some(ref key) = db_key {
+        conn.pragma_update(None, "key", format!("x'{}'", key))?;
+    }
+    conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
+        .map_err(|_| {
+            anyhow!(
+                "could not read the kernel database — if it is encrypted, pass \
+                 --device-key-seed (or --db-key)"
+            )
+        })?;
+    Ok(conn)
+}
+
 pub fn hex32(b: &[u8; 32]) -> String {
     b.iter().map(|x| format!("{:02x}", x)).collect()
 }

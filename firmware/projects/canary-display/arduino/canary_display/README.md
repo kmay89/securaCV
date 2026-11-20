@@ -42,8 +42,20 @@ along the arduino-esp32 core boundary:
 
 | Your `esp32` platform | GFX Library for Arduino | NimBLE-Arduino | LVGL | CLI profiles |
 |---|---|---|---|---|
-| **3.x** (Boards Manager default) | 1.6.6 | 2.5.0 | 9.5.0 | `watch-core3` / `dash-core3` |
-| **2.0.17** (PlatformIO release path) | 1.4.9 (EXACT) | 1.4.3 | 8.4.0 | `watch` / `dash` |
+| **3.x** (Boards Manager default) | 1.6.6 | 2.5.2 | 9.5.0 | `watch-core3` / `dash-core3` |
+| **2.0.17** (PlatformIO release path) | 1.4.9 (EXACT) | 1.4.3 | 8.4.0 | `watch` / `dash` (see the warning below) |
+
+> **On core 2.0.17, build with our patched WebServer.** The core's own
+> WebServer sizes a stack buffer from a client's multipart boundary before
+> any of the sketch's handlers run, so any host on your network can overflow
+> it (GHSA-8cmm-3887-r32j: a remote crash, and per the advisory possibly code
+> execution), and no 2.x release fixes it. Our images link
+> [`firmware/third_party/WebServer-2.0.17-securacv`](../../../../third_party/WebServer-2.0.17-securacv/README.md),
+> 2.0.17's library with upstream's fix backported. Build on core 3.x
+> (`watch-core3` / `dash-core3`, which carry upstream's fix), or on 2.0.17
+> pass that directory the way our CI does (the arduino-cli example below).
+> The `watch` and `dash` profiles do not carry it, so a profile build on
+> 2.0.17 links the core's copy.
 
 Mixing GFX/NimBLE rows (core 3 + GFX 1.4.9, or core 2 + NimBLE 2.x) fails
 the build. LVGL is the friendly exception: the source is dual-major, so
@@ -62,8 +74,14 @@ install).
    - `lvgl` — the Library Manager latest (9.x) works as-is; **8.4.0** is
      the bench-parity pairing for core 2 (the source builds on both majors)
    - `GFX Library for Arduino` **1.6.6** (core 3) / **1.4.9** (core 2)
-   - `NimBLE-Arduino` **2.5.0** (core 3) / **1.4.3** (core 2)
+   - `NimBLE-Arduino` **2.5.2** (core 3) / **1.4.3** (core 2)
    - `PubSubClient`, `ArduinoJson`, and `Crypto` (by Rhys Weatherley) — latest
+   - **core 2.0.17 only:** copy the folder
+     `firmware/third_party/WebServer-2.0.17-securacv` into your sketchbook's
+     `libraries/` folder (the warning above says why). A library there takes
+     priority over the core's bundled one; with Preferences → "Show verbose
+     output during compile" on, the build log's `Using library WebServer`
+     line names the folder it used, and it should be that one.
 3. **LVGL config** (one file copy): LVGL looks for `lv_conf.h` one level
    above its own library folder. Copy the sketch's copy there:
    ```bash
@@ -105,8 +123,20 @@ playground`. Core 3.x only — the vendor board entry doesn't exist on
 
 ```bash
 cd firmware/projects/canary-display/arduino/canary_display
-arduino-cli compile --profile watch-core3    # or dash-core3 / watch / dash
+arduino-cli compile --profile watch-core3    # or dash-core3
 arduino-cli upload  --profile watch-core3 -p /dev/ttyACM0
+```
+
+On core 2.0.17, skip the `watch` / `dash` profiles: they link the core's own
+WebServer (GHSA-8cmm-3887-r32j, the warning above). Install the core-2
+libraries from the table, stage `lv_conf.h` as in the IDE steps, and pass
+the patched copy as our CI does:
+
+```bash
+arduino-cli compile \
+  --library <repo>/firmware/third_party/WebServer-2.0.17-securacv \
+  --fqbn esp32:esp32:XIAO_ESP32S3:PSRAM=opi \
+  canary_display.ino
 ```
 
 Profiles auto-download the pinned core + libraries into an isolated build,

@@ -20,8 +20,6 @@
 //! - No response body ever contains the token nonce or any cleartext — only the
 //!   public outcome, the request hash to sign, and the written file path.
 
-use std::path::PathBuf;
-
 use anyhow::Result;
 use serde::Deserialize;
 use serde_json::json;
@@ -86,15 +84,15 @@ pub trait BreakGlassOps {
 
     /// Authorize the collected approvals (logging a tamper-evident receipt either
     /// way), sign the resulting token, and unseal the envelope to `output_dir`.
-    /// Returns the written file path on a granted unseal, or an error describing
-    /// the denial. Must not return cleartext.
+    /// Returns what was written on a granted unseal — the file and its handoff
+    /// sidecar — or an error describing the denial. Must not return cleartext.
     fn authorize_unseal(
         &mut self,
         request: &UnlockRequest,
         approvals: &[Approval],
         now_bucket: TimeBucket,
         output_dir: &str,
-    ) -> Result<PathBuf>;
+    ) -> Result<crate::handoff::UnsealOutput>;
 }
 
 #[derive(Deserialize)]
@@ -453,7 +451,7 @@ fn unseal<O: BreakGlassOps>(
         None => return HttpReply::error(409, "no_open_request"),
     };
     match ops.authorize_unseal(&request, session.approvals(), now_bucket, output_dir) {
-        Ok(path) => {
+        Ok(out) => {
             // Single-use: the request is consumed once unsealed, and its
             // hash is remembered so the same approvals cannot be replayed
             // through a re-opened request inside the same bucket.
@@ -463,7 +461,8 @@ fn unseal<O: BreakGlassOps>(
                 json!({
                     "outcome": "granted",
                     "envelope": request.vault_envelope_id,
-                    "output_path": path.to_string_lossy(),
+                    "output_path": out.raw_path.to_string_lossy(),
+                    "handoff_sidecar": out.sidecar_path.to_string_lossy(),
                 }),
             )
         }
@@ -515,10 +514,19 @@ mod tests {
             approvals: &[Approval],
             _now_bucket: TimeBucket,
             output_dir: &str,
-        ) -> Result<PathBuf> {
+        ) -> Result<crate::handoff::UnsealOutput> {
             self.unseal_calls += 1;
             self.last_approval_count = approvals.len();
-            Ok(PathBuf::from(output_dir).join(format!("{}.raw", request.vault_envelope_id)))
+            let raw_path = std::path::PathBuf::from(output_dir)
+                .join(format!("{}.raw", request.vault_envelope_id));
+            Ok(crate::handoff::UnsealOutput {
+                sidecar_path: crate::handoff::sidecar_path_for(&raw_path),
+                raw_path,
+                file_sha256: [0u8; 32],
+                bytes: 0,
+                unsealed_entry_hash: [0u8; 32],
+                recipient_named: false,
+            })
         }
         fn bootstrap_policy(&mut self, policy: &QuorumPolicy) -> Result<PolicyBootstrap> {
             if self.policy.is_some() {
@@ -827,7 +835,7 @@ mod tests {
                 approvals: &[Approval],
                 now_bucket: TimeBucket,
                 output_dir: &str,
-            ) -> Result<PathBuf> {
+            ) -> Result<crate::handoff::UnsealOutput> {
                 self.0
                     .authorize_unseal(request, approvals, now_bucket, output_dir)
             }
@@ -929,7 +937,7 @@ mod tests {
                 _approvals: &[Approval],
                 _now_bucket: TimeBucket,
                 _output_dir: &str,
-            ) -> Result<PathBuf> {
+            ) -> Result<crate::handoff::UnsealOutput> {
                 Err(anyhow::anyhow!("not provisioned"))
             }
         }
@@ -1032,6 +1040,10 @@ mod tests {
         let dv: serde_json::Value = serde_json::from_str(&done.body).unwrap();
         assert_eq!(dv["outcome"], "granted");
         assert_eq!(dv["output_path"], "/out/vault:1.raw");
+        assert_eq!(
+            dv["handoff_sidecar"],
+            "/out/vault:1.raw.securacv-handoff.json"
+        );
         assert_eq!(ops.unseal_calls, 1);
         assert_eq!(ops.last_approval_count, 2);
         // Single-use: the session is closed after a granted unseal.

@@ -583,7 +583,15 @@ impl PairVerify {
         let reply_state = state.saturating_add(1);
 
         let result = match state {
-            1 => self.m1_to_m2(&request, identity),
+            // Every M1 starts a new exchange from nothing. Keeping the last
+            // exchange's `verified` across a fresh M1 would let a peer that
+            // sent only M1 inherit it: `session_keys` would hand out keys from
+            // the new peer's Diffie-Hellman under the old controller's
+            // identity, with no M3 from anyone.
+            1 => {
+                *self = PairVerify::new();
+                self.m1_to_m2(&request, identity)
+            }
             3 => self.m3_to_m4(&request, store),
             _ => Err(PairError::UnexpectedState),
         };
@@ -1007,6 +1015,40 @@ mod tests {
     fn session_keys_are_unavailable_before_verification() {
         let verify = PairVerify::new();
         assert!(verify.session_keys().is_none());
+    }
+
+    /// A fresh M1 on an exchange that already verified someone must start
+    /// over, not inherit that controller: otherwise a peer that sends M1
+    /// alone gets session keys from its own Diffie-Hellman under the earlier
+    /// controller's identity, with no M3 at all.
+    #[test]
+    fn a_new_m1_forgets_the_controller_the_last_exchange_verified() {
+        let id = identity();
+        let mut store = PairingStore::new();
+        let mut setup = PairSetup::new(CODE).expect("setup");
+        let ctrl = TestController::new("controller-uuid-1");
+        let (_, acc_ltpk) = ctrl
+            .pair_setup(&mut setup, &id, &mut store, CODE)
+            .expect("setup");
+        let mut verify = PairVerify::new();
+        ctrl.pair_verify(&mut verify, &id, &store, &acc_ltpk)
+            .expect("verify completes");
+        assert!(verify.session_keys().is_some());
+
+        let mut scalar = [0u8; 32];
+        scalar[0] = 42;
+        let intruder_pk = XPublicKey::from(&StaticSecret::from(scalar)).to_bytes();
+        let mut m1 = Tlv::new();
+        m1.push_u8(ty::STATE, 1)
+            .push(ty::PUBLIC_KEY, intruder_pk.to_vec());
+        let m2 = Tlv::decode(&verify.handle(&m1.encode(), &id, &store)).expect("tlv");
+        assert_eq!(m2.get_u8(ty::STATE), Some(2), "M1 is still answered");
+
+        assert_eq!(verify.verified_controller(), None);
+        assert!(
+            verify.session_keys().is_none(),
+            "an M1 with no M3 must not yield session keys"
+        );
     }
 
     /// Two connections from the same controller must not share session keys.

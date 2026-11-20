@@ -547,10 +547,14 @@ if [ "$MODE" = "frigate" ]; then
     bashio::log.info "Seals: $([ "$ENABLE_REVIEWS" = "true" ] && echo "only Frigate alerts (reviews)" || echo "every tracked object (events)")"
 
     # Build frigate_bridge command using array for safe argument handling
-    # Note: --allow-remote-mqtt is safe in HA because:
-    # 1. The MQTT broker (core-mosquitto) is a trusted HA component
-    # 2. All event data is still sanitized before logging
-    # 3. No raw media ever flows through this path
+    # Note: --allow-remote-mqtt is needed in HA because core-mosquitto is
+    # another container, not loopback. What it trusts is every publisher on
+    # the Frigate topic: MQTT names none, and the Mosquitto app (7.x) lets
+    # every login it accepts publish every topic, so any broker login, the
+    # Canaries' shared one included, can publish what this bridge seals.
+    # Event data is still sanitized before sealing, and the bridge subscribes
+    # to no image topic (Frigate's per-camera MQTT JPEGs are a separate topic,
+    # off in the configs the setup wizard and the hub plan write).
     # The state prefix and device id are the publisher's (contract C5): the
     # bridge's retained `<prefix>/frigate_link` must land beside the
     # publisher's state topics and name the same `pwk_` id, or Home

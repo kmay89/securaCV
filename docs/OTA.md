@@ -173,7 +173,12 @@ entities (every Canary's firmware entity, or the ones you name), installs on
 **one node at a time**, waits for that node to report the new version through
 its update entity (up to `node_timeout`, default 10 minutes), and **aborts the
 rollout on the first node that fails or times out**, returning what was
-installed, what was skipped and what failed. A node whose update entity says
+installed, what was skipped and what failed. It is for Home Assistant
+administrators only: a call from a signed-in user who is not one is refused
+(`Unauthorized`), and an automation's call, which carries no user, runs.
+Every `update.install` it sends carries the caller's context, so each
+install runs as whoever started the rollout and Home Assistant's per-entity
+permission check runs against them. A node whose update entity says
 it is already current is skipped, never re-pushed. Hub-less fleets have no
 rollout driver in this program — the coordinator in `peer_protocol.h` is the
 intended seat for one, and `PARITY.md` marks it ⚠️.

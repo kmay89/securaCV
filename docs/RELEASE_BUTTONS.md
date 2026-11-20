@@ -434,6 +434,12 @@ commit that is current `main`, or both `:latest` tags move backwards and the
 app's `:<version>` (the tag the Supervisor installs) is overwritten with
 older bits.
 
+**Before any kernel tag:** a release that contains `TokenRedeemed` rows must
+also contain the `Unsealed` reader (`docs/handoff_sidecars.md`, "Upgrade
+order"; `.github/RELEASE_LESSONS.md`, 2026-11-08) — a reader one receipt
+outcome behind fails the whole break-glass walk and boots `witnessd` into
+safe mode.
+
 **Don't:** read a moving `Cargo.toml` version as a kernel release. The version
 is shared with the Home Assistant integration and app
 (`scripts/bump_version.sh` writes all four places), and those ship by their

@@ -357,18 +357,26 @@ fn main() -> Result<()> {
 
     println!("=== Break-Glass Receipts ===");
     println!(
-        "verified {} receipt entries ({} granted, {} denied, {} redeemed)",
+        "verified {} receipt entries ({} granted, {} denied, {} redeemed{})",
         report.break_glass_receipts_verified,
         report.break_glass_granted,
         report.break_glass_denied,
-        report.break_glass_redeemed
+        report.break_glass_redeemed,
+        report
+            .break_glass_unsealed
+            .map(|u| format!(", {} unsealed", u))
+            .unwrap_or_default()
     );
     println!();
 
     println!("=== Export Receipts ===");
     println!(
-        "verified {} export receipt entries",
-        report.export_receipts_verified
+        "verified {} export receipt entries{}",
+        report.export_receipts_verified,
+        report
+            .export_receipts_authorized
+            .map(|a| format!(", {} name their authorizing grant", a))
+            .unwrap_or_default()
     );
     println!();
 

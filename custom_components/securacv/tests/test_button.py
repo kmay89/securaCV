@@ -2,7 +2,8 @@
 
 A press on Verify now is `securacv.verify` for this entry (trigger
 `button`); a press on Export evidence is `securacv.export_evidence` with the
-default window. Neither registers anything; both are unavailable while the
+default window, and like that action it refuses a signed-in user who is not
+an administrator. Neither registers anything; both are unavailable while the
 kernel is out of reach, so a button never promises what it cannot do.
 """
 
@@ -12,10 +13,13 @@ import json
 import types
 from pathlib import Path
 
+import pytest
+
 from . import conftest  # noqa: F401  (installs ha stubs at import time)
 from .conftest import make_entry, make_runtime, run
 
 from homeassistant.core import HomeAssistant  # noqa: E402
+from homeassistant.exceptions import Unauthorized, UnknownUser  # noqa: E402
 
 from .. import button as button_platform  # noqa: E402
 from .. import services  # noqa: E402
@@ -95,3 +99,67 @@ def test_export_evidence_runs_the_action_s_coroutine_with_the_default_window(mon
 def test_the_buttons_call_the_very_coroutines_the_actions_call():
     assert button_platform.async_verify_for_entry is services.async_verify_for_entry
     assert button_platform.async_export_for_entry is services.async_export_for_entry
+
+
+class _Auth:
+    """``hass.auth`` with an administrator and a household member; any other
+    id is a user who no longer exists."""
+
+    USERS = {
+        "admin": types.SimpleNamespace(id="admin", is_admin=True),
+        "member": types.SimpleNamespace(id="member", is_admin=False),
+    }
+
+    async def async_get_user(self, user_id):
+        return self.USERS.get(user_id)
+
+
+def _pressed_by(user_id):
+    """The context Home Assistant sets on the entity for a press by `user_id`."""
+    return types.SimpleNamespace(user_id=user_id, id=f"ctx-{user_id}")
+
+
+def test_export_evidence_refuses_a_press_from_a_user_who_is_not_an_admin(monkeypatch):
+    """button.press is an entity action any signed-in user may call, and the
+    dashboard puts this button on a one-tap tile: the press checks its own
+    context, as the action's registration does, before the kernel is asked."""
+    hass, entry, _c, (_verify, export) = _setup()
+    hass.auth = _Auth()
+    calls: list = []
+
+    async def _export(hass_, entry_, *, window_hours):
+        calls.append((entry_, window_hours))
+        return {"file": "securacv-evidence-2026-10-12-deadbeef.zip", "events": 2}
+
+    monkeypatch.setattr(button_platform, "async_export_for_entry", _export)
+    export.hass = hass
+    export._context = _pressed_by("member")
+    with pytest.raises(Unauthorized):
+        run(export.async_press())
+    export._context = _pressed_by("gone")
+    with pytest.raises(UnknownUser):
+        run(export.async_press())
+    assert calls == [], "a refused press never reaches the export"
+
+    # An administrator, an automation (no user in its context), and an entity
+    # no action has touched yet (HA's class default) all export.
+    for context in (_pressed_by("admin"), _pressed_by(None), None):
+        export._context = context
+        run(export.async_press())
+    assert calls == [(entry, EXPORT_WINDOW_DEFAULT_HOURS)] * 3
+
+
+def test_verify_now_stays_open_to_any_signed_in_user(monkeypatch):
+    hass, entry, _c, (verify, _export) = _setup()
+    hass.auth = _Auth()
+    calls: list = []
+
+    async def _verify(hass_, entry_, *, trigger):
+        calls.append(trigger)
+        return {"verdict": "chain intact"}
+
+    monkeypatch.setattr(button_platform, "async_verify_for_entry", _verify)
+    verify.hass = hass
+    verify._context = _pressed_by("member")
+    run(verify.async_press())
+    assert calls == [VERIFY_TRIGGER_BUTTON]

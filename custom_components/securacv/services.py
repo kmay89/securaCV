@@ -27,7 +27,24 @@ human to make: the key mismatch path tells the owner and asks them to
 confirm the fingerprint by hand precisely so a re-flashed or impersonating
 device cannot be laundered into "trusted" by a rule reacting to its own
 notification. Services never mutate trust (docs/device_trust.md, "Why pin,
-rotate and unpin are not actions"); verifying and exporting only read.
+rotate and unpin are not actions"). Verifying only reads. Exporting writes a
+pack and deletes this kernel entry's oldest packs past its ``evidence_keep``
+limit (``evidence.compose_export``), so it is not read-only.
+
+Who may call what. ``export_evidence`` and ``staged_update`` are admin-only:
+they register through ``async_register_admin_service``, which refuses a call
+whose context names a user who is not a Home Assistant administrator
+(``Unauthorized``) or no longer exists (``UnknownUser``), and lets a call with
+no user through (an automation's context carries none; a script a person
+starts runs under that person's context and is checked as theirs). Without
+it any signed-in account, a wall tablet's included, could delete the owner's
+older evidence packs by exporting past the keep limit, or start a fleet
+firmware rollout. ``staged_update`` also hands its caller's context to every
+``update.install`` it sends, so each install carries the user who started the
+rollout (what the logbook attributes it to) and Home Assistant's per-entity
+control check runs against that user. The Export evidence button checks its
+press context the same way (button.py). The watch actions, ``list_watches``
+and ``verify`` stay open to any signed-in user, as the voice intents are.
 """
 from __future__ import annotations
 
@@ -42,6 +59,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.service import async_register_admin_service
 
 from . import rollout, watch_runtime, watches
 from .api import SecuraCVApiAuthError, SecuraCVApiConnectionError, SecuraCVApiError
@@ -466,7 +484,10 @@ async def _async_staged_update(hass: HomeAssistant, call: ServiceCall) -> dict[s
         if not entity_ids:
             raise _refusal("rollout_no_update_entities")
     result = await rollout.async_run(
-        hass, entity_ids, node_timeout_s=float(call.data[ATTR_NODE_TIMEOUT])
+        hass,
+        entity_ids,
+        node_timeout_s=float(call.data[ATTR_NODE_TIMEOUT]),
+        context=call.context,
     )
     if result.aborted:
         raise _failure(
@@ -546,14 +567,19 @@ def async_setup_services(hass: HomeAssistant) -> None:
         schema=VERIFY_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
     )
-    hass.services.async_register(
+    # Admin-only (module docstring, "Who may call what"): the helper checks
+    # the caller's context before the handler runs and passes its response
+    # through unchanged.
+    async_register_admin_service(
+        hass,
         DOMAIN,
         SERVICE_EXPORT_EVIDENCE,
         _export_evidence,
         schema=EXPORT_EVIDENCE_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
     )
-    hass.services.async_register(
+    async_register_admin_service(
+        hass,
         DOMAIN,
         SERVICE_STAGED_UPDATE,
         _staged_update,

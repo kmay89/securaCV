@@ -42,7 +42,10 @@ product is the same from there on.
   enabled. Also linked from the wizard if it is missing. No Frigate yet? The
   wizard asks for your cameras' RTSP URLs and writes Frigate's camera config
   for you — detection-only: recording is off and snapshots are not turned
-  on until you enable them in Frigate.
+  on until you enable them in Frigate. Each camera's MQTT images are off
+  too (`mqtt: enabled: false` under the camera): Frigate otherwise
+  publishes a cropped JPEG of every object it tracks to the broker as a
+  retained message, whatever its snapshot setting says.
 - Home Assistant 2026.5.0 or newer.
 
 ## What the wizard does, step by step
@@ -58,7 +61,9 @@ product is the same from there on.
    Nothing to type."). Without Frigate: name + RTSP URL per camera. Name
    cameras by place, not by person. The config the wizard writes is
    detection-only — recording off, snapshots not turned on; enable either
-   in Frigate if you want footage.
+   in Frigate if you want footage. It also turns each camera's MQTT images
+   off. Where Frigate keeps its own config, the wizard writes nothing to it
+   and names, on its last screen, any camera that leaves those images on.
 3. **Settings.** How long to keep sealed events (7 days, 30 days, 1 year —
    exports are self-contained, nothing is lost by exporting first). What to
    seal: every tracked object (default), or only Frigate alerts — which
