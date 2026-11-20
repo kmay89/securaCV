@@ -343,8 +343,8 @@ footer a{color:var(--accent);text-decoration:none}
         <div class="wiz-check-meta" style="font-family:inherit;font-size:.8rem;line-height:1.5;background:var(--surface-2);color:var(--text);white-space:normal">
           <ul style="margin:0;padding-left:1.1rem">
             <li>It notices movement and presence in the room, and remembers <em>that</em> it happened &mdash; not who.</li>
-            <li>It keeps its record on the device itself. Every entry is signed, so nobody can quietly change it &mdash; not even you.</li>
-            <li>Nothing leaves your home unless you connect it to something yourself.</li>
+            <li>It keeps its record on the device itself. Every entry is signed and chained to the one before it, so a change to any of them shows &mdash; even one you make.</li>
+            <li>It sends that record nowhere on its own. The one thing it asks the internet for is a daily check for signed updates; anything more is a connection you set up.</li>
           </ul>
         </div>
       </details>

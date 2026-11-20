@@ -272,6 +272,18 @@ jobs:
         # research docs) and allowlists only the files that state the rule or
         # test for it.
         run: python3 scripts/lint_fleet_word.py
+      - name: The record is tamper-evident (AGENTS.md rule 4)
+        # A signed, hash-chained log makes an edit visible; it does not
+        # prevent one. The website and the HACS store page were held to that
+        # word by their own tests, and this tree by nothing: a Canary's boot
+        # banner, its console greeting, three Lab generators and six compiled
+        # emulator bundles said the "-proof" form for a year. The script bans
+        # the stem in every spelling, allowlists only the docs that state the
+        # rule or quote a finding and the tests that assert its absence, and
+        # fails when an allowlist entry outlives its reason;
+        # scripts/tests/test_lint_tamper_word.py pins each verdict and that no
+        # device-string source can be exempt.
+        run: python3 scripts/lint_tamper_word.py
       - name: No compiled binary committed
         # The host-test Makefiles build into build/, but a hand build beside
         # the source (`g++ test_x.cpp -o test_x`) leaves an extensionless

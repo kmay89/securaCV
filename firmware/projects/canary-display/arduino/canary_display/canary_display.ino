@@ -1717,7 +1717,7 @@ void setup() {
 
   boot_scene_ready(
       "It will watch the witnesses so you don't have to,",
-      "verify their chains on its own silicon, and never phone home.",
+      "verify their chains on its own silicon, with no cloud in between.",
       NULL);
 
   render(canary::ms_now());
