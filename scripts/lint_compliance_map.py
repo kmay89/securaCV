@@ -312,25 +312,25 @@ def has_test(path: Path, rel: str, name: str) -> bool:
             # The three non-blank lines above, but only the run of attributes
             # and comments that belongs to this fn: an earlier item's
             # #[test] must not lend itself to a helper declared after it.
-            above = [l.strip() for l in lines[:i] if l.strip()][-3:]
+            above = [ln.strip() for ln in lines[:i] if ln.strip()][-3:]
             own = []
-            for l in reversed(above):
-                if not l.startswith(("#[", "//")):
+            for prev in reversed(above):
+                if not prev.startswith(("#[", "//")):
                     break
-                own.append(l)
-            if any(RUST_TEST_ATTR.match(l) for l in own):
+                own.append(prev)
+            if any(RUST_TEST_ATTR.match(a) for a in own):
                 return True
         return False
     if path.suffix == ".py" and path.name.startswith("test_"):
         rx = re.compile(r"^\s*(?:async\s+)?def\s+" + re.escape(name) + r"\s*\(")
-        return any(rx.search(l) for l in lines)
+        return any(rx.search(ln) for ln in lines)
     if path.name.endswith(".test.js"):
         rx = re.compile(r"\b(test|it|describe)\(\s*['\"]" + re.escape(name) + r"['\"]")
-        return any(rx.search(l) for l in lines)
+        return any(rx.search(ln) for ln in lines)
     parts = rel.split("/")
     if parts[0] == "firmware" and "tests_host" in parts[:-1] and path.suffix in (".cpp", ".cc", ".c"):
         rx = re.compile(r"\bvoid\s+" + re.escape(name) + r"\s*\(")
-        return any(rx.search(l) for l in lines)
+        return any(rx.search(ln) for ln in lines)
     return False
 
 
