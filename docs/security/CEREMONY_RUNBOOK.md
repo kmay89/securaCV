@@ -345,13 +345,19 @@ script hash, and a procedural cooling-off.
    ```sh
    break_glass --ui plain unseal --envelope cam-porch-0007 --token unlock.token \
      --db witness.db --device-key-seed "$DEVICE_KEY_SEED" \
-     --vault-path vault/envelopes --output-dir vault/unsealed
+     --vault-path vault/envelopes --output-dir vault/unsealed \
+     --recipient-file recipient.json
    ```
    → cleartext in `--output-dir` with restricted permissions; the token
    nonce is durably consumed before any cleartext exists, so a replay is
    refused (**CODE**). At the gate the receipt's recorded context must
    re-derive the consented hash and its named trustees must match the valid
-   approvals (**CODE**).
+   approvals (**CODE**). Prefer `--recipient-file` to `--recipient-name`
+   (shell history). After the decrypt the device appends a signed unseal
+   record and writes the handoff sidecar beside the `.raw`, sidecar first,
+   fail-closed (**CODE**). Hand over the file **and** its sidecar. Then
+   anchor the disclosure record right away: `log_anchor … --subject
+   break_glass_receipt_head` (**CODE**; operator-initiated).
 7. Audit:
    ```sh
    break_glass --ui plain receipts --db witness.db \
@@ -360,10 +366,16 @@ script hash, and a procedural cooling-off.
    → per receipt: `prev_hash`, `entry_hash`, signature, and the deterministic
    human-readable record (printed name, UTC bucket, meaning of each
    signature) (**CODE**). Capture it into the ceremony record.
-8. Disclosure handoff (**PROC** → §5 sidecars, **GAP**). Write into
-   `CLOSEOUT.md`: the SHA-256 of every released file, the recipient, the
-   purpose, and the receipt's `entry_hash`. `court_export` packages
-   event-export bundles, not unseal outputs (**GAP**).
+8. Disclosure handoff (**CODE**: `docs/handoff_sidecars.md`). Every
+   released file has its handoff sidecar: the grant, the redemption and the
+   unseal record verbatim, the salted plaintext pairing, the declared
+   recipient fixed by a salted commitment. Record in `CLOSEOUT.md` the
+   SHA-256 of every released file and of its sidecar, and the unseal record
+   hash `unseal` printed; the receiving party runs `handoff_sidecar verify
+   --file <raw> --public-key-file device.pub` or the shell recipe. To
+   forward a sidecar without the recipient's name, `handoff_sidecar redact`.
+   `court_export` packages event-export bundles, not unseal outputs
+   (**GAP**).
 
 **Served-console variant** (`break_glass_serve --addr 127.0.0.1:8800 --db witness.db --device-key-seed "$DEVICE_KEY_SEED" --vault-path vault/envelopes --output-dir vault/unsealed --token-path serve.token`).
 The operator connects with the capability token from `--token-path`; the
@@ -399,7 +411,7 @@ securely delete it — it is sensitive and useless once consumed.
 | Truthful trustee attribution in the record | **CODE** |
 | Precommitted channels | **PROC** → §3.3 |
 | Cooling-off, notify-all, veto, emergency profile | **PROC** → §3.5 |
-| Handoff sidecars for unseal outputs | **GAP** → §5 |
+| Handoff sidecars for unseal outputs | **CODE** (`docs/handoff_sidecars.md`) |
 
 ### C4 — Rehearsal
 
@@ -761,7 +773,7 @@ rotate per bucket automatically.
 | Proactive resharing, liveness attestations | **GAP** → §2.4 | recorded rehearsals (C4b) |
 | Anchors cross-bound into full verify (`log_verify`) | **CODE** (structural) / **GAP** (countersignature) → §4 | every anchor row's shape, imprint and declared-ledger membership are part of the ledger verdict (`anchor_regression`); the TSA countersignature stays with `log_anchor verify --ca` |
 | Clock provenance sealed per anchor | **CODE** | `witnessd` seals the device-clock-vs-`genTime` record of every anchor row; `log_anchor verify` (`clock:` lines, `max_clock_offset_s` under `--policy`), `log_verify` (`=== Clock Provenance ===`), `court_export` (`clock_provenance/`, "Time source") |
-| Handoff sidecars for unseal outputs | **GAP** → §5 | `CLOSEOUT.md` digests |
+| Handoff sidecars for unseal outputs | **CODE** | `break_glass unseal` writes `<file>.securacv-handoff.json` (signed grant, redemption, unseal record; salted pairing; declared recipient); `handoff_sidecar verify` / the shell recipe; `CLOSEOUT.md` records both digests |
 | Device-key rotation and database re-key commands | **CODE** | `break_glass rotate-identity`, `break_glass rekey-db` |
 | Device seed file private to its owner | **CODE** | a seed file with any group/other permission bit is refused, naming `chmod 600` |
 | Trustee key generation / public-key helper | **GAP** | external Ed25519 tool |

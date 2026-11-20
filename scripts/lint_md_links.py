@@ -48,7 +48,23 @@ from urllib.parse import unquote
 
 ROOT = Path(__file__).resolve().parents[1]
 SKIP_DIRS = {".git", "node_modules", "target", "build", "dist", ".venv",
-             "__pycache__", ".pytest_cache", "third_party"}
+             "__pycache__", ".pytest_cache"}
+# A third_party/ directory is a tree a build fetched (the emulator's LVGL,
+# ArduinoJson and arduinolibs; glass_turn_lvgl9.sh's second LVGL) and is
+# skipped, except firmware/third_party/: that one is committed (the patched
+# core-2 WebServer) and is checked like any tracked file. The same rule and
+# its reasons: lint_spelling.py's fetched_third_party().
+COMMITTED_THIRD_PARTY = ("firmware", "third_party")
+
+
+def fetched_third_party(f):
+    """True for a file under a fetched third_party/ (not firmware/third_party/)."""
+    if "third_party" not in f.parts:
+        return False
+    parts = f.resolve().parts
+    return any(p == "third_party" and parts[i - 1:i + 1] != COMMITTED_THIRD_PARTY
+               for i, p in enumerate(parts) if i)
+
 
 # One level of balanced parentheses is allowed inside the target, so
 # `[spec](file_(v2).md)` isn't truncated at the first `)`.
@@ -127,7 +143,8 @@ def md_files(paths):
             yield p
             continue
         for f in sorted(p.rglob("*.md")):
-            if f.is_file() and not any(d in f.parts for d in SKIP_DIRS):
+            if (f.is_file() and not any(d in f.parts for d in SKIP_DIRS)
+                    and not fetched_third_party(f)):
                 yield f
 
 

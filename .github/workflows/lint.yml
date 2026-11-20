@@ -493,6 +493,10 @@ jobs:
         # SECURACV_MQTT_PASSWORD, so README/RUNBOOK step one must write .env
         # before any `docker compose` command, or it fails as written.
         run: bash integrations/ha_frigate_mqtt/tests/test_bringup_order.sh
+      - name: Frigate stack config keeps per-camera MQTT images off
+        # Frigate publishes a retained JPEG of every tracked object unless a
+        # camera says mqtt.enabled: false; snapshots.enabled does not cover it.
+        run: bash integrations/ha_frigate_mqtt/tests/test_frigate_camera_mqtt.sh
 
   hacs-store-page-links:
     # The HACS store page is the mirror's README.md

@@ -681,6 +681,27 @@ function packKeyNote(bundleKeyHex) {
 }
 
 // ---- helpers -------------------------------------------------------------
+// The receipt's declared disclosure context and its authorizing grant, as rows (every value
+// through esc). "Declared" labels what the exporting operator stated; the grant is named by
+// reference — its trustee-consented context lives on the grant, not in this file.
+function disclosureRows(r) {
+  let rows = '';
+  const op = r.context && r.context.operator;
+  if (op) {
+    rows += `<dt>Declared operator</dt><dd>${esc(op.requester_name)} — declared by the exporting operator, not trustee-consented</dd>`;
+    rows += `<dt>Reason code</dt><dd>${esc(op.reason_code)}</dd>`;
+    if (op.case_ref != null) rows += `<dt>Case reference</dt><dd>${esc(op.case_ref)}</dd>`;
+    if (op.requester_key != null) rows += `<dt>Requester key (claimed)</dt><dd class="mono">${esc(op.requester_key)}</dd>`;
+  }
+  if (r.context && r.context.recipient_commitment != null) {
+    rows += '<dt>Recipient</dt><dd>committed in the signed receipt — the name is in the handoff sidecar, not in this file</dd>';
+  }
+  if (Array.isArray(r.authorizing_receipt)) {
+    const hex = r.authorizing_receipt.map((b) => Number(b).toString(16).padStart(2, '0')).join('');
+    rows += `<dt>Authorizing grant</dt><dd class="mono">${esc(hex)} <span class="c-muted">(consent recorded on the grant)</span></dd>`;
+  }
+  return rows;
+}
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function fmtBytes(n) { return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB'; }
 function fmtBucket(tb) {
@@ -904,7 +925,7 @@ async function processBundle(bundle, sourceLabel, stale) {
     <dt>Window</dt><dd>${r.window
       ? esc(new Date(r.window.start_epoch_s * 1000).toISOString().replace('.000Z', 'Z')) + ' → ' + esc(new Date(r.window.end_epoch_s * 1000).toISOString().replace('.000Z', 'Z'))
       : 'full retained history'}</dd>
-    <dt>Events in batch</dt><dd>${esc(String(r.batch_size))}</dd>
+    <dt>Events in batch</dt><dd>${esc(String(r.batch_size))}</dd>${disclosureRows(r)}
     <dt>Artifact hash</dt><dd class="mono">${esc(report.artifact_hash || '')}</dd>
     <dt>Receipt entry hash</dt><dd class="mono">${esc(report.entry_hash || '')}</dd>
   </dl>
@@ -1050,6 +1071,16 @@ function failureDiagnosis(f) {
       what: 'A break-glass receipt does not satisfy the quorum policy it claims (or required approvals are missing).',
       causes: 'The policy was changed or removed after receipts were written, or a receipt was recorded without the required approvals.',
       next: 'Compare the trustee keys in the policy against the approvals; ask the trustees what they actually signed.',
+    },
+    token_redemption: {
+      what: 'The break-glass chain’s record of spent tokens is inconsistent: a token redeemed twice, a redemption naming no grant, or an unseal record that names no redemption or repeats one.',
+      causes: 'A single-use token was replayed, or a redemption or unseal record was forged or removed.',
+      next: 'Treat the unseal as possibly repeated; compare the chain head against its last anchor and ask who held the token file.',
+    },
+    export_authorization: {
+      what: 'An export receipt’s link to the break-glass grant that authorized it does not hold: the grant is missing, is for another envelope, was never spent, authorized two exports, or the receipt restates an operator beside it.',
+      causes: 'A forged or edited export receipt; a grant or redemption row removed from the break-glass chain.',
+      next: 'Compare both chain heads against their last anchors and list who held the device key.',
     },
     untrusted_signer: {
       what: 'The checkpoint names a signer key that is not part of the device’s genesis-anchored key lineage.',

@@ -126,3 +126,78 @@ fn paired_bundle_with_an_edited_bearer_is_rejected() {
         "got: {err}"
     );
 }
+
+/// The handoff-era receipt tail (regenerate with
+/// `cargo run --example gen_handoff_fixtures`): a self-export's declared
+/// `context` (operator + salted recipient commitment) and a quorum export's
+/// trailing `authorizing_receipt`. Both verify, and every edit to the new
+/// fields breaks the signed entry hash.
+#[test]
+fn handoff_era_bundles_verify_and_their_new_fields_are_signed() {
+    let selfie = load_named("valid_bundle_self_context.json");
+    verify_export_bundle(&selfie).expect("self-export context fixture must verify");
+    let ctx = selfie
+        .receipt_entry
+        .receipt
+        .context
+        .clone()
+        .expect("a declared context");
+    let op = ctx.operator.expect("the exporting operator");
+    assert_eq!(
+        (op.requester_name.as_str(), op.reason_code.as_str()),
+        ("Dana Owner", "owner-recovery")
+    );
+    assert!(ctx.recipient_commitment.is_some());
+    assert_eq!(selfie.receipt_entry.receipt.authorizing_receipt, None);
+
+    let quorum = load_named("valid_bundle_quorum.json");
+    verify_export_bundle(&quorum).expect("quorum fixture must verify");
+    let receipt = &quorum.receipt_entry.receipt;
+    assert_eq!(receipt.auth_mode, Some(ExportAuthMode::BreakGlass));
+    assert!(receipt.authorizing_receipt.is_some());
+    let ctx = receipt.context.as_ref().expect("a recipient commitment");
+    assert!(
+        ctx.operator.is_none(),
+        "a quorum export never restates an operator"
+    );
+    let json = serde_json::to_string(receipt).expect("serialize");
+    assert!(
+        json.contains(r#""context":{"recipient_commitment":["#)
+            && json.contains(r#"]},"authorizing_receipt":["#),
+        "{json}"
+    );
+
+    type Edit = fn(&mut ExportBundle);
+    let edits: [(&str, Edit); 5] = [
+        ("valid_bundle_self_context.json", |b| {
+            let c = b.receipt_entry.receipt.context.as_mut().unwrap();
+            c.operator.as_mut().unwrap().requester_name = "Someone Else".into();
+        }),
+        ("valid_bundle_self_context.json", |b| {
+            b.receipt_entry.receipt.context = None;
+        }),
+        ("valid_bundle_self_context.json", |b| {
+            let c = b.receipt_entry.receipt.context.as_mut().unwrap();
+            c.recipient_commitment.as_mut().unwrap()[0] ^= 1;
+        }),
+        ("valid_bundle_quorum.json", |b| {
+            b.receipt_entry
+                .receipt
+                .authorizing_receipt
+                .as_mut()
+                .unwrap()[0] ^= 1;
+        }),
+        ("valid_bundle_quorum.json", |b| {
+            b.receipt_entry.receipt.authorizing_receipt = None;
+        }),
+    ];
+    for (name, edit) in edits {
+        let mut b = load_named(name);
+        edit(&mut b);
+        let err = verify_export_bundle(&b).expect_err("an edited new field must fail");
+        assert!(
+            err.to_string().contains("entry hash mismatch"),
+            "{name}: {err}"
+        );
+    }
+}

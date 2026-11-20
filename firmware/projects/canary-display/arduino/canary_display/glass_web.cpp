@@ -90,7 +90,9 @@ bool s_mdns_added = false;
 //      re-pointed at this device's LAN IP arrives with Origin == Host ==
 //      evil.example, passes as same-site, and reads the token as
 //      same-origin. So a request whose Host is a public domain is foreign —
-//      for the writes, for the token, and for the per-witness reads — while
+//      for the writes, for the token, for the per-witness reads, and for the
+//      receipt (/api/device names the home network), the log ring and
+//      /api/ota/status — while
 //      an IP literal, the .local name, a single label, or a private-use
 //      suffix (.lan, .home.arpa, .internal) is every way the household
 //      actually reaches the glass.
@@ -727,8 +729,11 @@ void handle_tz_set() {
 //
 // LAN-open like the ordinary writes here (/api/set's look and night knobs,
 // /api/tz): the glass mints no bearer credential, the LAN is the trust
-// boundary, and the worst a caller can do is start a check for firmware
-// the device then verifies against its pinned Ed25519 release key. (The
+// boundary, and a direct LAN caller can start a check, or an install of a
+// newer release the device verifies against its pinned Ed25519 release key
+// first. The install kick does not read the Auto Update switch, so a caller
+// on the LAN can install that verified release on a glass whose owner
+// turned auto-update off, and the glass restarts into it. (The
 // one write class that is NOT LAN-open is the on-glass-only pair — see
 // rule 3 of the write-guard note; an update check is not an opt-in to
 // anything and is answered by a signature, so it does not belong there.)
@@ -769,7 +774,14 @@ void send_ota_kick(OtaKick kick, const char* started_msg,
 // GET /api/ota/status — versions, state, progress, error; the subset of
 // the canary's status document this engine surface carries, same field
 // names. Booleans are real JSON booleans (the Flasher compares ===).
+// A foreign Host (a DNS-rebinding page, write-guard note 2b) is refused, as
+// /api/device and /api/log refuse it; the Flasher and the apps address the
+// glass by its IP or .local name and never trip this.
 void handle_ota_status() {
+  if (host_is_foreign()) {
+    s_server->send(403, "application/json", "{\"ok\":false,\"err\":\"host\"}");
+    return;
+  }
   const OtaWebStatus s = ota_web_status();
   char body[768];
   size_t o = 0;
@@ -815,8 +827,14 @@ void handle_ota_install() {
 
 // The receipt: what this unit IS — chip, memory, radio, firmware, and the
 // capabilities this build carries. Everything the boot banner knows, on
-// the phone.
+// the phone. It names the home network (ssid), so a foreign Host — a
+// DNS-rebinding page, same-origin with the device it re-pointed its name at
+// (write-guard note 2b) — is refused; a direct client is unaffected.
 void handle_device() {
+  if (host_is_foreign()) {
+    s_server->send(403, "application/json", "{\"ok\":false,\"err\":\"host\"}");
+    return;
+  }
   static char body[1024];
   size_t o = 0;
   const size_t C = sizeof(body);
@@ -877,7 +895,12 @@ void handle_device() {
 }
 
 // The browser serial monitor: the same lines the USB cable would show.
+// Refused to a foreign Host for the same reason as handle_device.
 void handle_log() {
+  if (host_is_foreign()) {
+    s_server->send(403, "application/json", "{\"ok\":false,\"err\":\"host\"}");
+    return;
+  }
   static char body[LOG_LINES * LOG_W];
   size_t o = 0;
   for (uint8_t i = 0; i < s_log_n; ++i) {

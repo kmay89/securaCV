@@ -251,10 +251,14 @@ void discovery_scan_witnesses(uint32_t now, bool broker_up) {
 
     // mDNS TXT is unauthenticated: seen + named only, never a trust badge.
     // battery_soc = -1: mDNS carries no charge state.
+    // may_evict=false: an announced row takes a free slot or nothing, so a
+    // LAN host announcing role=witness cannot push a beacon-heard Canary (a
+    // pseudo witness) off the roster (fleet_model.h upsert).
     fleet.on_status(id.c_str(), dt.length() ? dt.c_str() : "",
-                    /*online=*/true, /*battery_soc=*/-1, now);
+                    /*online=*/true, /*battery_soc=*/-1, now,
+                    /*may_evict=*/false);
     if (name.length() && name.length() < TXT_MAX && name != id) {
-      fleet.on_meta(id.c_str(), name.c_str(), "", now);
+      fleet.on_meta(id.c_str(), name.c_str(), "", now, /*may_evict=*/false);
     }
   }
 }

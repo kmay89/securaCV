@@ -86,6 +86,29 @@ recipient can check without our tools.
 → [the operator guide](operator_guide.md) ·
 [evidence lifecycle](evidence_lifecycle.md)
 
+### What do I hand the receiving party with an unsealed file?
+
+The file **and its handoff sidecar** — `<file>.securacv-handoff.json`,
+written beside it by `break_glass unseal` (and by every `export_events` run;
+an API bundle gets one through `handoff_sidecar emit`). The sidecar
+carries the device-signed records of that disclosure: the trustees' grant,
+the redemption that spent the token, and the device's unseal record, which
+pairs this exact file to the envelope it decrypted through a salted
+commitment only the sidecar can open. The receiving party checks it with
+`handoff_sidecar verify --file <file> --public-key-file <device.pub>` or
+with `sha256sum`, `openssl` and `jq` alone (the recipe in
+[handoff sidecars](handoff_sidecars.md)). To forward a sidecar without the
+recipient's name, `handoff_sidecar redact` it first.
+
+### Can the device prove who we gave footage to?
+
+No — and it does not pretend to. It proves what was decrypted (the unseal
+record, device-signed) and under whose consent (the grant), and it **fixes
+what you declared** about the recipient: the name you give at unseal is
+committed, salted, into the signed record, so it cannot be swapped later.
+But the device never checks who actually received the file; the sidecar
+says "declared by the operator, not verified" for exactly that reason.
+
 ### Does it phone home? Any telemetry, any accounts?
 
 No. Logs stay local, there is no remote indexing and no telemetry (Invariant
@@ -601,10 +624,21 @@ off no phone reaches the door. Holding a WAP's BOOT button
 for 10 seconds (the serial console says "keep holding" at 3 s) is its
 factory reset: the saved Wi-Fi networks, the broker settings, the device
 name and the first-boot flag are cleared and the setup wizard runs again;
+on a release after 2.4.20 the hold also removes the camera vault's
+recipient key (the public key frames are sealed to), turns every vault capture trigger off and erases an update-server
+override (2.4.20 and earlier keep all three, so first press Remove key
+under Camera → Sealed Alarm Snapshots, and empty Settings → Device →
+Advanced: update server, then Save Update Settings);
 the Ed25519 identity key, the witness chain and the sealed records are
 kept, so every hub and display that pinned the key still recognizes it
 (every Canary with a BOOT button has the same 10-second hold —
-`docs/OTA.md` and `docs/TRUST_MODEL.md` say why the key survives). The
+`docs/OTA.md` and `docs/TRUST_MODEL.md` say why the key survives). Handing
+a WAP to someone else? The hold keeps its identity key and its API token,
+so whoever held that token still holds it; an install in either flasher
+starts its on-board settings and keys over instead (its factory image
+starts NVS over: a new key, a new token), and neither empties the microSD
+card, so copy what you want from its `/WITNESS` and `/VAULT` folders and
+then delete them. The
 hold needs no token and no tap and works whatever the lockout is doing, but
 it keeps the API token and opens the setup door to whichever Bluetooth
 device connects first, so it is the last way out when BOOT taps keep

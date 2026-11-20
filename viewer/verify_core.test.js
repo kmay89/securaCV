@@ -441,3 +441,229 @@ describe('export-bundle verification parity', () => {
     }
   });
 });
+
+// ---- handoff-era receipts (ExportReceipt.context / authorizing_receipt, the Unsealed row) ----
+// The Rust side pins the same literals in src/disclosure_tests.rs
+// (export_receipt_generations_serialize_byte_identically) and the same fixtures in
+// tests/export_bundle_fixtures.rs and tests/envelope_fixtures.rs. Regenerate the fixtures with
+//   cargo run --example gen_handoff_fixtures
+describe('handoff-era receipts: context, authorizing_receipt and the unseal record', () => {
+  const nodeCrypto = require('node:crypto');
+  const BUNDLE_FIXTURES = path.join(__dirname, '..', 'tests', 'fixtures', 'export_bundle');
+  const loadNamed = (name) => JSON.parse(fs.readFileSync(path.join(BUNDLE_FIXTURES, name), 'utf8'));
+  const rep = (b) => Array(32).fill(b);
+  const ints = (b) => rep(b).join(',');
+  const head = `{"time_bucket":{"start_epoch_s":600,"size_s":600},"ruleset_hash":[${ints(1)}],"batch_size":50,"artifact_hash":[${ints(2)}]`;
+  const base = { time_bucket: { start_epoch_s: 600, size_s: 600 }, ruleset_hash: rep(1), batch_size: 50, artifact_hash: rep(2) };
+  const win = { start_epoch_s: 600, end_epoch_s: 1200 };
+
+  it('serializes the five receipt generations byte-identically to the Rust literals', () => {
+    assert.equal(V.serExportReceipt(base), head + '}');
+    assert.equal(V.serExportReceipt({ ...base, auth_mode: 'paired', window: win, token_id: 'deadbeef' }),
+      head + ',"auth_mode":"paired","window":{"start_epoch_s":600,"end_epoch_s":1200},"token_id":"deadbeef"}');
+    assert.equal(V.serExportReceipt({
+      ...base, auth_mode: 'self_export',
+      context: { operator: { requester_name: 'Dana Owner', reason_code: 'owner-recovery', case_ref: 'HOA-114', requester_key: null }, recipient_commitment: rep(3) },
+    }), head + `,"auth_mode":"self_export","context":{"operator":{"requester_name":"Dana Owner","reason_code":"owner-recovery","case_ref":"HOA-114","requester_key":null},"recipient_commitment":[${ints(3)}]}}`);
+    assert.equal(V.serExportReceipt({ ...base, auth_mode: 'break_glass', window: win, context: { recipient_commitment: rep(3) }, authorizing_receipt: rep(4) }),
+      head + `,"auth_mode":"break_glass","window":{"start_epoch_s":600,"end_epoch_s":1200},"context":{"recipient_commitment":[${ints(3)}]},"authorizing_receipt":[${ints(4)}]}`);
+    assert.equal(V.serExportReceipt({ ...base, auth_mode: 'break_glass', authorizing_receipt: rep(4) }),
+      head + `,"auth_mode":"break_glass","authorizing_receipt":[${ints(4)}]}`);
+  });
+
+  it('refuses a malformed 32-byte array instead of serializing it', () => {
+    assert.throws(() => V.serExportReceipt({ ...base, authorizing_receipt: rep(4).slice(1) }), /32-byte array/);
+    assert.throws(() => V.serExportReceipt({ ...base, authorizing_receipt: [...rep(4).slice(1), 256] }), /out of range/);
+  });
+
+  it('verifies the self-export context and quorum fixtures, labeling what is declared', async () => {
+    const self = await V.verifyExportBundle(loadNamed('valid_bundle_self_context.json'));
+    assert.equal(self.ok, true, self.error);
+    assert.ok(self.checks.some((c) => /^Declared operator: Dana Owner \(owner-recovery\) — declared by the exporting operator, not trustee-consented$/.test(c)));
+    assert.ok(self.checks.includes('Recipient: committed in the signed receipt (named only in the handoff sidecar)'));
+    const quorum = await V.verifyExportBundle(loadNamed('valid_bundle_quorum.json'));
+    assert.equal(quorum.ok, true, quorum.error);
+    assert.ok(quorum.checks.some((c) => /^Authorized by Granted break-glass receipt [0-9a-f]{16}… \(consent recorded on the grant\)$/.test(c)));
+    assert.ok(!quorum.checks.some((c) => /trustee-consented/.test(c) && /Declared/.test(c)));
+  });
+
+  it('rejects an edited context, operator, commitment or authorizing_receipt by the entry hash', async () => {
+    const edits = [
+      ['valid_bundle_self_context.json', (r) => { r.context.operator.requester_name = 'Someone Else'; }],
+      ['valid_bundle_self_context.json', (r) => { delete r.context; }],
+      ['valid_bundle_self_context.json', (r) => { r.context.recipient_commitment[0] ^= 1; }],
+      ['valid_bundle_quorum.json', (r) => { r.authorizing_receipt[0] ^= 1; }],
+      ['valid_bundle_quorum.json', (r) => { delete r.authorizing_receipt; }],
+    ];
+    for (const [name, edit] of edits) {
+      const b = loadNamed(name);
+      edit(b.receipt_entry.receipt);
+      const report = await V.verifyExportBundle(b);
+      assert.equal(report.ok, false, name);
+      assert.match(report.error, /entry_hash mismatch/);
+    }
+  });
+
+  it('applies R0, R1 and R6 structurally with the Rust strings', () => {
+    assert.throws(() => V.checkReceiptAuthorizationShape({ authorizing_receipt: [1, 2] }),
+      { message: "export receipt's authorizing_receipt is not a 32-byte array" });
+    assert.throws(() => V.checkReceiptAuthorizationShape({ auth_mode: 'self_export', authorizing_receipt: rep(4) }),
+      { message: 'export receipt names an authorizing receipt but its auth_mode is self_export, not break_glass' });
+    assert.throws(() => V.checkReceiptAuthorizationShape({ authorizing_receipt: rep(4) }),
+      { message: 'export receipt names an authorizing receipt but its auth_mode is absent, not break_glass' });
+    assert.throws(() => V.checkReceiptAuthorizationShape({ auth_mode: 'break_glass', authorizing_receipt: rep(4), context: { operator: { requester_name: 'x', reason_code: 'y' } } }),
+      { message: "export receipt carries an operator context beside its authorizing receipt (a quorum export's operator is its grant's)" });
+    assert.equal(V.checkReceiptAuthorizationShape({ auth_mode: 'self_export' }), null);
+  });
+
+  it('reads R0 from the signed payload text, refusing float-encoded bytes as Rust does', () => {
+    // The same payload texts src/disclosure_tests.rs r0_refuses_a_float_encoded_authorizing_receipt pins.
+    const r0 = "export receipt's authorizing_receipt is not a 32-byte array";
+    for (const element of ['4.0', '4e0', '-0']) {
+      const items = Array(32).fill('4');
+      items[7] = element;
+      const raw = `{"auth_mode":"break_glass","authorizing_receipt":[${items.join(',')}]}`;
+      const parsed = JSON.parse(raw);
+      // JSON.parse alone would pass it (4.0 and 4e0 become 4; -0 becomes 0)...
+      assert.doesNotThrow(() => V.checkReceiptAuthorizationShape(parsed));
+      // ...the ledger walk reads the signed text.
+      assert.throws(() => V.checkRawAuthorizingReceipt(raw), { message: r0 }, element);
+      assert.throws(() => V.checkExportAuthorizations(new Map(), new Set(), [[0, parsed, raw]]),
+        (e) => e.message === r0 && e.index === 0, element);
+    }
+    const raw = `{"auth_mode":"break_glass","authorizing_receipt":[${Array(32).fill('4').join(',')}]}`;
+    assert.throws(() => V.checkExportAuthorizations(new Map(), new Set(), [[0, JSON.parse(raw), raw]]),
+      { message: `export receipt names authorizing receipt ${'04'.repeat(32)} but no Granted break-glass receipt has that hash` });
+    // Only the top-level member counts; a same-named key nested elsewhere is not it.
+    const nested = `{"context":{"authorizing_receipt":[4.0]},"auth_mode":"break_glass","authorizing_receipt":[${Array(32).fill('4').join(',')}]}`;
+    V.checkRawAuthorizingReceipt(nested);
+  });
+
+  it('echoes a forged auth_mode through displaySafe, as Rust R1 does', () => {
+    // The strings src/disclosure_tests.rs r1_sanitizes_a_forged_auth_mode pins.
+    assert.throws(() => V.checkReceiptAuthorizationShape({ auth_mode: 'x\u001b[2J\nOK: chain valid\u202e', authorizing_receipt: rep(4) }),
+      { message: 'export receipt names an authorizing receipt but its auth_mode is x\ufffd[2J\ufffdOK: chain valid\ufffd, not break_glass' });
+    assert.throws(() => V.checkReceiptAuthorizationShape({ auth_mode: 1.0, authorizing_receipt: rep(4) }),
+      { message: 'export receipt names an authorizing receipt but its auth_mode is a non-string value, not break_glass' });
+  });
+
+  it('applies R2-R5 across the ledgers with the Rust strings', () => {
+    const g = '04'.repeat(32);
+    const r = { auth_mode: 'break_glass', authorizing_receipt: rep(4) };
+    assert.throws(() => V.checkExportAuthorizations(new Map(), new Set(), [[0, r]]),
+      { message: `export receipt names authorizing receipt ${g} but no Granted break-glass receipt has that hash` });
+    assert.throws(() => V.checkExportAuthorizations(new Map([[g, { envelope: 'vault:‮1' }]]), new Set([g]), [[0, r]]),
+      { message: `export receipt's authorizing grant ${g} is for envelope 'vault:�1', not export:events` });
+    assert.throws(() => V.checkExportAuthorizations(new Map([[g, { envelope: 'export:events' }]]), new Set(), [[0, r]]),
+      { message: `export receipt's authorizing grant ${g} has no redemption row — its token was never spent` });
+    assert.throws(() => V.checkExportAuthorizations(new Map([[g, { envelope: 'export:events' }]]), new Set([g]), [[0, r], [3, r]]),
+      { message: `export receipts 0 and 3 both name authorizing grant ${g} — a grant authorizes one export` });
+    assert.equal(V.checkExportAuthorizations(new Map([[g, { envelope: 'export:events' }]]), new Set([g]), [[0, r], [1, { auth_mode: 'api' }]]), 1);
+  });
+
+  it('never softens an entry-hash mismatch because of unknown receipt fields (the no-softening pin)', async () => {
+    const b = loadNamed('valid_bundle_quorum.json');
+    b.receipt_entry.receipt.some_future_field = 7;
+    b.receipt_entry.receipt.context.some_future_member = 1;
+    // A newer build signed bytes that include those fields; this verifier's
+    // re-serialization omits them, so the entry hash cannot re-derive.
+    b.receipt_entry.entry_hash[0] ^= 1;
+    assert.deepEqual(V.unknownReceiptFields(b.receipt_entry.receipt), ['some_future_field', 'context.some_future_member']);
+    const report = await V.verifyExportBundle(b);
+    assert.equal(report.status, 'compromised');
+    assert.equal(report.ok, false);
+    assert.match(report.error, /^export receipt entry_hash mismatch \(this receipt also carries field\(s\) this verifier does not know: some_future_field, context\.some_future_member; if a newer SecuraCV build wrote it, re-check with that build — the mismatch stands until then\)$/);
+  });
+
+  it('verifies the unsealed envelope fixture and counts the unseal record and the authorized export', async () => {
+    const report = await V.verifyEnvelope(loadFixture('valid_envelope_unsealed.json'));
+    assert.equal(report.ok, true, report.error);
+    assert.equal(report.break_glass_granted, 2);
+    assert.equal(report.break_glass_redeemed, 2);
+    assert.equal(report.break_glass_unsealed, 1);
+    assert.equal(report.export_receipts_authorized, 1);
+  });
+
+  it('every pre-existing fixture still verifies, with zero new counts', async () => {
+    for (const name of ['valid_envelope.json', 'valid_envelope_legacy.json', 'valid_envelope_rotated.json', 'valid_envelope_self_export.json']) {
+      const report = await V.verifyEnvelope(loadFixture(name));
+      assert.equal(report.ok, true, `${name}: ${report.error}`);
+      assert.equal(report.break_glass_unsealed, 0);
+      assert.equal(report.export_receipts_authorized, 0);
+    }
+    for (const name of ['valid_bundle.json', 'valid_bundle_paired.json']) {
+      const report = await V.verifyExportBundle(loadNamed(name));
+      assert.equal(report.ok, true, `${name}: ${report.error}`);
+    }
+  });
+
+  // Re-sign forged rows with the fixture device key (SHA-256 of the fixture seed — a test
+  // vector, never a production key) so the U and R rules, not the signature check, decide.
+  const FIXTURE_SEED = 'devkey:fixture:0123456789abcdef0123';
+  const devicePrivateKey = () => {
+    const seed = nodeCrypto.createHash('sha256').update(FIXTURE_SEED).digest();
+    const der = Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), seed]);
+    return nodeCrypto.createPrivateKey({ key: der, format: 'der', type: 'pkcs8' });
+  };
+  async function signEntry(domain, entryHash) {
+    const msg = await V.domainSeparatedHash(domain, entryHash);
+    return Array.from(nodeCrypto.sign(null, Buffer.from(msg), devicePrivateKey()));
+  }
+  async function appendBreakGlassRow(envelope, receipt) {
+    const bg = envelope.ledgers.break_glass_receipts;
+    const prev = bg.entries[bg.entries.length - 1].entry_hash; // hex in the envelope ledgers
+    const payload = JSON.stringify(receipt);
+    const entryHash = await V.hashEntry(V.hexToBytes(prev), payload);
+    bg.entries.push({ payload_json: payload, approvals_json: '[]', prev_hash: prev, entry_hash: V.bytesToHex(entryHash),
+      signatures: { ...bg.entries[0].signatures, ed25519_signature: await signEntry('securacv:pwk:break-glass-receipt:v2', entryHash) } });
+    bg.count = bg.entries.length;
+    bg.head_hash = V.bytesToHex(entryHash);
+    envelope.whole_envelope_digest = await V.computeWholeEnvelopeDigest(envelope);
+  }
+
+  it('fails an envelope with a second unseal record for one redemption (U2, token_redemption)', async () => {
+    const envelope = loadFixture('valid_envelope_unsealed.json');
+    const unsealed = envelope.ledgers.break_glass_receipts.entries
+      .map((e) => JSON.parse(e.payload_json)).find((r) => r.outcome && r.outcome.Unsealed);
+    await appendBreakGlassRow(envelope, unsealed);
+    const report = await V.verifyEnvelope(envelope);
+    assert.equal(report.ok, false);
+    assert.equal(report.failure.kind, 'token_redemption');
+    assert.match(report.error, /^break-glass token redemption invalid: redemption [0-9a-f]{64} is recorded as unsealed twice — a token releases one cleartext$/);
+  });
+
+  it('fails an envelope with an unseal record naming no redemption (U1, token_redemption)', async () => {
+    const envelope = loadFixture('valid_envelope_unsealed.json');
+    const unsealed = envelope.ledgers.break_glass_receipts.entries
+      .map((e) => JSON.parse(e.payload_json)).find((r) => r.outcome && r.outcome.Unsealed);
+    unsealed.outcome.Unsealed.redemption_entry_hash = rep(9);
+    await appendBreakGlassRow(envelope, unsealed);
+    const report = await V.verifyEnvelope(envelope);
+    assert.equal(report.failure.kind, 'token_redemption');
+    assert.equal(report.error, `break-glass token redemption invalid: unseal record names receipt ${'09'.repeat(32)} but no earlier redemption row has that hash`);
+  });
+
+  it('fails an envelope whose re-signed export receipt names a grant that does not exist (R2, export_authorization)', async () => {
+    const envelope = loadFixture('valid_envelope_unsealed.json');
+    const exp = envelope.ledgers.export_receipts;
+    const last = exp.entries[exp.entries.length - 1];
+    const receipt = JSON.parse(last.payload_json);
+    receipt.authorizing_receipt = rep(9);
+    const payload = V.serExportReceipt(receipt);
+    const entryHash = await V.hashEntry(V.hexToBytes(last.prev_hash), payload);
+    const sig = await signEntry('securacv:pwk:export-receipt:v2', entryHash);
+    last.payload_json = payload;
+    last.entry_hash = V.bytesToHex(entryHash);
+    last.signatures = { ...last.signatures, ed25519_signature: sig };
+    exp.head_hash = V.bytesToHex(entryHash);
+    envelope.export_receipt_entry.receipt = receipt;
+    envelope.export_receipt_entry.entry_hash = Array.from(entryHash);
+    envelope.export_receipt_entry.signatures = { ...envelope.export_receipt_entry.signatures, ed25519_signature: sig };
+    envelope.whole_envelope_digest = await V.computeWholeEnvelopeDigest(envelope);
+    const report = await V.verifyEnvelope(envelope);
+    assert.equal(report.ok, false);
+    assert.equal(report.failure.kind, 'export_authorization');
+    assert.equal(report.failure.ledger, 'export_receipts');
+    assert.equal(report.error, `export receipt authorization invalid: export receipt names authorizing receipt ${'09'.repeat(32)} but no Granted break-glass receipt has that hash`);
+  });
+});

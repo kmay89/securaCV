@@ -82,7 +82,18 @@ pub struct VerifyReport {
     pub break_glass_denied: u64,
     /// `TokenRedeemed` rows: tokens actually spent at the unseal gate.
     pub break_glass_redeemed: u64,
+    /// `Unsealed` rows: decrypts the device recorded after a redemption
+    /// (the handoff-sidecar work, `docs/handoff_sidecars.md`). `None` when
+    /// zero — so a report is byte-identical until the first unseal record
+    /// exists — and `None` on a failed report.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub break_glass_unsealed: Option<u64>,
     pub export_receipts_verified: u64,
+    /// Export receipts that name the Granted receipt whose token authorized
+    /// them (`authorizing_receipt`), each link checked (rules R0–R6). `None`
+    /// when zero and on a failed report.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub export_receipts_authorized: Option<u64>,
     pub alarm_count: u64,
     pub checkpoint_cutoff_event_id: Option<i64>,
     /// Hex chain-head hash of the latest checkpoint, when one exists.
@@ -121,7 +132,9 @@ impl VerifyReport {
             break_glass_granted: 0,
             break_glass_denied: 0,
             break_glass_redeemed: 0,
+            break_glass_unsealed: None,
             export_receipts_verified: 0,
+            export_receipts_authorized: None,
             alarm_count: 0,
             checkpoint_cutoff_event_id: None,
             checkpoint_head_hash: None,
@@ -223,6 +236,8 @@ fn run_full_verify_impl(
             report.failure = err.downcast_ref::<verify::VerifyFailure>().cloned();
             // A count of verified records has no meaning on a failed report.
             report.clock_provenance_verified = None;
+            report.break_glass_unsealed = None;
+            report.export_receipts_authorized = None;
         }
     }
     report.verdict = if report.chain_valid {
@@ -337,6 +352,7 @@ fn run_inner(
     report.break_glass_granted = counts.granted;
     report.break_glass_denied = counts.denied;
     report.break_glass_redeemed = counts.redeemed;
+    report.break_glass_unsealed = (counts.unsealed > 0).then_some(counts.unsealed);
 
     report.export_receipts_verified = verify::verify_export_receipts_with(
         conn,
@@ -345,6 +361,14 @@ fn run_inner(
         pq_verifying_key.as_ref(),
         |id, entry_hash| on_item(VerifiedItem::ExportReceipt { id, entry_hash }),
     )?;
+
+    // Export authorizations (R0–R6): each export receipt that names the
+    // Granted receipt whose token authorized it must name a real, redeemed
+    // export:events grant, once, and restate no operator beside it. Before
+    // the clock-provenance walk (insertion order: export walk → export
+    // authorizations → clock provenance → anchors).
+    let authorized = verify::verify_export_authorizations(conn)?;
+    report.export_receipts_authorized = (authorized > 0).then_some(authorized);
 
     // The clock-provenance ledger (device clock vs TSA genTime, one
     // device-signed record per anchor row). A chain or signature failure is
@@ -1125,7 +1149,9 @@ mod tests {
             break_glass_granted: 0,
             break_glass_denied: 0,
             break_glass_redeemed: 0,
+            break_glass_unsealed: None,
             export_receipts_verified: 1,
+            export_receipts_authorized: None,
             alarm_count: 0,
             checkpoint_cutoff_event_id: None,
             checkpoint_head_hash: None,

@@ -37,6 +37,7 @@ const {
   chainHeaderCopy,
   formatAgo,
   exportWindowHours,
+  exportFailureNotice,
   timelineStatus,
 } = require("./securacv-timeline-card.js");
 
@@ -815,4 +816,27 @@ test("card: the export action reports a refusal instead of pretending", async ()
   card.hass = { states: {}, callWS: () => Promise.resolve({}), callService: () => Promise.reject(new Error("no kernel")) };
   await card._exportFor(null);
   assert.match(card.shadowRoot.innerHTML, /Export failed/);
+});
+
+test("card: an export refused for not being an administrator says so", async () => {
+  const Card = loadCardElement();
+  const card = new Card();
+  card.setConfig({});
+  // How the websocket relays Home Assistant's Unauthorized from call_service.
+  card.hass = {
+    states: {}, callWS: () => Promise.resolve({}),
+    callService: () => Promise.reject({ code: "home_assistant_error", message: "Unauthorized" }),
+  };
+  await card._exportFor(null);
+  assert.match(card.shadowRoot.innerHTML, /Export refused — only a Home Assistant administrator can export evidence\./);
+  assert.doesNotMatch(card.shadowRoot.innerHTML, /Export failed/);
+});
+
+test("exportFailureNotice: an administrator-only refusal is named; anything else stays general", () => {
+  for (const err of [{ code: "unauthorized", message: "x" }, { message: "Unauthorized" }, { message: "UnknownUser" }]) {
+    assert.match(exportFailureNotice(err), /^Export refused — only a Home Assistant administrator/);
+  }
+  for (const err of [new Error("no kernel"), { code: "home_assistant_error", message: "The kernel did not answer" }, null, "x"]) {
+    assert.match(exportFailureNotice(err), /^Export failed — /);
+  }
 });

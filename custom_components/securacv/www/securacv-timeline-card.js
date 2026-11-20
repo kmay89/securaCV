@@ -745,6 +745,24 @@
     return Math.max(EXPORT_MIN_HOURS, Math.min(EXPORT_MAX_HOURS, hours));
   }
 
+  /**
+   * The line the Export row action shows when `securacv.export_evidence`
+   * did not run. The action is admin-only (an export removes this kernel's
+   * oldest packs past its keep limit): Home Assistant refuses a signed-in
+   * user who is not an administrator with `Unauthorized` (`UnknownUser` for
+   * a user who no longer exists), which the websocket relays as an error
+   * whose message is that class name, or whose code is "unauthorized". That
+   * refusal says so; anything else keeps the general line.
+   */
+  function exportFailureNotice(err) {
+    const code = err && typeof err === "object" ? String(err.code || "") : "";
+    const message = err && typeof err === "object" ? String(err.message || "") : "";
+    if (code === "unauthorized" || message === "Unauthorized" || message === "UnknownUser") {
+      return "Export refused — only a Home Assistant administrator can export evidence.";
+    }
+    return "Export failed — the SecuraCV integration refused the request; see Notifications and the log.";
+  }
+
   // What the rows on screen are made of, and what to say about it.
   // `source` is what _maybeFetchHistory recorded:
   //   null            — nothing fetched yet;
@@ -800,6 +818,7 @@
     chainHeaderCopy,
     formatAgo,
     exportWindowHours,
+    exportFailureNotice,
     timelineStatus,
   };
   if (typeof module !== "undefined" && module.exports) {
@@ -1039,7 +1058,7 @@
         await this._hass.callService("securacv", "export_evidence", { window_hours: windowHours });
         this._setActionNotice(`Export requested (last ${windowHours} h) — the download link arrives as a notification and under Media → SecuraCV evidence.`);
       } catch (err) {
-        this._setActionNotice("Export failed — the SecuraCV integration refused the request; see Notifications and the log.");
+        this._setActionNotice(exportFailureNotice(err));
         if (typeof console !== "undefined" && console.debug) {
           console.debug("securacv-timeline-card: export_evidence failed", err);
         }

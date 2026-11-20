@@ -33,7 +33,7 @@
 #include <esp_timer.h>  // esp_timer_get_time: a 64-bit microsecond uptime
 
 // F15: self-signed HTTPS. One code path for both cores — dev/release/board
-// envs are Arduino 2.0.17 / IDF 4.4.7, [env:full] is core 3.3.8 / IDF 5.5.4 —
+// envs are Arduino 2.0.17 / IDF 4.4.7, [env:full] is core 3.3.11 / IDF 5.5.5 —
 // so every capability is detected, never assumed:
 //   * SECURACV_HAS_HTTPS_SERVER: FEATURE_HTTPS on, the header present, AND the
 //     core's prebuilt sdkconfig built the component (the header can exist

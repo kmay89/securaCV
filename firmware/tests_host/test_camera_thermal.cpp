@@ -12,7 +12,7 @@
  *                  no sensor, the provider is its stub;
  *   esp32s3_idf4   the ESP32-S3 on ESP-IDF 4.4.7, the stock units' Arduino
  *                  2.0.17 core (driver/temp_sensor.h);
- *   esp32s3_idf5   the ESP32-S3 on ESP-IDF 5.5.4, [env:full]'s core 3
+ *   esp32s3_idf5   the ESP32-S3 on ESP-IDF 5.5.5, [env:full]'s core 3
  *                  (driver/temperature_sensor.h).
  *
  * The provider installs its driver on the first read and never retries a

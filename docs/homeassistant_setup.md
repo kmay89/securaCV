@@ -197,7 +197,7 @@ must use the **same MQTT broker** as Frigate and the sidecar.
    SecuraCV pairing code: 483921   (valid 10 minutes, 5 attempts)
    Kernel key fingerprint: ab12cd34   (Home Assistant shows the same fingerprint before it pairs)
    Kernel URL to confirm in Home Assistant: http://<this docker host>:8799
-   In Home Assistant: Settings → Devices & Services → the discovered "SecuraCV sidecar" card → Configure → enter the code.
+   In Home Assistant: Settings → Devices & Services → the "SecuraCV sidecar" card under Discovered → Add → enter the code.
    ```
 
    The code is printed once, on that terminal only; the daemon's log never
@@ -582,7 +582,7 @@ available to report offline.
 
    Buttons:
    - **Verify now** — run the integration's chain walk now; the same coroutine the `securacv.verify` action runs (`verify_now`; unavailable while the kernel is unreachable)
-   - **Export evidence** — write a signed evidence pack for the last 24 hours; the same as `securacv.export_evidence` with its defaults (`export_evidence`; unavailable while the kernel is unreachable)
+   - **Export evidence** — write a signed evidence pack for the last 24 hours; the same as `securacv.export_evidence` with its defaults (`export_evidence`; administrators only, like the action: a press from a signed-in user who is not an administrator is refused; unavailable while the kernel is unreachable)
 
 Every witness event — on the per-camera event entities and on **SecuraCV
 Last Event** — carries its event type (the dictionary id: the event entity's
@@ -646,7 +646,7 @@ says online; the **Online** sensor stays available to report offline.
    - **Power Loss**, **SD Removed**, **SD Error**, **GPS Jamming**, **Unexpected Motion**, **Enclosure Open**, **GPIO Tamper**, **Watchdog Timeout**, **Unexpected Reboot**, **Memory Critical** — one sensor per tamper type, from the `tamper` and `health` topics (`tamper_<type>` with the type names in the [per-tamper-type catalog](#per-tamper-type-sensor-catalog) below, which also says which signals firmware emits today; unsigned)
    - **SD Replacement Recommended** — the device recommends replacing its SD card (`sd_replace`; `health` topic, unsigned)
    - **Event ID Space Low** — ON once the device's event-id counter nears the end of its space, and after it wraps (Home Assistant then refuses its events); only for devices whose health carries the flag, the Canary base and the canary-wap (`event_id_space_low`; `health` topic, unsigned; diagnostic)
-   - **Motion** and **Occupancy** — standard `motion` / `occupancy` device classes for the HomeKit Bridge and any other consumer, asserted by the signed `events` topic, the event that creates them included (HA44), and, for occupancy, the retained `state` snapshot (`motion`, `occupancy`; carry the events verdict)
+   - **Motion** and **Occupancy** — standard `motion` / `occupancy` device classes for the HomeKit Bridge and any other consumer, asserted by the signed `events` topic, the event that creates them included (HA44), and, for occupancy, the retained `state` snapshot (`motion`, `occupancy`; a signed `events` publish stamps its own verdict, and an Occupancy change from the unsigned `state` snapshot stamps `verified: false`, `trust_reason: unsigned`)
    - **WiFi AP**, **WiFi Station**, **MQTT**, **Bluetooth**, **Mesh Network**, **Chirp Network** — per-transport connectivity, diagnostic and **disabled by default** — enable them from the device page (`transport_<type>`; `transport` topic, unsigned; no current firmware publishes it — see the [transport catalog](#transport-catalog))
    - **Mesh Connected** — Opera mesh peers present, with peer and relay counts (`mesh_connected`; `mesh` topic, unsigned)
    - **Chirp Active** — Chirp community network on: the canary-wap's channel is on (active, cooldown or muted) rather than disabled, with the firmware's own word in its `channel_state` attribute (`chirp_active`; `chirp` topic, unsigned)
@@ -832,6 +832,17 @@ Two are about the witness kernel:
 | `securacv.verify` | `entry_id` (optional; the kernel entry to verify, a config-entry selector — required only when more than one entry has a kernel) | `chain_valid`, `verdict`, `events_verified`, `verified_entries`, `verified_seq`, `verified_bucket_start`, `verified_bucket_size`, `key_mismatch`, `error`, `kernel_device_id` |
 | `securacv.export_evidence` | `window_hours` (1–720; 24 if left out), `entry_id` (optional, as above) | `export_id`, `file`, `url` (a download link signed for 24 hours), `sha256`, `events`, `window_hours`, `kernel_device_id` |
 
+`securacv.export_evidence` and `securacv.staged_update` (the fleet's staged
+firmware rollout, [`OTA.md`](OTA.md#5-staged-rollout-hub-side)) are
+admin-only: Home Assistant refuses a call from a signed-in user who is not
+an administrator (`Unauthorized`), so a wall tablet's non-admin login cannot
+export evidence, which removes older packs past the keep limit, or start a
+rollout. An automation's call carries no user and runs; a script runs as
+the person who started it and is checked as theirs. The **Export evidence**
+button checks whoever presses it the same way. `securacv.verify`,
+`securacv.list_watches` and the watch actions stay open to any signed-in
+user.
+
 `securacv.verify` walks the kernel's sealed log now and checks every entry's
 hash link and Ed25519 signature against the key Home Assistant pinned when
 it connected — the only walk that earns an event its **Verified ✓**
@@ -863,10 +874,16 @@ view (`/api/securacv/evidence/<export_id>`) through a link signed for 24
 hours; an expired link needs a new export or **Media → SecuraCV evidence**,
 where each pack resolves to a fresh link. The **Export evidence** button is
 this action with its defaults; the timeline card's per-row **Export** action
-calls it with a window covering that row. How many packs stay is the
-`evidence_keep` option ([Configuration parameters](#configuration-parameters)):
-the oldest zip is removed and the notification says *Removed N older
-export(s) to stay within your limit of 20.* The recipient's side —
+calls it with a window covering that row. How many of a kernel entry's
+packs stay is that entry's `evidence_keep` option
+([Configuration parameters](#configuration-parameters)): when its export
+takes it past the limit, its oldest zip is removed, along with any older
+pack no configured entry owns (one from before packs carried their entry,
+or from a removed entry), and the notification says *Removed N older
+export(s) to stay within your limit of 20.* Another entry's packs are never
+removed. If someone who is not an administrator uses the card's per-row
+**Export**, the card says *Export refused — only a Home Assistant
+administrator can export evidence.* The recipient's side —
 dropping the zip on the viewer, "self-attested" versus "authorship
 confirmed" — is [`viewer/README.md`](../viewer/README.md).
 
@@ -1175,7 +1192,7 @@ menu of four:
 | **Pin a device pubkey (manual)** | Pin a Canary's Ed25519 public key by hand from its `device_id` and 64-hex key, read off the device ([Step 6](#step-6-verify-per-device-pki-optional-but-recommended)) |
 | **Rotate a pinned device key** | Replace a Canary's pin; the previous key stays in the audit trail and the device's mismatch notification clears |
 | **Unpin a device** | Drop a Canary's pin; the next publish pins whatever key arrives (TOFU) |
-| **Evidence export settings** | `evidence_keep`: how many evidence packs to keep under `<config>/securacv/evidence` — 1 to 200, default 20. When a new export exceeds it the oldest pack is removed and the export notification says so |
+| **Evidence export settings** | `evidence_keep`: how many of this kernel entry's evidence packs to keep under `<config>/securacv/evidence` — 1 to 200, default 20. The limit is per entry: when this entry's export takes it past the limit, its oldest pack is removed, along with any older pack no configured entry owns, and the export notification says so. Another entry's packs are never removed |
 
 The kernel's key is not in that menu on purpose: it is pinned over the
 authenticated channel at pairing or discovery and rotated only through the
@@ -2150,6 +2167,13 @@ Receipts, in one line: `GET /events` without a cursor and `GET /export/bundle`
 are disclosures and log a tamper-evident receipt each; `/events/latest`,
 `/events?since_bucket=`, `/digest`, `/api/identity` and `/api/sealed-log`
 are state reads and log none. Receipts are never pruned.
+
+An API bundle travels over HTTP, so the hub writes no handoff sidecar for it
+(nothing lands on the hub's disk). To hand a saved bundle to someone with its
+signed receipt rows in a sidecar, run `handoff_sidecar emit --file
+<bundle> --db witness.db` on the hub ([handoff sidecars](handoff_sidecars.md)).
+The break-glass console's unseal does write one, beside the file on the
+server; its reply's `handoff_sidecar` names it.
 
 ### `/events/latest` Response (Event)
 

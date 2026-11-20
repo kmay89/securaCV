@@ -62,6 +62,7 @@ pub mod envelope;
 pub mod eval;
 pub mod fleet_peers;
 pub mod frame;
+pub mod handoff;
 pub mod ingest;
 pub mod inspect;
 pub mod log;
@@ -1189,6 +1190,43 @@ pub fn parse_duration_s(s: &str) -> Result<u64> {
         .ok_or_else(|| anyhow!("duration '{}' overflows", s))
 }
 
+/// Who exported and to whom (`spec/quorum_unseal_v2.md` §3.6, §5).
+/// `operator` is set only by a self-export: the device-key holder's own
+/// declaration. A quorum export's operator is its grant's and is named by
+/// [`ExportReceipt::authorizing_receipt`], never restated here.
+/// `recipient_commitment` is [`handoff::recipient_commitment`]; the
+/// recipient's name is never stored.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExportContext {
+    /// The exporting operator, as declared (self-export only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator: Option<break_glass::OperatorContext>,
+    /// Salted commitment to a declared recipient (the opening lives only in
+    /// the handoff sidecar).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipient_commitment: Option<[u8; 32]>,
+}
+
+impl ExportContext {
+    /// `None` when both members are `None` (the kernel never writes
+    /// `"context":{}`); validates the operator.
+    pub fn new(
+        operator: Option<break_glass::OperatorContext>,
+        recipient_commitment: Option<[u8; 32]>,
+    ) -> Result<Option<Self>> {
+        if let Some(op) = &operator {
+            op.validate()?;
+        }
+        if operator.is_none() && recipient_commitment.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            operator,
+            recipient_commitment,
+        }))
+    }
+}
+
 // New receipt fields must be `Option` + `default` + `skip_serializing_if` and
 // stay LAST: the envelope verifiers (Rust `envelope.rs` and JS
 // `viewer/verify_core.js`) re-serialize this struct byte-for-byte to recompute
@@ -1210,6 +1248,22 @@ pub struct ExportReceipt {
     /// bearer exported cannot be edited after the fact.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_id: Option<String>,
+    /// §3.6/§5: declared at export (a self-export's operator; a salted
+    /// recipient commitment). Never trustee-consented.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<ExportContext>,
+    /// `auth_mode: break_glass` only: the entry hash of the `Granted`
+    /// break-glass receipt whose token this export redeemed. LAST.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorizing_receipt: Option<[u8; 32]>,
+}
+
+/// What a receipt says about its disclosure beyond the export itself:
+/// the declared context and, for a quorum export, the authorizing grant.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ReceiptDisclosure {
+    pub context: Option<ExportContext>,
+    pub authorizing_receipt: Option<[u8; 32]>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -3347,27 +3401,53 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         Ok(())
     }
 
-    /// Export events sequentially with break-glass authorization.
+    /// Export events sequentially with break-glass authorization. The
+    /// receipt names the `Granted` receipt the token was minted from
+    /// (`authorizing_receipt`); see [`Self::export_events_authorized_with`].
     pub fn export_events_authorized(
         &mut self,
         expected_ruleset_hash: [u8; 32],
         options: ExportOptions,
         token: &mut break_glass::BreakGlassToken,
     ) -> Result<ExportArtifact> {
+        self.export_events_authorized_with(expected_ruleset_hash, options, token, None)
+    }
+
+    /// [`Self::export_events_authorized`] with an optional salted recipient
+    /// commitment. Sets `authorizing_receipt` to the token's grant hash and
+    /// takes no operator: a quorum export's operator is its grant's, named
+    /// by reference (rule R6 refuses one restated beside it).
+    pub fn export_events_authorized_with(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        token: &mut break_glass::BreakGlassToken,
+        recipient_commitment: Option<[u8; 32]>,
+    ) -> Result<ExportArtifact> {
         Ok(self
-            .export_events_authorized_receipted(expected_ruleset_hash, options, token)?
+            .export_events_authorized_receipted(
+                expected_ruleset_hash,
+                options,
+                token,
+                recipient_commitment,
+            )?
             .0)
     }
 
-    /// [`Self::export_events_authorized`] handing back the receipt row it
-    /// sealed beside the artifact, for the bundle builder.
+    /// [`Self::export_events_authorized_with`] handing back the receipt row
+    /// it sealed beside the artifact, for the bundle builder.
     fn export_events_authorized_receipted(
         &mut self,
         expected_ruleset_hash: [u8; 32],
         options: ExportOptions,
         token: &mut break_glass::BreakGlassToken,
+        recipient_commitment: Option<[u8; 32]>,
     ) -> Result<(ExportArtifact, ExportReceiptEntry)> {
         Self::validate_export_options(&options)?;
+        let disclosure = ReceiptDisclosure {
+            context: ExportContext::new(None, recipient_commitment)?,
+            authorizing_receipt: Some(token.receipt_entry_hash()),
+        };
         let now_bucket = TimeBucket::now(600)?;
         break_glass::BreakGlass::assert_token_valid(
             token,
@@ -3393,6 +3473,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             expected_ruleset_hash,
             options,
             ExportAuthMode::BreakGlass,
+            disclosure,
         )?;
         token.consume()?;
         Ok(receipted)
@@ -3443,6 +3524,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             &artifact,
             auth_mode,
             token_id,
+            ReceiptDisclosure::default(),
         )?;
         Ok((artifact, receipt_entry))
     }
@@ -3487,23 +3569,50 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         expected_ruleset_hash: [u8; 32],
         options: ExportOptions,
     ) -> Result<ExportArtifact> {
+        self.export_events_self_with(expected_ruleset_hash, options, None)
+    }
+
+    /// [`Self::export_events_self`] with a declared [`ExportContext`] (the
+    /// exporting operator and/or a salted recipient commitment), signed
+    /// into the receipt. `None` writes a receipt byte-identical to
+    /// [`Self::export_events_self`]'s.
+    pub fn export_events_self_with(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        context: Option<ExportContext>,
+    ) -> Result<ExportArtifact> {
         Ok(self
-            .export_events_self_receipted(expected_ruleset_hash, options)?
+            .export_events_self_receipted(expected_ruleset_hash, options, context)?
             .0)
     }
 
-    /// [`Self::export_events_self`] handing back the receipt row it sealed
-    /// beside the artifact, for the bundle builder.
+    /// [`Self::export_events_self_with`] handing back the receipt row it
+    /// sealed beside the artifact, for the bundle builder.
     fn export_events_self_receipted(
         &mut self,
         expected_ruleset_hash: [u8; 32],
         options: ExportOptions,
+        context: Option<ExportContext>,
     ) -> Result<(ExportArtifact, ExportReceiptEntry)> {
         Self::validate_export_options(&options)?;
+        // Normalize at the kernel boundary: `ExportContext`'s fields are
+        // public, so a caller can build an empty one by hand. `new`
+        // validates the operator and collapses an empty context to `None`,
+        // so the kernel never signs `"context":{}` and an empty context
+        // writes a receipt byte-identical to a plain self-export.
+        let context = match context {
+            Some(c) => ExportContext::new(c.operator, c.recipient_commitment)?,
+            None => None,
+        };
         self.export_events_sequential_unchecked(
             expected_ruleset_hash,
             options,
             ExportAuthMode::SelfExport,
+            ReceiptDisclosure {
+                context,
+                authorizing_receipt: None,
+            },
         )
     }
 
@@ -3513,8 +3622,23 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         options: ExportOptions,
         token: &mut break_glass::BreakGlassToken,
     ) -> Result<ExportBundle> {
-        let (artifact, receipt_entry) =
-            self.export_events_authorized_receipted(expected_ruleset_hash, options, token)?;
+        self.export_events_bundle_authorized_with(expected_ruleset_hash, options, token, None)
+    }
+
+    /// Bundle form of [`Self::export_events_authorized_with`].
+    pub fn export_events_bundle_authorized_with(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        token: &mut break_glass::BreakGlassToken,
+        recipient_commitment: Option<[u8; 32]>,
+    ) -> Result<ExportBundle> {
+        let (artifact, receipt_entry) = self.export_events_authorized_receipted(
+            expected_ruleset_hash,
+            options,
+            token,
+            recipient_commitment,
+        )?;
         self.bundle_from_artifact(artifact, receipt_entry)
     }
 
@@ -3526,8 +3650,18 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         expected_ruleset_hash: [u8; 32],
         options: ExportOptions,
     ) -> Result<ExportBundle> {
+        self.export_events_bundle_self_with(expected_ruleset_hash, options, None)
+    }
+
+    /// Bundle form of [`Self::export_events_self_with`].
+    pub fn export_events_bundle_self_with(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        context: Option<ExportContext>,
+    ) -> Result<ExportBundle> {
         let (artifact, receipt_entry) =
-            self.export_events_self_receipted(expected_ruleset_hash, options)?;
+            self.export_events_self_receipted(expected_ruleset_hash, options, context)?;
         self.bundle_from_artifact(artifact, receipt_entry)
     }
 
@@ -3881,11 +4015,18 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         expected_ruleset_hash: [u8; 32],
         options: ExportOptions,
         auth_mode: ExportAuthMode,
+        disclosure: ReceiptDisclosure,
     ) -> Result<(ExportArtifact, ExportReceiptEntry)> {
         Self::validate_export_options(&options)?;
         let artifact = self.build_export_artifact(expected_ruleset_hash, options, None, false)?;
-        let receipt_entry =
-            self.receipt_export(expected_ruleset_hash, &options, &artifact, auth_mode, None)?;
+        let receipt_entry = self.receipt_export(
+            expected_ruleset_hash,
+            &options,
+            &artifact,
+            auth_mode,
+            None,
+            disclosure,
+        )?;
         Ok((artifact, receipt_entry))
     }
 
@@ -3899,6 +4040,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         artifact: &ExportArtifact,
         auth_mode: ExportAuthMode,
         token_id: Option<String>,
+        disclosure: ReceiptDisclosure,
     ) -> Result<ExportReceiptEntry> {
         let artifact_bytes = serde_json::to_vec(artifact)?;
         let artifact_hash: [u8; 32] = Sha256::digest(&artifact_bytes).into();
@@ -3910,6 +4052,8 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             auth_mode: Some(auth_mode),
             window: options.window,
             token_id,
+            context: disclosure.context,
+            authorizing_receipt: disclosure.authorizing_receipt,
         };
         self.append_export_receipt_entry(&receipt)
     }
@@ -4189,21 +4333,99 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         // it) rather than spendable.
         consume_break_glass_token_durably(&self.conn, token)?;
         let granted_entry_hash = token.receipt_entry_hash();
-        let payload: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT payload_json FROM break_glass_receipts WHERE entry_hash = ?1 LIMIT 1",
-                params![granted_entry_hash.to_vec()],
-                |row| row.get(0),
-            )
-            .optional()?;
-        let Some(payload) = payload else {
+        let Some(row) = break_glass_row_by_entry_hash(&self.conn, &granted_entry_hash)? else {
             return Err(anyhow!("break-glass receipt not found for token"));
         };
-        let granted: break_glass::BreakGlassReceipt = serde_json::from_str(&payload)?;
+        let granted: break_glass::BreakGlassReceipt = serde_json::from_str(&row.payload_json)?;
         let redemption =
             break_glass::BreakGlassReceipt::redemption_of(&granted, granted_entry_hash, token)?;
         self.append_break_glass_receipt(&redemption, &[])
+    }
+
+    /// Append the device-signed `Unsealed` row completing the redemption
+    /// `redemption_entry_hash`: the device decrypted that redemption's
+    /// envelope to the plaintext `plaintext_commitment` fixes (salted; the
+    /// salt lives only in the handoff sidecar). One transaction (BEGIN
+    /// IMMEDIATE, or SAVEPOINT `unseal_record` inside a caller's
+    /// transaction). Called after a successful decrypt and before any byte
+    /// is written; a record that cannot be appended means nothing is
+    /// released. Returns the row's entry hash.
+    pub fn record_unsealed(
+        &mut self,
+        redemption_entry_hash: [u8; 32],
+        plaintext_commitment: [u8; 32],
+        recipient_commitment: Option<[u8; 32]>,
+    ) -> Result<[u8; 32]> {
+        let own_tx = self.conn.is_autocommit();
+        self.conn.execute_batch(if own_tx {
+            "BEGIN IMMEDIATE;"
+        } else {
+            "SAVEPOINT unseal_record;"
+        })?;
+        let recorded = self
+            .record_unsealed_locked(
+                redemption_entry_hash,
+                plaintext_commitment,
+                recipient_commitment,
+            )
+            .and_then(|entry_hash| {
+                self.conn.execute_batch(if own_tx {
+                    "COMMIT;"
+                } else {
+                    "RELEASE unseal_record;"
+                })?;
+                Ok(entry_hash)
+            });
+        if recorded.is_err() {
+            let _ = self.conn.execute_batch(if own_tx {
+                "ROLLBACK;"
+            } else {
+                "ROLLBACK TO unseal_record; RELEASE unseal_record;"
+            });
+        }
+        recorded
+    }
+
+    fn record_unsealed_locked(
+        &mut self,
+        redemption_entry_hash: [u8; 32],
+        plaintext_commitment: [u8; 32],
+        recipient_commitment: Option<[u8; 32]>,
+    ) -> Result<[u8; 32]> {
+        let h = hex::encode(redemption_entry_hash);
+        let Some(row) = break_glass_row_by_entry_hash(&self.conn, &redemption_entry_hash)? else {
+            return Err(anyhow!(
+                "unseal record refused: receipt {} is not in the receipt chain",
+                h
+            ));
+        };
+        let redemption: break_glass::BreakGlassReceipt = serde_json::from_str(&row.payload_json)?;
+        if redemption.redeemed_token().is_none() {
+            return Err(anyhow!(
+                "unseal record refused: receipt {} is not a token redemption row",
+                h
+            ));
+        }
+        if redemption.vault_envelope_id == EXPORT_EVENTS_ENVELOPE_ID {
+            return Err(anyhow!(
+                "unseal record refused: redemption {} spent an export:events token — exports \
+                 are receipted in the export chain",
+                h
+            ));
+        }
+        if break_glass_unsealed_for_redemption(&self.conn, &redemption_entry_hash)?.is_some() {
+            return Err(anyhow!(
+                "unseal record refused: redemption {} already has an unseal record",
+                h
+            ));
+        }
+        let unsealed = break_glass::BreakGlassReceipt::unsealed_of(
+            &redemption,
+            redemption_entry_hash,
+            plaintext_commitment,
+            recipient_commitment,
+        )?;
+        self.append_break_glass_receipt(&unsealed, &[])
     }
 
     pub fn break_glass_receipt_outcome(
@@ -4810,6 +5032,143 @@ pub fn device_pq_public_key_from_db(conn: &Connection) -> Result<PqPublicKey> {
     pq_public_key_from_bytes(&bytes)
 }
 
+/// One stored receipt row, read by its chain hash only. Never carries the
+/// row id or `created_at` (both receipt tables stamp a precise time).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct StoredReceiptRow {
+    pub ledger: &'static str,
+    pub payload_json: String,
+    pub approvals_json: Option<String>,
+    pub prev_hash: [u8; 32],
+    pub entry_hash: [u8; 32],
+    pub signature: Vec<u8>,
+    pub pq_signature: Option<Vec<u8>>,
+    pub pq_scheme: Option<String>,
+}
+
+/// The `break_glass_receipts` row whose `entry_hash` is `h`.
+pub(crate) fn break_glass_row_by_entry_hash(
+    conn: &Connection,
+    h: &[u8; 32],
+) -> Result<Option<StoredReceiptRow>> {
+    conn.query_row(
+        "SELECT payload_json, approvals_json, prev_hash, entry_hash, signature, pq_signature, \
+         pq_scheme FROM break_glass_receipts WHERE entry_hash = ?1 LIMIT 1",
+        params![h.to_vec()],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+                row.get::<_, Vec<u8>>(3)?,
+                row.get::<_, Vec<u8>>(4)?,
+                row.get::<_, Option<Vec<u8>>>(5)?,
+                row.get::<_, Option<String>>(6)?,
+            ))
+        },
+    )
+    .optional()?
+    .map(
+        |(payload_json, approvals_json, prev, entry, signature, pq_signature, pq_scheme)| {
+            Ok(StoredReceiptRow {
+                ledger: "break_glass_receipts",
+                payload_json,
+                approvals_json,
+                prev_hash: blob32(prev, "break_glass_receipts.prev_hash")?,
+                entry_hash: blob32(entry, "break_glass_receipts.entry_hash")?,
+                signature,
+                pq_signature,
+                pq_scheme,
+            })
+        },
+    )
+    .transpose()
+}
+
+/// The `export_receipts` row whose `entry_hash` is `h`.
+pub(crate) fn export_row_by_entry_hash(
+    conn: &Connection,
+    h: &[u8; 32],
+) -> Result<Option<StoredReceiptRow>> {
+    conn.query_row(
+        "SELECT payload_json, prev_hash, entry_hash, signature, pq_signature, pq_scheme \
+         FROM export_receipts WHERE entry_hash = ?1 LIMIT 1",
+        params![h.to_vec()],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+                row.get::<_, Vec<u8>>(3)?,
+                row.get::<_, Option<Vec<u8>>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+            ))
+        },
+    )
+    .optional()?
+    .map(
+        |(payload_json, prev, entry, signature, pq_signature, pq_scheme)| {
+            Ok(StoredReceiptRow {
+                ledger: "export_receipts",
+                payload_json,
+                approvals_json: None,
+                prev_hash: blob32(prev, "export_receipts.prev_hash")?,
+                entry_hash: blob32(entry, "export_receipts.entry_hash")?,
+                signature,
+                pq_signature,
+                pq_scheme,
+            })
+        },
+    )
+    .transpose()
+}
+
+/// Scan the break-glass chain (payloads only, in chain order) for the first
+/// row matching `pick`, returning its entry hash. Selects by hash only.
+fn break_glass_find_entry(
+    conn: &Connection,
+    mut pick: impl FnMut(&break_glass::BreakGlassReceipt) -> bool,
+) -> Result<Option<[u8; 32]>> {
+    let mut stmt =
+        conn.prepare("SELECT payload_json, entry_hash FROM break_glass_receipts ORDER BY id ASC")?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let payload: String = row.get(0)?;
+        let Ok(receipt) = serde_json::from_str::<break_glass::BreakGlassReceipt>(&payload) else {
+            continue;
+        };
+        if pick(&receipt) {
+            return Ok(Some(blob32(
+                row.get(1)?,
+                "break_glass_receipts.entry_hash",
+            )?));
+        }
+    }
+    Ok(None)
+}
+
+/// The `TokenRedeemed` row that names `grant`, by its entry hash.
+pub(crate) fn break_glass_redemption_for_grant(
+    conn: &Connection,
+    grant: &[u8; 32],
+) -> Result<Option<[u8; 32]>> {
+    break_glass_find_entry(conn, |r| {
+        r.redeemed_token()
+            .is_some_and(|(_, granted)| &granted == grant)
+    })
+}
+
+/// The `Unsealed` row that completes `redemption`, by its entry hash.
+pub(crate) fn break_glass_unsealed_for_redemption(
+    conn: &Connection,
+    redemption: &[u8; 32],
+) -> Result<Option<[u8; 32]>> {
+    break_glass_find_entry(conn, |r| {
+        r.unsealed_record()
+            .is_some_and(|(names, _, _)| &names == redemption)
+    })
+}
+
 pub fn verify_export_bundle(bundle: &ExportBundle) -> Result<()> {
     let verifying_key = verifying_key_from_bytes(&bundle.device_public_key)?;
     let payload_json = serde_json::to_string(&bundle.receipt_entry.receipt)?;
@@ -4834,11 +5193,18 @@ pub fn verify_export_bundle(bundle: &ExportBundle) -> Result<()> {
     if artifact_hash != bundle.receipt_entry.receipt.artifact_hash {
         return Err(anyhow!("export artifact hash mismatch"));
     }
+    // Structural export-authorization rules (R0, R1, R6), the same strings
+    // every walk prints. The cross-ledger rules need the break-glass chain.
+    let value = serde_json::to_value(&bundle.receipt_entry.receipt)?;
+    verify::export_authorization_shape(&value).map_err(|why| anyhow!(why))?;
     Ok(())
 }
 
 pub mod verify_helpers;
 pub mod verify_runner;
+
+#[cfg(test)]
+mod disclosure_tests;
 
 pub(crate) fn blob32(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
     if bytes.len() != 32 {
@@ -5817,6 +6183,7 @@ mod tests {
                 ..ExportOptions::default()
             },
             ExportAuthMode::SelfExport,
+            ReceiptDisclosure::default(),
         )?;
         let value = serde_json::to_value(&artifact)?;
 
@@ -6958,6 +7325,7 @@ mod tests {
                 ..ExportOptions::default()
             },
             ExportAuthMode::SelfExport,
+            ReceiptDisclosure::default(),
         )?;
         let failures: Vec<&ExportFailureEvent> = artifact
             .batches
@@ -7238,6 +7606,7 @@ mod tests {
                 ..ExportOptions::default()
             },
             ExportAuthMode::SelfExport,
+            ReceiptDisclosure::default(),
         )?;
         let (events, failures): (usize, usize) = artifact
             .batches
@@ -8237,6 +8606,7 @@ mod tests {
                 ..ExportOptions::default()
             },
             ExportAuthMode::SelfExport,
+            ReceiptDisclosure::default(),
         )?;
         let failures: Vec<&ExportFailureEvent> = artifact
             .batches
@@ -8275,6 +8645,7 @@ mod tests {
                 ..ExportOptions::default()
             },
             ExportAuthMode::SelfExport,
+            ReceiptDisclosure::default(),
         )?;
         let failures: Vec<&ExportFailureEvent> = artifact
             .batches

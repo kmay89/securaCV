@@ -539,3 +539,139 @@ extension GlassSettingsTests {
         }
     }
 }
+
+// ── A write the glass will take ─────────────────────────────────────────────
+//
+// glass_web.cpp's handle_settings_set calls write_blocked() before any key
+// branch, and that answers 403 {"ok":false,"err":"csrf"} to any POST whose
+// X-CSRF-Token is missing or is not this boot's token. The app once built the
+// POST with no header at all, so every write from the phone was refused on
+// every display. These drive the real request building through a stub that
+// answers the way handle_settings_get and write_blocked do.
+
+/// Answers the glass's two routes from `respond` and records every request.
+final class GlassWriteStubProtocol: URLProtocol {
+    struct Seen {
+        let method: String
+        let path: String
+        let token: String?
+    }
+
+    static var seen: [Seen] = []
+    static var respond: (URLRequest) -> (Int, String) = { _ in (500, "") }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let (status, body) = Self.respond(request)   // once: a responder may count calls
+        guard let url = request.url,
+              let response = HTTPURLResponse(url: url, statusCode: status,
+                                             httpVersion: "HTTP/1.1", headerFields: nil) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+        Self.seen.append(Seen(method: request.httpMethod ?? "GET", path: url.path,
+                              token: request.value(forHTTPHeaderField: "X-CSRF-Token")))
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
+extension GlassSettingsTests {
+
+    private static let base = URL(string: "http://192.168.1.31")!
+    /// The token nightlightBody carries.
+    private static let bootToken = "3fa9c0de1b2c4d5e6f708192a3b4c5d6"
+    private static let csrfRefusal = #"{"ok":false,"err":"csrf"}"#
+
+    private func stubSession() -> URLSession {
+        GlassWriteStubProtocol.seen = []
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [GlassWriteStubProtocol.self]
+        return URLSession(configuration: config)
+    }
+
+    /// The glass as glass_web.cpp answers: /api/settings serves `body`, and
+    /// /api/set takes the write only with `accepted` in X-CSRF-Token.
+    private func glass(serving body: @escaping () -> String,
+                       accepting accepted: @escaping () -> String) {
+        GlassWriteStubProtocol.respond = { req in
+            switch (req.httpMethod ?? "GET", req.url?.path ?? "") {
+            case ("GET", "/api/settings"):
+                return (200, body())
+            case ("POST", "/api/set"):
+                return req.value(forHTTPHeaderField: "X-CSRF-Token") == accepted()
+                    ? (200, #"{"ok":true}"#)
+                    : (403, GlassSettingsTests.csrfRefusal)
+            default:
+                return (404, "")
+            }
+        }
+    }
+
+    func testAWriteCarriesTheTokenTheGlassServed() async throws {
+        glass(serving: { GlassSettingsTests.nightlightBody },
+              accepting: { GlassSettingsTests.bootToken })
+        try await GlassAPI.set("lamp_pct", 70, at: Self.base, session: stubSession())
+        let seen = GlassWriteStubProtocol.seen
+        XCTAssertEqual(seen.map(\.method), ["GET", "POST"],
+                       "the token is read from /api/settings before the write")
+        XCTAssertEqual(seen.first?.path, "/api/settings")
+        XCTAssertEqual(seen.last?.path, "/api/set")
+        XCTAssertEqual(seen.last?.token, Self.bootToken,
+                       "write_blocked() refuses a POST without this boot's token")
+    }
+
+    func testARestartBetweenTheReadAndTheWriteIsRetriedWithTheNewToken() async throws {
+        // The glass mints a new token every boot: the first read gets the old
+        // boot's, the write meets the new boot, and the re-read gets its token.
+        let newToken = "00112233445566778899aabbccddeeff"
+        var reads = 0
+        glass(serving: {
+            reads += 1
+            let body = GlassSettingsTests.nightlightBody
+            return reads == 1 ? body
+                              : body.replacingOccurrences(of: GlassSettingsTests.bootToken,
+                                                          with: newToken)
+        }, accepting: { newToken })
+        try await NightlightAPI.set("orientation", 1, at: Self.base, session: stubSession())
+        let seen = GlassWriteStubProtocol.seen
+        XCTAssertEqual(seen.map(\.method), ["GET", "POST", "GET", "POST"])
+        XCTAssertEqual(seen.compactMap { $0.method == "POST" ? $0.token : nil },
+                       [Self.bootToken, newToken])
+    }
+
+    func testATokenRefusalIsRetriedOnceAndThenSaid() async throws {
+        glass(serving: { GlassSettingsTests.nightlightBody }, accepting: { "never-this" })
+        do {
+            try await GlassAPI.set("lamp_pct", 70, at: Self.base, session: stubSession())
+            XCTFail("a glass that refuses every token must throw")
+        } catch DeviceError.http(let code, let what) {
+            XCTAssertEqual(code, 403)
+            XCTAssertEqual(what, "lamp_pct")
+        }
+        XCTAssertEqual(GlassWriteStubProtocol.seen.filter { $0.method == "POST" }.count, 2,
+                       "one retry, not a loop")
+    }
+
+    func testARefusalAFreshTokenCannotCureIsNotRetried() async throws {
+        // on_glass_only is refused for every caller, token or not
+        // (settings_policy.h), so re-reading the token would change nothing.
+        GlassWriteStubProtocol.respond = { req in
+            req.httpMethod == "POST"
+                ? (403, #"{"ok":false,"err":"on_glass_only"}"#)
+                : (200, GlassSettingsTests.nightlightBody)
+        }
+        do {
+            try await GlassAPI.set("wx_direct", 1, at: Self.base, session: stubSession())
+            XCTFail("an on_glass_only refusal must throw")
+        } catch DeviceError.http(let code, _) {
+            XCTAssertEqual(code, 403)
+        }
+        XCTAssertEqual(GlassWriteStubProtocol.seen.filter { $0.method == "POST" }.count, 1)
+    }
+}

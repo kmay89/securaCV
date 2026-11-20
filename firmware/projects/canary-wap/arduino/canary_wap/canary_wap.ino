@@ -347,7 +347,7 @@ static volatile bool g_vault_test_pending = false;
 // (canary-local/tools/figures) holds it to the mDNS and MQTT sites and refuses
 // any other =, compound assignment, ++ or -- of the name (sweep F294).
 static const char* DEVICE_TYPE        = "canary-wap";
-static const char* FIRMWARE_VERSION   = "2.4.20-wap";  // Vision runtime config release train
+static const char* FIRMWARE_VERSION   = "2.4.21-wap";  // Vision runtime config release train
 static const char* RULESET_ID         = "securacv:canary:v1.0";
 static const char* PROTOCOL_VERSION   = "pwk:v0.3.0";
 static const char* CHAIN_ALGORITHM    = "sha256-domain-sep";
@@ -12384,7 +12384,7 @@ static bool start_wifi_ap() {
 // chain state beside it, for a later boot that can read them. Corruption is
 // IDF's to meet first, and the sketch sees only its answer. An entry whose
 // data CRC fails IDF erases inside the read it refuses, leaving the blob's
-// index, so that boot halts; on IDF 5.5 (this sketch's core 3.3.8) the next
+// index, so that boot halts; on IDF 5.5 (this sketch's core 3.3.11) the next
 // boot's nvs_flash_init() erases an index whose data is gone, so that boot
 // finds no key and makes a new identity. A data chunk whose header fails
 // IDF's check is erased when IDF loads the page, and the index with it in
@@ -14503,11 +14503,21 @@ static void ble_scanners_release_if_due() {
 // Cleared: the saved Wi-Fi networks (what POST /api/wifi/forget clears, the
 // ring included — and it re-arms the setup door's first-boot window), the
 // standalone choice, the MQTT bridge's broker row and CA (csi_mqtt's own
-// keys only), the device name and the first-boot flag (the wizard runs again).
+// keys only), the device name and the first-boot flag (the wizard runs again),
+// the sealed-snapshot vault's registered unlock key with every one of its
+// capture triggers turned off (vault_snapshot::clear_pubkey(), what
+// DELETE /api/vault/key runs; a camera build only), and the OTA
+// manifest-URL override (erased, so the compiled-in manifest and the channel
+// apply again). Without the vault clear, the next owner's unit kept sealing
+// camera frames to the previous owner's key on every armed trigger (audit
+// A2-18); without the override erase, it kept polling the previous owner's
+// manifest server.
 // Kept: the Ed25519 identity key, the chain state and its NVS records, the
 // witness records and health log on SD, the API token (the one derived from
 // the key, or the one a flasher seeded: api_tkn is not cleared either way),
-// the OTA settings, the CSI module's tuning. Runs on the loop task
+// the sealed files already in /VAULT on the card, the other OTA settings
+// (auto update, channel, the local-HTTP opt-in, the anti-rollback floors),
+// the CSI module's tuning. Runs on the loop task
 // (the BOOT poll) and RETURNS: the restart is the release edge's
 // (HoldEvent::Released, released_stage >= 2) because GPIO0 is the strapping pin.
 static void factory_reset_by_hold() {
@@ -14526,6 +14536,14 @@ static void factory_reset_by_hold() {
   }
   if (!setup_wizard::reset_to_first_boot()) {
     Serial.println("[RESET] Setup flag / device name: NVS refused the clear (kept)");
+  }
+  #if FEATURE_VAULT_SNAPSHOT
+  // Safe on the loop task, and in safe mode, where init() never ran and the
+  // trigger defaults it persists are already all off.
+  vault_snapshot::clear_pubkey();   // the vault's recipient public key, and every trigger off
+  #endif
+  if (securacv_ota_set_manifest_url(nullptr) != ESP_OK) {
+    Serial.println("[RESET] Update manifest override: NVS refused the erase (kept)");
   }
   // No restart here: GPIO0 is the BOOT strapping pin and the hand is still on
   // it, so a restart now would boot the ROM download loader, not the first-boot

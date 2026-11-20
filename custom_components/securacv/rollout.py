@@ -30,9 +30,12 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant
+
+if TYPE_CHECKING:
+    from homeassistant.core import Context
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -140,8 +143,16 @@ async def async_run(
     poll_s: float = DEFAULT_POLL_S,
     clock: Callable[[], float] | None = None,
     sleep: Callable[[float], Awaitable[None]] | None = None,
+    context: Context | None = None,
 ) -> RolloutResult:
-    """Install on each entity in turn; abort on the first failure or timeout."""
+    """Install on each entity in turn; abort on the first failure or timeout.
+
+    ``context`` is the ``securacv.staged_update`` caller's: every
+    ``update.install`` is sent under it, so the install carries that user
+    (the logbook's attribution) and Home Assistant runs its per-entity
+    control check against them. ``None`` is a fresh system context, which
+    attributes the install to nobody.
+    """
     import time
 
     now = clock or time.monotonic
@@ -158,7 +169,11 @@ async def async_run(
         _LOGGER.info("Staged rollout: installing %s on %s", latest, entity_id)
         try:
             await hass.services.async_call(
-                UPDATE_DOMAIN, INSTALL_SERVICE, {"entity_id": entity_id}, blocking=False
+                UPDATE_DOMAIN,
+                INSTALL_SERVICE,
+                {"entity_id": entity_id},
+                blocking=False,
+                context=context,
             )
         except Exception as exc:  # noqa: BLE001 — whatever stopped the install stops the rollout
             result.failed.append(entity_id)

@@ -8,14 +8,18 @@ people to "end one on the dashboard", which had no such control. Pin /
 rotate / unpin are deliberately NOT actions (docs/device_trust.md, "Why
 pin, rotate and unpin are not actions"): an automation reacting to a
 key-mismatch notification must not be able to rotate the pin to the key it
-just saw. ``verify`` and ``export_evidence`` only read: the walk against
-the pinned key, and the kernel's signed bundle into a pack.
+just saw. ``verify`` only reads (the walk against the pinned key);
+``export_evidence`` writes the kernel's signed bundle into a pack and prunes
+the entry's oldest packs past its keep limit, so it and ``staged_update``
+are admin-only.
 
 What is pinned here:
   - registration: exactly the three, once, from ``async_setup``, never fatal;
   - one start path: the action builds the same watch the voice intent does;
   - ending: by id, then by label (case and the leading article do not
     count), refusing an unknown or ambiguous reference, announced;
+  - who may call: export_evidence and staged_update refuse a signed-in
+    user who is not an administrator; the rest stay open;
   - listing: the response shape, and that an expired watch is announced
     rather than listed;
   - the cap, and the refusal before the restore has run;
@@ -45,7 +49,12 @@ from .conftest import run
 from .test_intent_start_watch import DEVICES, GATE, _start  # noqa: E402
 
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse  # noqa: E402
-from homeassistant.exceptions import HomeAssistantError, ServiceValidationError  # noqa: E402
+from homeassistant.exceptions import (  # noqa: E402
+    HomeAssistantError,
+    ServiceValidationError,
+    Unauthorized,
+    UnknownUser,
+)
 
 from .. import (  # noqa: E402
     async_setup,
@@ -267,7 +276,8 @@ def test_a_failure_to_register_never_fails_setup(monkeypatch, caplog) -> None:
 def test_the_vocabulary_is_the_six_and_nothing_else_registers_actions() -> None:
     """Action names are a compatibility promise, and trust decisions are
     not automatable: pin / rotate / unpin stay in the options flow and the
-    Repairs fix flow; verify and export only read; staged_update installs
+    Repairs fix flow; verify only reads, export writes a pack and prunes
+    the entry's oldest; staged_update installs
     firmware each node's own signed engine already accepts (docs/OTA.md §5)
     and touches no trust. A new registration anywhere else in the package
     (button.py included — the buttons call the same coroutines) would bypass
@@ -889,3 +899,85 @@ def test_export_evidence_translates_a_write_failure(monkeypatch) -> None:
     with pytest.raises(HomeAssistantError, match="disk full") as info:
         _call(hass, "export_evidence")
     assert info.value.translation_key == "export_write_failed"
+
+
+# ── who may call what: export_evidence and staged_update are admin-only ──
+
+
+class _Auth:
+    """``hass.auth`` with an administrator and a household member; any other
+    id is a user who no longer exists."""
+
+    USERS = {
+        "admin": types.SimpleNamespace(id="admin", is_admin=True),
+        "member": types.SimpleNamespace(id="member", is_admin=False),
+    }
+
+    async def async_get_user(self, user_id):
+        return self.USERS.get(user_id)
+
+
+def _call_as(hass, service: str, data: dict | None = None, *, user_id: str | None):
+    """`_call`, with the context Home Assistant gives a call made by
+    `user_id` (None: an automation, whose context carries no user)."""
+    registered = hass.services.registered[(DOMAIN, service)]
+    context = types.SimpleNamespace(user_id=user_id, id=f"ctx-{user_id}")
+    result = registered.func(
+        ServiceCall(DOMAIN, service, data or {}, context=context, return_response=True)
+    )
+    if asyncio.iscoroutine(result):
+        result = run(result)
+    return result
+
+
+def test_export_evidence_refuses_a_signed_in_user_who_is_not_an_admin() -> None:
+    """An export deletes this entry's oldest packs past its keep limit, so a
+    wall tablet's non-admin login that could call it twenty times could
+    erase a pack that is the only copy of an incident. The refusal comes
+    before the kernel is asked or a byte is written."""
+    api = FakeKernelApi()
+    hass = _kernel_hass(api=api)
+    hass.auth = _Auth()
+    with pytest.raises(Unauthorized):
+        _call_as(hass, "export_evidence", user_id="member")
+    with pytest.raises(UnknownUser):
+        _call_as(hass, "export_evidence", user_id="gone")
+    assert api.windows == [], "a refused export never reaches the kernel"
+    directory = Path(hass.config.path("securacv", "evidence"))
+    assert not directory.exists() or not list(directory.glob("*.zip"))
+
+    # An administrator, and an automation (no user in its context), export.
+    assert _call_as(hass, "export_evidence", user_id="admin")["events"] == 2
+    assert _call_as(hass, "export_evidence", user_id=None)["events"] == 2
+    assert api.windows == [24, 24]
+
+
+def test_staged_update_refuses_a_signed_in_user_who_is_not_an_admin() -> None:
+    """A fleet firmware rollout is an administrator's decision too."""
+    hass = _kernel_hass()
+    hass.auth = _Auth()
+    with pytest.raises(Unauthorized):
+        _call_as(hass, "staged_update", {"node_timeout": 600}, user_id="member")
+    with pytest.raises(UnknownUser):
+        _call_as(hass, "staged_update", {"node_timeout": 600}, user_id="gone")
+    # Past the gate, the action's own refusal: the stubs have no Canary
+    # update entities to install on.
+    for user_id in ("admin", None):
+        with pytest.raises(ServiceValidationError) as refused:
+            _call_as(hass, "staged_update", {"node_timeout": 600}, user_id=user_id)
+        assert refused.value.translation_key == "rollout_no_update_entities"
+
+
+def test_the_reading_and_watch_actions_stay_open_to_any_signed_in_user(delivered) -> None:
+    """Only the two actions that delete or install are gated: verify only
+    reads, and the watch actions stay as open as the voice intents."""
+    hass = _kernel_hass()
+    hass.auth = _Auth()
+    assert _call_as(hass, "verify", user_id="member")["chain_valid"] is True
+
+    hass = _hass()
+    hass.auth = _Auth()
+    started = _call_as(hass, "start_watch", {"subject": "the gate canary"}, user_id="member")
+    listed = _call_as(hass, "list_watches", user_id="member")
+    assert [row["id"] for row in listed["watches"]] == [started["id"]]
+    assert _call_as(hass, "end_watch", {"watch": started["id"]}, user_id="member")["id"] == started["id"]
