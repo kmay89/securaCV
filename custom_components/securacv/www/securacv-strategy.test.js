@@ -249,6 +249,12 @@ test("generate: a connected kernel gets the six sections in order, with honest c
     assert.equal(t.tap_action.perform_action, "button.press");
     assert.equal(t.tap_action.target.entity_id, t.entity);
   }
+  // Export asks first (it removes the oldest packs past the keep limit);
+  // Verify now only reads and does not.
+  const [verifyTile, exportTile] = tiles;
+  assert.equal(verifyTile.tap_action.confirmation, undefined);
+  assert.match(exportTile.tap_action.confirmation.text, /keep limit are removed, oldest first/);
+  assert.deepEqual(exportTile.icon_tap_action.confirmation, exportTile.tap_action.confirmation);
 
   // Today: the timeline card bound to the witness entities + the last-event sensor.
   const today = view.sections[1];

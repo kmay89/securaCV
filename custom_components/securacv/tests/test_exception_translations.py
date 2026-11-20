@@ -258,7 +258,7 @@ def _rollout_refused_install():
     states = {"update.porch_firmware": _State("on", installed_version="2.4.16", latest_version="2.5.0")}
     hass.states = types.SimpleNamespace(get=states.get)
 
-    async def _boom(domain, service, data, blocking=False):
+    async def _boom(domain, service, data, blocking=False, context=None):
         raise RuntimeError("the broker is down")
 
     hass.services.async_call = _boom

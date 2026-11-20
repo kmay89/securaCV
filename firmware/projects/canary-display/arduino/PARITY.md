@@ -88,7 +88,12 @@ GFX and NimBLE split their majors along the core boundary:
 | arduino-esp32 core | GFX Library for Arduino | NimBLE-Arduino | LVGL | Profile suffix |
 |---|---|---|---|---|
 | **2.0.17** (matches PlatformIO `espressif32 @ 6.9.0` — the bench-validated release path) | 1.4.9 (1.5+ needs core 3) | 1.4.3 (2.x needs core 3) | 8.4.0 | `watch` / `dash` |
-| **3.x** (Boards Manager default) | 1.6.6 (won't build on core 2) | 2.5.0 (won't build on core 2) | 9.5.0 | `watch-core3` / `dash-core3` |
+| **3.x** (Boards Manager default) | 1.6.6 (won't build on core 2) | 2.5.2 (won't build on core 2) | 9.5.0 | `watch-core3` / `dash-core3` |
+
+On 2.0.17 the core's own WebServer carries GHSA-8cmm-3887-r32j, and the
+`watch` / `dash` profiles link it: our builds pass
+`firmware/third_party/WebServer-2.0.17-securacv` instead, and the sketch
+README's warning says how to do the same.
 
 The **`playground` profile** (dev playground bench mode,
 `docs/hardware/dev_playground_43b.md`) is core-3-only by construction: it

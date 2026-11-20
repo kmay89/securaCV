@@ -255,6 +255,9 @@ enum DeviceError: Error, LocalizedError {
     case http(Int, String)
     case badReceipt
     case notPairable
+    /// A Canary this phone knows only through Home Assistant: no address of
+    /// its own to call, which is not the same as no pairing.
+    case noDirectAddress
     /// A sealed-file name that is not `seal_<8 digits>_<tag>.svlt`. Refused
     /// here, before it becomes a URL — the same gate the firmware applies.
     case badVaultFilename(String)
@@ -286,6 +289,7 @@ enum DeviceError: Error, LocalizedError {
         case .http(let code, let msg): return "Device error \(code): \(msg)"
         case .badReceipt: return "That pairing receipt couldn't be read."
         case .notPairable: return "This device holds no pairing for this Canary. If it was paired on another device, open its recovery kit here too."
+        case .noDirectAddress: return "This Canary is reached through Home Assistant, so this phone has no address of its own to ask it on."
         case .certificateMismatch:
             return "This Canary's secure certificate doesn't match the one in its pairing "
                 + "receipt, so the connection was refused. Something may be answering in its "

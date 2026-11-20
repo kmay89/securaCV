@@ -100,6 +100,7 @@ must(CLI_RS, "the master key is plaintext on disk", "doctor honesty warning")
 # drill runs in a throwaway sandbox and burns its token single-use
 must(CLI_RS, "Nothing real is touched", "drill sandbox promise")
 must(CLI_RS, "redeem_token_durably(&unseal_token)", "drill burns the token single-use")
+must(CLI_RS, "recorded the unseal and verified its handoff sidecar", "drill records the unseal and checks its handoff sidecar")
 
 # the committed policy always goes through validate() (Invariant V)
 must(CLI_RS, "set_break_glass_policy", "commit path")
@@ -257,6 +258,7 @@ CEREMONY = {
              "  ✓ 2 trustees approved; two break-glass tokens minted (one to seal, one to unseal)",
              "  ✓ sealed a throwaway envelope",
              "  ✓ unsealed it with a fresh quorum token",
+             "  ✓ recorded the unseal and verified its handoff sidecar",
              "  ✓ recovered payload matches the original, byte for byte",
              "Result: DRILL PASSED — break-glass works end to end on this build.",
          ],

@@ -438,4 +438,14 @@ final class DeviceAPITests: XCTestCase {
             XCTFail("expected .http(500), got \(error)")
         }
     }
+
+    /// A Canary known only through Home Assistant has no address of its own:
+    /// that is said as such, not as a missing pairing, and it is not a
+    /// refused pairing either.
+    func testACanaryWithNoDirectAddressIsNotCalledUnpaired() {
+        let words = DeviceError.noDirectAddress.errorDescription ?? ""
+        XCTAssertTrue(words.contains("Home Assistant"), words)
+        XCTAssertFalse(words.contains("no pairing"), words)
+        XCTAssertFalse(RefusedPairings.isRefusal(DeviceError.noDirectAddress))
+    }
 }

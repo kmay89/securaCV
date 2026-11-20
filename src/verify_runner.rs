@@ -56,6 +56,17 @@ pub struct VerifyReport {
     /// retained over MQTT.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anchors_checked: Option<u64>,
+    /// Number of `ots_anchors` rows (OpenTimestamps proofs) that passed the
+    /// same structural checks (row well-formed, proof parses, its digest
+    /// equals the row's subject hash, the cached attestation columns agree
+    /// with the proof, and — for head subjects — the hash is in its declared
+    /// ledger's history). Same contract as `anchors_checked`: `None` when the
+    /// table is absent (so every existing report is byte-identical), `Some(n)`
+    /// on success, on a failed report the rows checked before the failing
+    /// one. Never a Bitcoin check: there is no header input here. No heights,
+    /// no times, no hashes. `anchors_checked` stays RFC 3161 only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ots_anchors_checked: Option<u64>,
     /// Number of `clock_provenance` rows (device clock vs TSA `genTime`, one
     /// device-signed record per anchor row; `src/clock_provenance.rs`) whose
     /// hash chain and device signatures verified. `None` when the ledger has
@@ -71,7 +82,18 @@ pub struct VerifyReport {
     pub break_glass_denied: u64,
     /// `TokenRedeemed` rows: tokens actually spent at the unseal gate.
     pub break_glass_redeemed: u64,
+    /// `Unsealed` rows: decrypts the device recorded after a redemption
+    /// (the handoff-sidecar work, `docs/handoff_sidecars.md`). `None` when
+    /// zero — so a report is byte-identical until the first unseal record
+    /// exists — and `None` on a failed report.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub break_glass_unsealed: Option<u64>,
     pub export_receipts_verified: u64,
+    /// Export receipts that name the Granted receipt whose token authorized
+    /// them (`authorizing_receipt`), each link checked (rules R0–R6). `None`
+    /// when zero and on a failed report.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub export_receipts_authorized: Option<u64>,
     pub alarm_count: u64,
     pub checkpoint_cutoff_event_id: Option<i64>,
     /// Hex chain-head hash of the latest checkpoint, when one exists.
@@ -103,13 +125,16 @@ impl VerifyReport {
             identity_verified: false,
             high_water_mark_checked: false,
             anchors_checked: None,
+            ots_anchors_checked: None,
             clock_provenance_verified: None,
             events_verified: 0,
             break_glass_receipts_verified: 0,
             break_glass_granted: 0,
             break_glass_denied: 0,
             break_glass_redeemed: 0,
+            break_glass_unsealed: None,
             export_receipts_verified: 0,
+            export_receipts_authorized: None,
             alarm_count: 0,
             checkpoint_cutoff_event_id: None,
             checkpoint_head_hash: None,
@@ -211,6 +236,8 @@ fn run_full_verify_impl(
             report.failure = err.downcast_ref::<verify::VerifyFailure>().cloned();
             // A count of verified records has no meaning on a failed report.
             report.clock_provenance_verified = None;
+            report.break_glass_unsealed = None;
+            report.export_receipts_authorized = None;
         }
     }
     report.verdict = if report.chain_valid {
@@ -325,6 +352,7 @@ fn run_inner(
     report.break_glass_granted = counts.granted;
     report.break_glass_denied = counts.denied;
     report.break_glass_redeemed = counts.redeemed;
+    report.break_glass_unsealed = (counts.unsealed > 0).then_some(counts.unsealed);
 
     report.export_receipts_verified = verify::verify_export_receipts_with(
         conn,
@@ -333,6 +361,14 @@ fn run_inner(
         pq_verifying_key.as_ref(),
         |id, entry_hash| on_item(VerifiedItem::ExportReceipt { id, entry_hash }),
     )?;
+
+    // Export authorizations (R0–R6): each export receipt that names the
+    // Granted receipt whose token authorized it must name a real, redeemed
+    // export:events grant, once, and restate no operator beside it. Before
+    // the clock-provenance walk (insertion order: export walk → export
+    // authorizations → clock provenance → anchors).
+    let authorized = verify::verify_export_authorizations(conn)?;
+    report.export_receipts_authorized = (authorized > 0).then_some(authorized);
 
     // The clock-provenance ledger (device clock vs TSA genTime, one
     // device-signed record per anchor row). A chain or signature failure is
@@ -519,8 +555,14 @@ fn run_inner(
             if subject.is_head() {
                 check_anchored_head(
                     conn,
-                    &record,
-                    subject,
+                    &AnchoredHead {
+                        ledger: verify::FailedLedger::Anchors,
+                        label: "anchor",
+                        id: record.id,
+                        subject,
+                        hash: &record.subject_hash,
+                        ledger_id: record.ledger_id,
+                    },
                     &lineage,
                     &checkpoint,
                     signature_mode,
@@ -528,6 +570,75 @@ fn run_inner(
                 )?;
             }
             if let Some(n) = report.anchors_checked.as_mut() {
+                *n += 1;
+            }
+        }
+    }
+
+    // OpenTimestamps proofs (`ots_anchors`): the same rules, structural only.
+    // A Bitcoin attestation is never checked here — there is no header input,
+    // and this runs at witnessd boot; `log_anchor verify --bitcoin-headers`
+    // does that comparison. The cached `attestation`/`bitcoin_height`
+    // columns are re-derived from the proof; disagreement is a warning.
+    if crate::ots::ots_table_exists(conn)? {
+        report.ots_anchors_checked = Some(0);
+        for (id, row) in crate::ots::list_ots_anchors_lenient(conn)? {
+            let record = match row {
+                Ok(record) => record,
+                Err(err) => {
+                    let reason = strip_prefix_for(&err.to_string(), "corrupt ots anchor", id);
+                    anchor_warnings.push(format!(
+                        "ots anchor #{id}: row is malformed ({reason}); run log_anchor verify"
+                    ));
+                    continue;
+                }
+            };
+            let proof = match crate::ots::Proof::parse(&record.proof) {
+                Ok(proof) => proof,
+                Err(_) => {
+                    anchor_warnings.push(format!(
+                        "ots anchor #{id}: stored proof does not parse as an OpenTimestamps \
+                         proof; run log_anchor verify"
+                    ));
+                    continue;
+                }
+            };
+            if proof.digest != record.subject_hash {
+                anchor_warnings.push(format!(
+                    "ots anchor #{id}: proof digest does not match the subject hash the row \
+                     claims; run log_anchor verify"
+                ));
+                continue;
+            }
+            let state = proof.state();
+            let caches_agree = state.column() == Some(record.attestation.as_str())
+                && state.height().map(|h| h as i64) == record.bitcoin_height;
+            if !caches_agree {
+                anchor_warnings.push(format!(
+                    "ots anchor #{id}: attestation columns disagree with the stored proof; run \
+                     log_anchor verify"
+                ));
+                continue;
+            }
+            let subject = record.subject_kind_or_digest();
+            if subject.is_head() {
+                check_anchored_head(
+                    conn,
+                    &AnchoredHead {
+                        ledger: verify::FailedLedger::OtsAnchors,
+                        label: "ots anchor",
+                        id: record.id,
+                        subject,
+                        hash: &record.subject_hash,
+                        ledger_id: record.ledger_id,
+                    },
+                    &lineage,
+                    &checkpoint,
+                    signature_mode,
+                    pq_verifying_key.as_ref(),
+                )?;
+            }
+            if let Some(n) = report.ots_anchors_checked.as_mut() {
                 *n += 1;
             }
         }
@@ -663,7 +774,14 @@ fn clock_provenance_warnings(
 /// `list_anchors_lenient` wraps a row's reason as `corrupt anchor {id}:
 /// {reason}`; the warning names the row itself, so keep only the reason.
 fn strip_corrupt_prefix(message: &str, id: i64) -> String {
-    let prefix = format!("corrupt anchor {id}: ");
+    strip_prefix_for(message, "corrupt anchor", id)
+}
+
+/// `{what} {id}: ` stripped from a lenient reader's reason
+/// (`corrupt anchor` for `tsa_anchors`, `corrupt ots anchor` for
+/// `ots_anchors`).
+fn strip_prefix_for(message: &str, what: &str, id: i64) -> String {
+    let prefix = format!("{what} {id}: ");
     message.strip_prefix(&prefix).unwrap_or(message).to_string()
 }
 
@@ -673,24 +791,37 @@ fn hex16(hash: &[u8; 32]) -> String {
     hex::encode(&hash[..8])
 }
 
+/// One head-kind anchor row, from either table, for the membership check.
+struct AnchoredHead<'a> {
+    /// `Anchors` (RFC 3161) or `OtsAnchors` (OpenTimestamps).
+    ledger: verify::FailedLedger,
+    /// `"anchor"` or `"ots anchor"`: every detail reads `{label} #{id}`.
+    label: &'static str,
+    id: i64,
+    subject: crate::tsa::AnchorSubject,
+    hash: &'a [u8; 32],
+    ledger_id: Option<i64>,
+}
+
 /// A head-kind anchor's membership check: the anchored hash must be in its
 /// declared ledger's history, witnessed by a live row or by a checkpoint
 /// whose signature verifies under a genesis-anchored lineage key.
 fn check_anchored_head(
     conn: &Connection,
-    record: &crate::tsa::AnchorRecord,
-    subject: crate::tsa::AnchorSubject,
+    row: &AnchoredHead<'_>,
     lineage: &[crate::DeviceKeyEpoch],
     cutoff_checkpoint: &verify::CheckpointInfo,
     signature_mode: SignatureMode,
     pq_verifying_key: Option<&PqPublicKey>,
 ) -> Result<()> {
     use crate::tsa::HistoryWitness;
-    let id = record.id;
-    let hash = &record.subject_hash;
+    let id = row.id;
+    let hash = row.hash;
+    let subject = row.subject;
+    let label = row.label;
     let regression = |detail: String| {
         anyhow::Error::new(verify::VerifyFailure {
-            ledger: verify::FailedLedger::Anchors,
+            ledger: row.ledger,
             entry_id: Some(id),
             kind: verify::FailureKind::AnchorRegression,
             detail,
@@ -708,7 +839,7 @@ fn check_anchored_head(
                 Some(key) => {
                     if !lineage.iter().any(|e| e.public_key == key) {
                         return Err(regression(format!(
-                            "anchor regression: anchor #{id} covers chain head {}… which survives \
+                            "anchor regression: {label} #{id} covers chain head {}… which survives \
                              only as checkpoint #{checkpoint_id} signed by a key outside the \
                              genesis-anchored device key lineage",
                             hex16(hash)
@@ -724,7 +855,7 @@ fn check_anchored_head(
             verify::verify_checkpoint_signature(&signer, &witness, signature_mode, pq_verifying_key)
                 .map_err(|e| {
                     regression(format!(
-                        "anchor regression: anchor #{id} covers chain head {}… which survives \
+                        "anchor regression: {label} #{id} covers chain head {}… which survives \
                          only as checkpoint #{checkpoint_id} whose signature does not verify: {e:#}",
                         hex16(hash)
                     ))
@@ -735,7 +866,7 @@ fn check_anchored_head(
             // Qualifier: text only, chain-head rows only. The unsigned
             // `ledger_id` sharpens the diagnosis; it never decides the verdict.
             let qualifier = match (subject, cutoff_checkpoint.cutoff_event_id) {
-                (crate::tsa::AnchorSubject::ChainHead, Some(cutoff)) => match record.ledger_id {
+                (crate::tsa::AnchorSubject::ChainHead, Some(cutoff)) => match row.ledger_id {
                     Some(ledger_id) if ledger_id <= cutoff => format!(
                         " (the anchored ledger row {ledger_id} is at or below the retention \
                          cutoff {cutoff})"
@@ -751,7 +882,7 @@ fn check_anchored_head(
                 _ => String::new(),
             };
             Err(regression(format!(
-                "anchor regression: anchor #{id} covers {subject} {}… which is not in this \
+                "anchor regression: {label} #{id} covers {subject} {}… which is not in this \
                  database's {} history — rollback, truncation, or a different history than the \
                  one that was anchored{qualifier}",
                 hex16(hash),
@@ -1011,13 +1142,16 @@ mod tests {
             identity_verified: true,
             high_water_mark_checked: false,
             anchors_checked: None,
+            ots_anchors_checked: None,
             clock_provenance_verified: None,
             events_verified: 3,
             break_glass_receipts_verified: 0,
             break_glass_granted: 0,
             break_glass_denied: 0,
             break_glass_redeemed: 0,
+            break_glass_unsealed: None,
             export_receipts_verified: 1,
+            export_receipts_authorized: None,
             alarm_count: 0,
             checkpoint_cutoff_event_id: None,
             checkpoint_head_hash: None,
@@ -1686,19 +1820,30 @@ mod tests {
     /// Invariant III for the retained MQTT report: no anchored hash leaves
     /// in full. `error`, `failure.detail` and every warning carry at most a
     /// 16-hex prefix, and the anchored hash's full hex is nowhere in the JSON.
+    /// Nor do they carry a URL (an anchor's TSA or calendar), a block height
+    /// or a bucket epoch (an all-digit token of 6 to 10 digits — row ids and
+    /// counts in these tests are shorter, and a hex prefix is not all
+    /// digits), or a rendered time.
     fn assert_report_hygiene(report: &VerifyReport, anchored: &[u8; 32]) {
-        if let Some(err) = &report.error {
-            assert!(!has_64_hex(err), "full hash in error: {err}");
-        }
-        if let Some(failure) = &report.failure {
+        let texts = report
+            .error
+            .iter()
+            .map(|e| ("error", e.as_str()))
+            .chain(report.failure.iter().map(|f| ("detail", f.detail.as_str())))
+            .chain(report.warnings.iter().map(|w| ("warning", w.as_str())));
+        for (what, text) in texts {
+            assert!(!has_64_hex(text), "full hash in {what}: {text}");
             assert!(
-                !has_64_hex(&failure.detail),
-                "full hash in detail: {}",
-                failure.detail
+                !text.contains("http") && !text.contains("://"),
+                "URL in {what}: {text}"
             );
-        }
-        for w in &report.warnings {
-            assert!(!has_64_hex(w), "full hash in warning: {w}");
+            assert!(
+                !text
+                    .split(|c: char| !c.is_ascii_alphanumeric())
+                    .any(|t| (6..=10).contains(&t.len()) && t.bytes().all(|b| b.is_ascii_digit())),
+                "a height or epoch in {what}: {text}"
+            );
+            assert!(!text.contains("UTC"), "a time in {what}: {text}");
         }
         let json = serde_json::to_string(report).unwrap();
         assert!(
@@ -2797,5 +2942,237 @@ mod tests {
         // Both rows and both records exist once the snapshot has ended.
         assert_eq!(crate::tsa::list_anchors(&conn).unwrap().len(), 2);
         assert_eq!(crate::clock_provenance::row_count(&conn).unwrap(), 2);
+    }
+
+    // -------------------- OpenTimestamps rows (ots_anchors) --------------------
+
+    fn ots_anchor(conn: &Connection, subject: AnchorSubject, hash: &[u8; 32]) -> i64 {
+        let body = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/ots/response-bob.otsr"
+        ))
+        .unwrap();
+        // Random like the kernel's own, never a literal.
+        let nonce = crate::ots::random_nonce();
+        let c = crate::ots::commitment(hash, &nonce);
+        let node = crate::ots::parse_timestamp(&body, &c).unwrap();
+        let proof = crate::ots::Proof::compose(hash, &nonce, node).unwrap();
+        crate::ots::insert_ots_anchor(
+            conn,
+            TimeBucket {
+                start_epoch_s: 600,
+                size_s: 600,
+            },
+            subject,
+            hash,
+            "https://bob.btc.calendar.opentimestamps.org",
+            &proof,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn ots_table_absent_report_byte_identical() {
+        let db = TempDb::new();
+        let mut kernel = open_kernel(db.path());
+        write_test_event(&mut kernel);
+        let head = event_hash(&kernel.conn, 1);
+        anchor(&kernel.conn, AnchorSubject::ChainHead, &head);
+        drop(kernel);
+        let conn = open_encrypted(db.path());
+        assert!(!crate::ots::ots_table_exists(&conn).unwrap());
+        let report = verify(&conn);
+        assert!(report.chain_valid, "{:?}", report.error);
+        assert_eq!(report.ots_anchors_checked, None);
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(!json.contains("ots_anchors"), "{json}");
+        // Byte-identical to the pre-OTS serialization: the field is skipped,
+        // so the keys are exactly the ones a pre-OTS build wrote, in order.
+        let keys: Vec<&str> = json
+            .trim_matches(|c| c == '{' || c == '}')
+            .split(',')
+            .filter_map(|kv| kv.split(':').next())
+            .map(|k| k.trim_matches('"'))
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "chain_valid",
+                "verdict",
+                "identity_verified",
+                "high_water_mark_checked",
+                "anchors_checked",
+                "events_verified",
+                "break_glass_receipts_verified",
+                "break_glass_granted",
+                "break_glass_denied",
+                "break_glass_redeemed",
+                "export_receipts_verified",
+                "alarm_count",
+                "checkpoint_cutoff_event_id",
+                "verified_at_bucket_start",
+                "verified_at_bucket_size"
+            ]
+        );
+        assert!(
+            !crate::ots::ots_table_exists(&conn).unwrap(),
+            "verify never creates it"
+        );
+    }
+
+    #[test]
+    fn ots_rows_counted() {
+        let db = TempDb::new();
+        let mut kernel = open_kernel(db.path());
+        write_test_event(&mut kernel);
+        write_test_event(&mut kernel);
+        let head = event_hash(&kernel.conn, 2);
+        ots_anchor(&kernel.conn, AnchorSubject::ChainHead, &head);
+        ots_anchor(&kernel.conn, AnchorSubject::Digest, &[9u8; 32]);
+        ots_anchor(
+            &kernel.conn,
+            AnchorSubject::Digest,
+            &AnchorSubject::PolicyHead.empty_ledger_sentinel().unwrap(),
+        );
+        drop(kernel);
+        let conn = open_encrypted(db.path());
+        let report = verify(&conn);
+        assert!(report.chain_valid, "{:?}", report.error);
+        assert_eq!(report.ots_anchors_checked, Some(3));
+        assert_eq!(
+            report.anchors_checked, None,
+            "anchors_checked stays RFC 3161 only"
+        );
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert!(serde_json::to_string(&report)
+            .unwrap()
+            .contains("\"ots_anchors_checked\":3"));
+        assert_report_hygiene(&report, &head);
+    }
+
+    #[test]
+    fn ots_warnings_four_literals_classified_anchor_anomaly_and_hygienic() {
+        let db = TempDb::new();
+        let mut kernel = open_kernel(db.path());
+        write_test_event(&mut kernel);
+        let head = event_hash(&kernel.conn, 1);
+        let malformed = ots_anchor(&kernel.conn, AnchorSubject::ChainHead, &head);
+        let unparseable = ots_anchor(&kernel.conn, AnchorSubject::ChainHead, &head);
+        let wrong_digest = ots_anchor(&kernel.conn, AnchorSubject::ChainHead, &head);
+        let cache = ots_anchor(&kernel.conn, AnchorSubject::ChainHead, &head);
+        let good = ots_anchor(&kernel.conn, AnchorSubject::ChainHead, &head);
+        let c = &kernel.conn;
+        c.execute(
+            "UPDATE ots_anchors SET proof = 'text' WHERE id = ?1",
+            [malformed],
+        )
+        .unwrap();
+        c.execute(
+            "UPDATE ots_anchors SET proof = x'00010203' WHERE id = ?1",
+            [unparseable],
+        )
+        .unwrap();
+        c.execute(
+            "UPDATE ots_anchors SET subject_hash = ?2 WHERE id = ?1",
+            rusqlite::params![wrong_digest, vec![7u8; 32]],
+        )
+        .unwrap();
+        c.execute(
+            "UPDATE ots_anchors SET attestation = 'bitcoin', bitcoin_height = 840000 WHERE id = ?1",
+            [cache],
+        )
+        .unwrap();
+        drop(kernel);
+        let conn = open_encrypted(db.path());
+        let report = verify(&conn);
+        assert!(report.chain_valid, "{:?}", report.error);
+        assert_eq!(report.ots_anchors_checked, Some(1), "only #{good} passed");
+        assert_eq!(
+            report.warnings,
+            vec![
+                format!("ots anchor #{malformed}: row is malformed (proof is not a BLOB); run log_anchor verify"),
+                format!("ots anchor #{unparseable}: stored proof does not parse as an OpenTimestamps proof; run log_anchor verify"),
+                format!("ots anchor #{wrong_digest}: proof digest does not match the subject hash the row claims; run log_anchor verify"),
+                format!("ots anchor #{cache}: attestation columns disagree with the stored proof; run log_anchor verify"),
+            ]
+        );
+        for w in &report.warnings {
+            assert_eq!(
+                verify::classify_warning(w),
+                verify::WarningKind::AnchorAnomaly
+            );
+        }
+        assert_report_hygiene(&report, &head);
+    }
+
+    #[test]
+    fn ots_head_gone_is_anchor_regression_on_ots_ledger() {
+        let db = TempDb::new();
+        let mut kernel = open_kernel(db.path());
+        write_test_event(&mut kernel);
+        write_test_event(&mut kernel);
+        let head = event_hash(&kernel.conn, 2);
+        let id = ots_anchor(&kernel.conn, AnchorSubject::ChainHead, &head);
+        kernel
+            .conn
+            .execute("DELETE FROM sealed_events WHERE id = 2", [])
+            .unwrap();
+        drop(kernel);
+        let conn = open_encrypted(db.path());
+        let report = verify(&conn);
+        assert!(!report.chain_valid);
+        assert_eq!(report.verdict, "verification failed");
+        let failure = report.failure.clone().expect("structured failure");
+        assert_eq!(failure.ledger, verify::FailedLedger::OtsAnchors);
+        assert_eq!(failure.kind, verify::FailureKind::AnchorRegression);
+        assert_eq!(failure.entry_id, Some(id));
+        assert_eq!(
+            failure.detail,
+            format!(
+                "anchor regression: ots anchor #{id} covers chain_head {}… which is not in \
+                 this database's chain history — rollback, truncation, or a different history \
+                 than the one that was anchored",
+                hex::encode(&head[..8])
+            )
+        );
+        let json = serde_json::to_string(&failure).unwrap();
+        assert!(json.contains("\"ledger\":\"ots_anchors\""), "{json}");
+        assert_eq!(report.ots_anchors_checked, Some(0));
+        assert_report_hygiene(&report, &head);
+        assert_eq!(
+            crate::verify_explain::ledger_name(verify::FailedLedger::OtsAnchors),
+            "OpenTimestamps anchor table"
+        );
+    }
+
+    #[test]
+    fn tsa_block_unchanged_with_both_tables() {
+        let db = TempDb::new();
+        let mut kernel = open_kernel(db.path());
+        write_test_event(&mut kernel);
+        write_test_event(&mut kernel);
+        let head = event_hash(&kernel.conn, 2);
+        let anchor_id = anchor(&kernel.conn, AnchorSubject::ChainHead, &head);
+        ots_anchor(&kernel.conn, AnchorSubject::ChainHead, &head);
+        kernel
+            .conn
+            .execute("DELETE FROM sealed_events WHERE id = 2", [])
+            .unwrap();
+        drop(kernel);
+        let conn = open_encrypted(db.path());
+        let report = verify(&conn);
+        // The TSA block runs first and fails exactly as it does alone.
+        let failure = regression(&report, anchor_id);
+        assert_eq!(
+            failure.detail,
+            format!(
+                "anchor regression: anchor #{anchor_id} covers chain_head {}… which is not in \
+                 this database's chain history — rollback, truncation, or a different history \
+                 than the one that was anchored",
+                hex::encode(&head[..8])
+            )
+        );
+        assert_eq!(report.anchors_checked, Some(0));
+        assert_report_hygiene(&report, &head);
     }
 }

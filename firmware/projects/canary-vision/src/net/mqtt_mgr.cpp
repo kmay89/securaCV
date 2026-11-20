@@ -82,6 +82,8 @@ static volatile long s_pending_cfg_score = -1;
 static volatile long s_pending_cfg_lost = -1;
 static volatile long s_pending_cfg_dwell = -1;
 static volatile long s_pending_cfg_profile = -1;
+// HA's "Broadcast detection" switch (beacon/set): -1 none, 0 off, 1 on.
+static volatile int s_pending_beacon = -1;
 
 // Inbound doorbell switch + glow brightness (latch-and-drain, main.cpp
 // applies them through canary::doorbell_hw and republishes the state row).
@@ -185,6 +187,17 @@ static void on_mqtt_message(char* topic, uint8_t* payload, unsigned int len) {
     }
     return;
   }
+  if (strcmp(topic, g_topics.beacon_cmd) == 0) {
+    const char* q = (const char*)payload;
+    int m = (int)len;
+    while (m > 0 && (*q == ' ' || *q == '\t' || *q == '"')) { q++; m--; }
+    if (token_at(q, m, "ON", 2) || token_at(q, m, "on", 2)) {
+      s_pending_beacon = 1;
+    } else if (token_at(q, m, "OFF", 3) || token_at(q, m, "off", 3)) {
+      s_pending_beacon = 0;
+    }
+    return;
+  }
   if (strcmp(topic, g_topics.doorbell_enable_cmd) == 0) {
     const char* q = (const char*)payload;
     int m = (int)len;
@@ -270,6 +283,12 @@ long take_pending_cfg_score()   { return take_pending(s_pending_cfg_score); }
 long take_pending_cfg_lost()    { return take_pending(s_pending_cfg_lost); }
 long take_pending_cfg_dwell()   { return take_pending(s_pending_cfg_dwell); }
 long take_pending_cfg_profile() { return take_pending(s_pending_cfg_profile); }
+
+int take_pending_beacon_detect() {
+  const int v = s_pending_beacon;
+  s_pending_beacon = -1;
+  return v;
+}
 long take_pending_doorbell_glow()  { return take_pending(s_pending_db_glow); }
 long take_pending_doorbell_volume() { return take_pending(s_pending_db_volume); }
 
@@ -626,6 +645,11 @@ bool mqtt_connect_attempt() {
   mqtt.subscribe(g_topics.cfg_profile_cmd, 1);
   publish_detect_cfg_retained(g_topics);
 
+  // The beacon's detection opt-in: the switch command and its retained
+  // ON/OFF state, rebuilt from the NVS-backed value.
+  mqtt.subscribe(g_topics.beacon_cmd, 1);
+  publish_beacon_detect_retained(g_topics);
+
   // Doorbell (boards with its pins only): the switch and glow commands and
   // the retained state row, rebuilt from canary::doorbell_hw.
   if (canary::doorbell_hw::available()) {
@@ -694,6 +718,12 @@ bool publish_detect_cfg_retained(const Topics& topics) {
            (unsigned long)d.dwell_start_ms,
            prof.key, prof.label);
   return publish_checked("CFG", topics.cfg_state, msg, true);
+}
+
+bool publish_beacon_detect_retained(const Topics& topics) {
+  if (!mqtt.connected()) return false;
+  return publish_checked("CFG", topics.beacon_state,
+                         canary::cfg::detect().beacon_detect ? "ON" : "OFF", true);
 }
 
 bool publish_update_state_retained(const Topics& topics, const char* json_payload) {
