@@ -3912,3 +3912,33 @@ process: Flasher, Lab, tvOS, and the iPhone / iPad / Mac targets.
 - **Applies to:** any release that ships a new receipt outcome or ledger
   record variant: check that no release tag contains the writer without the
   reader, and say the upgrade order in the release notes.
+
+### 2026-11-08 (b) — a parse error in Kernel::open is an exit, not safe mode; refusals belong after open
+
+- **Symptom (prevented, not paid):** `Kernel::open` loaded the stored
+  break-glass policy with `?`, so a policy row this build could not parse or
+  validate (a corrupt row, or a field a newer release wrote) failed the open,
+  and `witnessd` exited before its boot verification could enter safe mode.
+  The read and verify API went down with it, on exactly the database an
+  operator most needs to inspect. Separately, one stale approval file handed
+  to `authorize` was stored on the signed receipt, and the verifier failed
+  that receipt on every outcome, for good.
+- **Cause:** a refusal placed at open time is an exit. Safe mode only exists
+  after the kernel has opened, and the readers that should refuse (the
+  verifier, the unseal gate) already did. On the approval side the writer
+  stored evidence it had not counted, and the reader treated "not counted"
+  as "forged".
+- **Fix (PR M0, reader hardening):** the open records the load error and the
+  policy stays unset; `Kernel::break_glass_policy_checked` refuses every
+  break-glass action with it; the locked re-read in `policy set` still
+  propagates, so an unreadable policy is never bootstrapped over; `doctor`
+  prints `policy: UNREADABLE — …` and exits 1. Receipts record only the
+  approvals over their own request hash, and the verifier skips an approval
+  that does not count. Tests: `unreadable_policy_opens_and_refuses`,
+  `unreadable_policy_is_never_bootstrapped_over`
+  (`src/break_glass_reader_tests.rs`), `doctor_reports_unreadable_policy`
+  (`tests/break_glass_unreadable_policy.rs`).
+- **Applies to:** any stored configuration a newer release may write (the
+  custody epoch's policy fields first): the refusing reader must ship in a
+  release before the writer, and it must refuse after open, into safe mode,
+  never at open.
