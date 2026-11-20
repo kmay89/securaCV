@@ -184,6 +184,7 @@ cameras:
         - path: rtsp://USER:PASS@10.0.0.20:554/stream   # ← your camera's real URL
           roles: [detect]
     detect: { width: 1280, height: 720, fps: 5 }
+    mqtt: { enabled: false }     # ← keep: no JPEG of each tracked object on the broker
 ```
 
 Restart the app. (The example camera ships **disabled** so the config is valid
@@ -212,7 +213,10 @@ Assistant OS doesn't run on Jetson — it's the *eyes*, not a second hub.)
 > `topic_prefix` (Mosquitto allows one connection per client ID), and point
 > securaCV's `frigate.topic_prefix` at the one you want it to read.
 
-> **Privacy default:** recordings **and** snapshots ship **off** — securaCV is
+> **Privacy default:** recordings **and** snapshots ship **off**, and so do the
+> example camera's MQTT images (`mqtt: enabled: false`: Frigate otherwise
+> publishes a retained JPEG of every tracked object to the broker, whatever
+> `snapshots` says, and a camera you add needs the same block) — securaCV is
 > "claims, not recordings". Detection and events work fully with no raw imagery
 > stored. Turn them on only if you deliberately want stored images (and use an
 > SSD — continuous recording destroys SD cards).

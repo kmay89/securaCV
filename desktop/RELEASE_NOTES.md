@@ -17,6 +17,56 @@ Write for the user, not the diff: what they can do now, what got fixed,
 and what to expect after updating. Heading grammar is
 `## <version> — <YYYY-MM-DD>`.
 
+## 0.12.8 — 2026-11-16
+
+**Firmware 2.4.21, and a hub that keeps camera images off its broker.**
+
+- **A hub it sets up keeps Frigate's camera images off the broker.** The
+  Frigate config the hub setup writes now also turns off each camera's
+  MQTT images, the cropped picture of every tracked object that Frigate
+  otherwise publishes to your broker (a switch separate from snapshots).
+  A camera you add beside the example needs the same line, and the setup
+  step says so.
+- **Firmware 2.4.21** is the catalog this version carries. In it: a
+  display no longer lets an unsigned nearby broadcast raise a lasting red
+  alarm or push a real Canary off its screen; a Canary Vision no longer
+  broadcasts whether a room is occupied unless you turn on **Broadcast
+  detection**; a display's settings and logs refuse a page served under
+  another name; the WAP's 10-second hold also clears the camera vault's
+  key and a custom update server; and every library in the release
+  builds is pinned to an exact version.
+
+## 0.12.7 — 2026-11-16
+
+**Hub setup from the hub's own console says plainly what is left for you.**
+
+- **The MQTT step is left for one click, with the reason.** Setting up a
+  hub through its host console runs with Home Assistant Core's own token,
+  which can reach the add-on store but not Home Assistant's API. The setup
+  no longer attempts the MQTT connection from there: it installs everything
+  else and tells you to press **Add** on the MQTT card under Settings →
+  Devices & Services, then Submit.
+- **Firmware 2.4.20** is the catalog this version carries.
+- **Third-party notices ship beside the installers** as
+  `THIRD_PARTY_LICENSES.html`, for the first time.
+
+**Coming from 0.12.5, this update also brings 0.12.6.** Its release
+published installers but never reached installed Flashers, so its changes
+arrive now:
+
+- You choose where saved files go: the health report and flash backups
+  open your system's save panel.
+- The hub image's staging copy, which holds your Wi-Fi password and the
+  hub's SSH key, is readable by your account only.
+- On Linux a hub card write checks the disk first, and the serial rule no
+  longer opens a Canary's port to every account (over SSH, join the
+  `dialout` group once).
+- Hub setup that finishes with one click left shows as done; closing
+  the window during a write asks first; Open goes to your own network
+  only.
+- Settings too long for the board, and a backup made for another chip,
+  are refused by name before anything is written.
+
 ## 0.12.6 — 2026-11-15
 
 **A security and correctness pass: the app takes less on a page's word, says

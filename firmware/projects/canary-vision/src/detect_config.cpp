@@ -32,6 +32,7 @@ void load() {
   g_det.lost_timeout_ms = LOST_TIMEOUT_MS;
   g_det.dwell_start_ms  = DWELL_START_MS;
   g_det.profile         = 0;  // WATCH_PROFILES[0] = room_presence
+  g_det.beacon_detect   = false;  // owner opt-in (detect_config.h)
 
   // Read-only open avoids write-locking on the hot boot path — but it
   // fails on a factory-fresh unit where the namespace doesn't exist yet
@@ -65,6 +66,8 @@ void load() {
   // for — and detecting — some other subject. Fall back to the default
   // profile's full preset instead; RAM-only, so an OTA back to the newer
   // firmware finds its own values untouched in NVS.
+  g_det.beacon_detect =
+      prefs.getUChar("det_beacon", g_det.beacon_detect ? 1 : 0) != 0;
   g_det.profile = prefs.getUChar("det_profile", g_det.profile);
   if (g_det.profile >= WATCH_PROFILE_COUNT) {
     g_det.profile = 0;
@@ -136,6 +139,14 @@ bool detect_set_dwell_start_ms(uint32_t v) {
   if (g_det.dwell_start_ms == v) return false;
   g_det.dwell_start_ms = v;
   persist_ulong("det_dwell", v);
+  return true;
+}
+
+bool detect_set_beacon_detect(bool on) {
+  load();
+  if (g_det.beacon_detect == on) return false;
+  g_det.beacon_detect = on;
+  persist_uchar("det_beacon", on ? 1 : 0);
   return true;
 }
 

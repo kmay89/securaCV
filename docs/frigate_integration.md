@@ -65,7 +65,8 @@ choose the retention (7 / 30 / 365
 days), what to seal (every tracked object, or only Frigate alerts) and the
 daily digest. The Frigate config the wizard writes (when it finds none) is
 detection-only: recording is off and snapshots are not turned on; enable
-either in Frigate if you want footage. "Only Frigate alerts" needs
+either in Frigate if you want footage. It also turns each camera's MQTT
+images off ([below](#trust-boundary)). "Only Frigate alerts" needs
 recording on in Frigate and is not offered when the wizard writes
 Frigate's config. Manual YAML is only needed for an external broker or
 non-default Frigate topics:
@@ -208,7 +209,7 @@ $ docker exec securacv pair
 SecuraCV pairing code: 483921   (valid 10 minutes, 5 attempts)
 Kernel key fingerprint: ab12cd34   (Home Assistant shows the same fingerprint before it pairs)
 Kernel URL to confirm in Home Assistant: http://<this docker host>:8799
-In Home Assistant: Settings → Devices & Services → the discovered "SecuraCV sidecar" card → Configure → enter the code.
+In Home Assistant: Settings → Devices & Services → the "SecuraCV sidecar" card under Discovered → Add → enter the code.
 ```
 
 That is the whole card, printed once on that terminal; the daemon's log never
@@ -605,7 +606,17 @@ Frigate publishes (0.17):                 SecuraCV seals:
 ### Trust Boundary
 
 The frigate_bridge is classified as an **external tool** per `kernel/architecture.md` §3.3:
-- It cannot access raw media (Frigate doesn't publish it to MQTT)
+- It receives no raw media: it subscribes only to Frigate's event topic
+  (`<prefix>/events`, or `<prefix>/reviews` in alerts mode) and discards the
+  `thumbnail` / `snapshot` fields at parse. Frigate itself does publish images
+  over MQTT: unless a camera sets `mqtt: enabled: false`, it puts a cropped
+  JPEG of every object it tracks on `frigate/<camera>/<label>/snapshot` as a
+  retained message, which the broker keeps, whatever `snapshots.enabled`
+  says. The config the setup wizard writes, the hub plan's curated config
+  (`homeassistant/frigate/config.yaml`) and the Docker stack's
+  (`integrations/ha_frigate_mqtt/frigate.yml`) set it under every camera; a
+  camera you add by hand needs it too, and where Frigate keeps its own config
+  the setup wizard names any camera that leaves it on.
 - It cannot bypass Contract Enforcement (`append_event_checked` validates all events)
 - It cannot access the sealed log directly for reads (uses the kernel API); it appends through the kernel library and owns the chain's housekeeping because no `witnessd` runs in Frigate mode
 
@@ -801,6 +812,10 @@ cameras:
           roles: [detect]
     detect:
       enabled: true
+    # No JPEG of each tracked object on the broker (on unless a camera says
+    # off; `snapshots` below does not cover it). Events still flow.
+    mqtt:
+      enabled: false
 
 # Minimal recording - just for real-time viewing
 record:
@@ -904,14 +919,29 @@ Connection** form instead, or keep the default prefix.
 
 ## Security Considerations
 
-### Why `--allow-remote-mqtt` is Safe in HA
+### What `--allow-remote-mqtt` trusts in HA
 
-The `--allow-remote-mqtt` flag is needed because HA runs services in separate containers. This is safe because:
+The `--allow-remote-mqtt` flag is needed because HA runs services in separate
+containers: the bridge reaches `core-mosquitto` over the hub's container
+network, not over loopback. What that leaves in place, and what it does not:
 
-1. **No raw media flows through MQTT** - Only sanitized event metadata
-2. **Events are still validated** - Contract Enforcer rejects non-conforming events
-3. **HA network is trusted** - All containers run on the same host
-4. **No new attack surface** - The data received is already public to any HA addon
+1. **No raw media reaches the bridge** - it reads only Frigate's event topic
+   and keeps sanitized metadata. Frigate's per-camera MQTT images are a
+   separate topic, off in the configs the [trust boundary](#trust-boundary)
+   names.
+2. **Events are still validated** - Contract Enforcer rejects non-conforming
+   events.
+3. **The broker is not a closed room** - by default the Mosquitto app
+   listens on port 1883 to your whole LAN, not only to the hub's containers,
+   and MQTT names no publisher. On the app's 7.x line every login it accepts
+   can read and publish every topic: its authentication plugin answers each
+   access check before the access-control list its documentation describes
+   is consulted
+   ([home-assistant/addons#4721](https://github.com/home-assistant/addons/issues/4721)).
+   So any broker login, including the one login every Canary from the hub
+   plan shares, can publish to Frigate's event topic, and the bridge seals
+   what arrives there like an event from Frigate. Treat each broker login
+   like a house key.
 
 ### What the sidecar puts on your network
 

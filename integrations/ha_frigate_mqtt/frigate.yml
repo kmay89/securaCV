@@ -11,6 +11,11 @@ mqtt:
 record:
   enabled: false
 
+# `snapshots` covers only the JPEGs Frigate saves to disk. The per-camera
+# `mqtt:` below is a separate switch, on unless a camera turns it off: it
+# publishes a cropped JPEG of every tracked object to the broker as a retained
+# message. Every camera added here needs `mqtt: enabled: false`; frigate/events,
+# which the bridge reads, is published either way.
 snapshots:
   enabled: false
 
@@ -30,3 +35,5 @@ cameras:
       width: 640
       height: 360
       fps: 5
+    mqtt:
+      enabled: false

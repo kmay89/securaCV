@@ -384,7 +384,9 @@ def main() -> None:
             "why": (
                 "A stock Frigate knows nothing about your hub. This config points it at the "
                 "Mosquitto broker (so securaCV hears its detections), tracks the same objects the "
-                "witness kernel labels, and — importantly — leaves recordings AND snapshots OFF: "
+                "witness kernel labels, and — importantly — leaves recordings AND snapshots OFF, "
+                "and the camera's MQTT images too (the cropped JPEG of every tracked object "
+                "Frigate otherwise publishes to the broker, a separate switch from snapshots): "
                 "securaCV is 'claims, not recordings', so nothing stores raw imagery unless you "
                 "deliberately turn it on. It also uses a distinct MQTT client id, so a second "
                 "detector (say a Jetson) can join without the two knocking each other offline."
@@ -404,7 +406,9 @@ def main() -> None:
                 "Add your camera's RTSP URL and set `enabled: true` on it — the shipped example "
                 "camera is disabled so the config is valid before you've added anything. Frigate "
                 "ignores a disabled camera silently, so this is the one edit nobody can make for "
-                "you."
+                "you. A camera you add beside it needs the `mqtt: enabled: false` the example "
+                "carries, or Frigate publishes a JPEG of every object it tracks there to the "
+                "broker."
             ),
             "reversible": True,
         },

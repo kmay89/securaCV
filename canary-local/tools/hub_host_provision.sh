@@ -17,6 +17,10 @@
 #
 # Safe to re-run: the executor is idempotent and never overwrites an existing
 # Frigate config. The token stays in process environment — never printed.
+# Core's token reaches the Supervisor API but not Home Assistant's own (the
+# Supervisor's proxy to Core admits only an app's token), so this run passes
+# --no-core-api: the MQTT integration is left for one click (Settings →
+# Devices & Services → Add on the MQTT card, then Submit) instead of attempted.
 set -eu
 here="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
@@ -93,4 +97,4 @@ exec docker run --rm --network hassio \
   -e "SUPERVISOR_URL=http://$supervisor_ip" \
   --entrypoint python3 \
   "$image" \
-  /securacv/hub_seed_apply.py --plan /securacv/hub_seed.json --assets-root /securacv "$@"
+  /securacv/hub_seed_apply.py --plan /securacv/hub_seed.json --assets-root /securacv --no-core-api "$@"

@@ -724,3 +724,53 @@ clean-ota-mgr-cut:
 
 run: run-ota-mgr-cut
 clean: clean-ota-mgr-cut
+
+# Canary Vision fleet-beacon payload builder (audit A2-07): the real
+# canary-vision/src/net/fleet_beacon_payload.cpp over stand-ins for the
+# witness, diagnostics, STA link, setup door and stored detection settings.
+# The live detection (ALERT flag, class, confidence) rides the cleartext
+# beacon only while the owner's opt-in (detect_config.h beacon_detect) is on,
+# and opted out a detection edge never moves the generation. Here beside the
+# Vision's OTA cut because this is the suite CI runs. Hooked into `run` and
+# `clean` by prerequisite.
+VBEACON_BIN = test_vision_beacon_payload
+VBEACON_SRC = test_vision_beacon_payload.cpp ../../canary-vision/src/net/fleet_beacon_payload.cpp
+VBEACON_HDR = ../../canary-vision/include/canary/detect_config.h \
+  ../../canary-vision/include/canary/net/fleet_beacon_payload.h \
+  ../../../common/fleet_link/fleet_beacon.h
+
+$(VBEACON_BIN): $(VBEACON_SRC) $(VBEACON_HDR)
+	$(CXX) $(CXXFLAGS) -Werror -I ../../canary-vision/include \
+	  -I ../../../configs/canary-vision/default -I ../../../common \
+	  -I ../../../common/fleet_link -o $@ $(VBEACON_SRC)
+
+.PHONY: run-vision-beacon-payload clean-vision-beacon-payload
+run-vision-beacon-payload: $(VBEACON_BIN)
+	$(call run_marked,$(VBEACON_BIN))
+clean-vision-beacon-payload:
+	rm -f $(VBEACON_BIN)
+
+run: run-vision-beacon-payload
+clean: clean-vision-beacon-payload
+
+# The display LAN API's Host guard (audit A2-12), read from
+# src/net/glass_web.cpp: every handler that serves the home network's name,
+# the log ring, the OTA status or the per-witness rows refuses a foreign Host
+# (a DNS-rebinding page) before it sends a byte. glass_web.cpp needs the
+# Arduino WebServer, so this reads the source rather than running it.
+# Hooked into `run` and `clean` by prerequisite.
+HOSTGUARD_BIN = test_glass_web_host_guard
+
+$(HOSTGUARD_BIN): test_glass_web_host_guard.cpp ../src/net/glass_web.cpp
+	$(CXX) $(CXXFLAGS) -Werror \
+	  '-DGLASS_WEB_CPP="$(abspath ../src/net/glass_web.cpp)"' \
+	  -o $@ test_glass_web_host_guard.cpp
+
+.PHONY: run-glass-web-host-guard clean-glass-web-host-guard
+run-glass-web-host-guard: $(HOSTGUARD_BIN)
+	$(call run_marked,$(HOSTGUARD_BIN))
+clean-glass-web-host-guard:
+	rm -f $(HOSTGUARD_BIN)
+
+run: run-glass-web-host-guard
+clean: clean-glass-web-host-guard

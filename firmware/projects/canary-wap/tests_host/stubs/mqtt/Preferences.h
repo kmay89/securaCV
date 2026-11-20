@@ -95,7 +95,7 @@ class Preferences {
   uint8_t getUChar(const char* key, uint8_t def = 0) { return get(key, def); }
   uint16_t getUShort(const char* key, uint16_t def = 0) { return get(key, def); }
   uint32_t getULong(const char* key, uint32_t def = 0) { return get(key, def); }
-  /* As arduino-esp32 3.3.8's Preferences::getString(key, value, maxLen)
+  /* As arduino-esp32 3.3.11's Preferences::getString(key, value, maxLen)
    * answers (libraries/Preferences/src/Preferences.cpp:476-496, sweep F241):
    *
    *   esp_err_t err = nvs_get_str(_handle, key, NULL, &len);
