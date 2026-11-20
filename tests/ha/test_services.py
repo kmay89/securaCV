@@ -9,12 +9,13 @@ from http import HTTPStatus
 from pathlib import Path
 
 import pytest
+from homeassistant.auth.const import GROUP_ID_USER
 from homeassistant.components import media_source
 from homeassistant.components.media_player.errors import BrowseError
-from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.core import Context, HomeAssistant
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError, Unauthorized
 from homeassistant.setup import async_setup_component
-from pytest_homeassistant_custom_component.common import async_get_persistent_notifications
+from pytest_homeassistant_custom_component.common import MockUser, async_get_persistent_notifications
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
 from conftest import KERNEL_DEVICE_ID, PAIRED_TOKEN, KernelMock, make_mqtt_only_entry
@@ -332,6 +333,60 @@ async def test_the_buttons_run_the_actions(
     zips = list(Path(hass.config.path("securacv", "evidence")).glob("*.zip"))
     assert len(zips) == 1
     assert kernel.calls("/export/bundle")[0][1].query.get("last") == "24h"
+
+
+async def test_export_staged_update_and_the_export_button_are_admin_only(
+    hass: HomeAssistant, kernel: KernelMock, setup_kernel_entry, hass_admin_user: MockUser
+) -> None:
+    """An export deletes the oldest packs past evidence_keep, so a signed-in
+    user who is not an administrator (a wall tablet's login) is refused it,
+    by action and by button, before the kernel is asked; staged_update is
+    refused the same way. An administrator is served, and verify stays open."""
+    kernel.kernel.seal_event()
+    await setup_kernel_entry()
+    member = MockUser(groups=[await hass.auth.async_get_group(GROUP_ID_USER)]).add_to_hass(hass)
+    assert hass_admin_user.is_admin and not member.is_admin
+    as_member = Context(user_id=member.id)
+    as_admin = Context(user_id=hass_admin_user.id)
+
+    for service in ("export_evidence", "staged_update"):
+        with pytest.raises(Unauthorized):
+            await hass.services.async_call(
+                DOMAIN, service, {}, blocking=True, return_response=True, context=as_member
+            )
+    # Home Assistant lets the users group control every entity, so this
+    # refusal is the button's own check, not the core's.
+    with pytest.raises(Unauthorized):
+        await hass.services.async_call(
+            "button", "press", {"entity_id": "button.securacv_export_evidence"},
+            blocking=True, context=as_member,
+        )
+    await hass.async_block_till_done()
+    assert kernel.calls("/export/bundle") == []
+    directory = Path(hass.config.path("securacv", "evidence"))
+    assert not directory.exists() or not list(directory.glob("*.zip"))
+
+    verdict = await hass.services.async_call(
+        DOMAIN, "verify", {}, blocking=True, return_response=True, context=as_member
+    )
+    assert verdict["chain_valid"] is True
+
+    response = await hass.services.async_call(
+        DOMAIN, "export_evidence", {}, blocking=True, return_response=True, context=as_admin
+    )
+    assert response["events"] >= 1
+    await hass.services.async_call(
+        "button", "press", {"entity_id": "button.securacv_export_evidence"},
+        blocking=True, context=as_admin,
+    )
+    await hass.async_block_till_done()
+    assert len(kernel.calls("/export/bundle")) == 2
+    # Past the gate, the action's own refusal: no Canary has an update entity.
+    with pytest.raises(ServiceValidationError) as refused:
+        await hass.services.async_call(
+            DOMAIN, "staged_update", {}, blocking=True, return_response=True, context=as_admin
+        )
+    assert refused.value.translation_key == "rollout_no_update_entities"
 
 
 async def test_the_watch_actions_still_register_beside_the_kernel_ones(hass: HomeAssistant, kernel: KernelMock) -> None:

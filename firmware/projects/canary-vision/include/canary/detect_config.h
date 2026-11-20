@@ -24,6 +24,16 @@ struct DetectConfig {
   uint32_t lost_timeout_ms;  // silence before "subject left"
   uint32_t dwell_start_ms;   // sustained presence before "dwelling"
   uint8_t  profile;          // watch profile id (index into WATCH_PROFILES)
+  // Owner opt-in, OFF by default: put the live detection (the ALERT flag,
+  // the class token and the confidence) in the fleet beacon. The beacon is
+  // cleartext on every band it rides (BLE advert, ESP-NOW, LAN multicast),
+  // so while this is on anyone in radio range or on the home network can
+  // read whether this room holds a person right now. Off, the beacon still
+  // carries the witness's health and identity bytes and a display still
+  // hears the witness; it only stops hearing the detection.
+  // (Defaulted here so the positional {target, score, lost, dwell, profile}
+  // initializers in the host tests stay complete under -Wextra -Werror.)
+  bool     beacon_detect = false;
 };
 
 // Bounds (shared by the setters and the HA number entities)
@@ -52,5 +62,10 @@ bool detect_set_dwell_start_ms(uint32_t v);
 // id is rejected untouched (returns false) so junk on the wire can never
 // reset tuning. Returns true if the profile id or any setting changed.
 bool detect_set_profile(uint8_t v);
+
+// Turn the beacon's detection fields on or off (see beacon_detect above).
+// Persists like the settings above; a watch profile never changes it.
+// Returns true if the stored value changed.
+bool detect_set_beacon_detect(bool on);
 
 } // namespace canary::cfg

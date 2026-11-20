@@ -22,6 +22,13 @@ DEVICE_KEY_SEED=devkey:your-seed \
   --keep 30
 ```
 
+Every bundle gets a handoff sidecar beside it,
+`securacv-events-<bucket>.json.securacv-handoff.json` (0600): the signed
+export receipt rows, for whoever receives the file
+([`handoff_sidecars.md`](handoff_sidecars.md)). `--keep` prunes a bundle's
+sidecar (and its `.c2pa` manifest) with it; a sidecar's name never parses as
+a bundle bucket, so it is never counted as one.
+
 Nightly with `--last 24h --keep 30` gives you a rolling month of daily
 bundles, each independently verifiable offline (`envelope_verify`, the
 evidence viewer, or `export_verify` against the database).

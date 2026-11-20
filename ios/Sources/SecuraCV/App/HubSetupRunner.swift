@@ -241,6 +241,10 @@ final class HubSetupRunner: ObservableObject {
     /// form is complete; otherwise the walkthrough's button is the
     /// fallback. Here, not in the view, so it happens with the sheet closed.
     private func hubAnswered() {
+        // The watch has done its job: forget its record now, so a finish that
+        // ends .failed does not leave a watch every relaunch resumes, reads
+        // ready and announces again. The walkthrough's own button remains.
+        Self.forgetRecordedWatch()
         let finishing = HubWalkthrough.finishesByItself(ready: true,
                                                         loginProblem: draftLogin.problem(),
                                                         passwordsMatch: draftPasswordsMatch)

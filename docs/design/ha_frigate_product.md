@@ -41,7 +41,7 @@ entry loads).
 **J3 — Home Assistant Container + the Docker sidecar.** `docker compose up -d`
 (the owner edits two lines: `FRIGATE_MQTT_HOST` and the broker credentials)
 → the sidecar announces itself on MQTT, signed → the **Add the SecuraCV
-sidecar** card → Configure shows the kernel URL (prefilled from
+sidecar** card under Discovered → Add shows the kernel URL (prefilled from
 `SECURACV_ANNOUNCE_HOST` when set, else the broker host of Home Assistant's
 MQTT entry, editable) and asks for the 6-digit code `docker exec securacv
 pair` prints beside the kernel's key fingerprint → the integration exchanges

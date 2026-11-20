@@ -449,6 +449,55 @@ def _augment_exceptions() -> None:
     for name in ("ConfigEntryError", "ConfigEntryNotReady", "ConfigEntryAuthFailed"):
         if not hasattr(exc_mod, name):
             setattr(exc_mod, name, type(name, (exc_mod.HomeAssistantError,), {}))
+    if not hasattr(exc_mod, "Unauthorized"):
+        class _Unauthorized(exc_mod.HomeAssistantError):
+            """HA's shape: the message is the class name, the context and
+            its user ride along (the websocket answers it as an error)."""
+
+            def __init__(self, context=None, user_id=None, **_kw) -> None:
+                super().__init__(type(self).__name__)
+                self.context = context
+                if user_id is None and context is not None:
+                    user_id = getattr(context, "user_id", None)
+                self.user_id = user_id
+        exc_mod.Unauthorized = _Unauthorized
+    if not hasattr(exc_mod, "UnknownUser"):
+        exc_mod.UnknownUser = type("UnknownUser", (exc_mod.Unauthorized,), {})
+
+
+def _augment_service_helper() -> None:
+    """homeassistant.helpers.service.async_register_admin_service, as 2026.5
+    (hacs.json's floor) writes it: the handler is wrapped, a context naming
+    an unknown user raises UnknownUser, a non-admin user Unauthorized, a
+    context with no user runs, and the handler's response is returned. The
+    stub's ``auth`` is whatever a test sets on ``hass.auth``. One liberty:
+    a call whose context is None (the stub ServiceCall's default; a real
+    call always carries one) reads as no user."""
+    service_mod = _module("homeassistant.helpers.service")
+    if hasattr(service_mod, "async_register_admin_service"):
+        return
+    exc_mod = sys.modules["homeassistant.exceptions"]
+
+    def async_register_admin_service(
+        hass, domain, service, service_func, schema=None, supports_response=None,
+        *, description_placeholders=None,
+    ) -> None:
+        async def _admin_handler(call):
+            user_id = getattr(call.context, "user_id", None)
+            if user_id:
+                user = await hass.auth.async_get_user(user_id)
+                if user is None:
+                    raise exc_mod.UnknownUser(context=call.context)
+                if not user.is_admin:
+                    raise exc_mod.Unauthorized(context=call.context)
+            result = service_func(call)
+            if asyncio.iscoroutine(result):
+                result = await result
+            return result
+
+        hass.services.async_register(domain, service, _admin_handler, schema, supports_response)
+
+    service_mod.async_register_admin_service = async_register_admin_service
 
 
 def _augment_config_validation() -> None:
@@ -1169,6 +1218,8 @@ class _EntityBase:
     """What Entity gives every platform class: the lifecycle hooks and state writes."""
 
     hass: Any = None
+    # Entity's class default; HA sets it per action call (async_set_context).
+    _context: Any = None
 
     @property
     def unique_id(self) -> str | None:
@@ -1525,6 +1576,7 @@ def _augment_ha_stubs() -> None:
     """Upgrade the installed stubs with the full surface the package needs."""
     _augment_core(sys.modules["homeassistant.core"])
     _augment_exceptions()
+    _augment_service_helper()
     _augment_config_validation()
     _augment_storage()
     _augment_event()

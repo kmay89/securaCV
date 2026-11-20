@@ -54,19 +54,21 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Arduino CLI + ESP32 core 3.3.8 (cached)
-        # The core the WAP's release rows pin (the sketch.yaml's 3.3.8), so
+      - name: Install Arduino CLI + ESP32 core 3.3.11 (cached)
+        # The core the WAP's release rows pin (the sketch.yaml's 3.3.11), so
         # this audit measures a build on the core a release ships on (sweep
         # F21, firmware/PLATFORMS.md); its flags differ from the release
         # image's, so it ranks DRAM on that core, not of that image. One core
         # in this job, so no exclusive install.
         uses: ./.github/actions/setup-arduino-esp32
         with:
-          core-version: "3.3.8"
+          core-version: "3.3.11"
+          # The WAP release rows' exact library pins, so the audit measures
+          # the libraries a release links, not Library Manager's newest.
           libraries: |
-            Crypto
-            ArduinoJson
-            NimBLE-Arduino
+            Crypto@0.4.0
+            ArduinoJson@7.4.3
+            NimBLE-Arduino@2.5.2
 
       - name: Compile firmware (same flags as the CI build job)
         run: |

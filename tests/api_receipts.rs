@@ -227,6 +227,8 @@ fn paired_receipt_keeps_auth_mode_a_string_and_token_id_last() -> Result<()> {
             end_epoch_s: 1200,
         }),
         token_id: Some("deadbeef".to_string()),
+        context: None,
+        authorizing_receipt: None,
     };
     let json = serde_json::to_string(&receipt)?;
     assert!(

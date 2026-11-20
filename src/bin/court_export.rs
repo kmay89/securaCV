@@ -22,8 +22,11 @@ use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
+use witness_kernel::break_glass::{display_safe, BreakGlassReceipt};
 use witness_kernel::clock_provenance::{self, ClockProvenanceRow};
 use witness_kernel::crypto::signatures::{SignatureMode, DOMAIN_CLOCK_PROVENANCE};
+use witness_kernel::handoff;
+use witness_kernel::ots;
 use witness_kernel::tsa::AnchorSubject;
 use witness_kernel::{
     hash_entry, tsa, verify, verify_export_bundle, verify_helpers, ExportAuthMode, ExportBundle,
@@ -121,53 +124,367 @@ struct KitAnchor {
     signer_sid: Option<String>,
 }
 
-fn open_db(args: &Args) -> Result<Connection> {
-    // Mirrors log_verify: explicit --db-key wins; otherwise derive from the
-    // device key seed exactly as the kernel does; otherwise the seed file
-    // beside the database is tried (database key only); otherwise open
-    // unkeyed.
-    let seed_for_db_key: Option<String> = match (&args.db_key, &args.device_key_seed) {
-        (Some(_), _) => None,
-        (None, Some(seed)) => Some(seed.clone()),
-        (None, None) => witness_kernel::crypto::find_device_seed(&args.db, None)?.map(|found| {
-            eprintln!("court_export: database key from the {}", found.source);
-            found.seed.to_string()
-        }),
+/// The handoff sidecar the kit carries beside the bundle.
+struct KitHandoff {
+    /// `<bundle>.securacv-handoff.json`, under `evidence/`.
+    file_name: String,
+    /// SHA-256 (64 hex) of the sidecar bytes as packaged.
+    sha256: String,
+    /// `supplied` (verified and copied verbatim) or `generated`.
+    source: &'static str,
+    /// The sidecar's recipient binding.
+    binding: handoff::RecipientBinding,
+    /// The sidecar's pairing (always `export_receipt` for a kit's sidecar).
+    pairing: handoff::Pairing,
+}
+
+/// Locate the handoff sidecar beside the bundle (verify it, or generate one)
+/// BEFORE the kit directory exists, so a contradicting sidecar refuses the
+/// whole kit. Returns the bytes to package and their description.
+fn kit_handoff(
+    conn: &Connection,
+    bundle_path: &str,
+    bundle_bytes: &[u8],
+    bundle_file_name: &str,
+    trusted_genesis: Option<&ed25519_dalek::VerifyingKey>,
+) -> Result<(Vec<u8>, KitHandoff)> {
+    let beside = handoff::sidecar_path_for(Path::new(bundle_path));
+    let file_name = format!("{}{}", bundle_file_name, handoff::HANDOFF_SUFFIX);
+    let (bytes, source) = if beside.exists() {
+        let bytes = std::fs::read(&beside)
+            .map_err(|e| anyhow!("cannot read {}: {}", beside.display(), e))?;
+        let report = handoff::verify_sidecar_with_db(
+            conn,
+            &bytes,
+            Path::new(bundle_path),
+            &handoff::VerifyOptions {
+                pinned: trusted_genesis.copied(),
+                anchors_dir: None,
+                tsa_cas: &[],
+            },
+        )?;
+        if let Some(fail) = report.first_failure() {
+            return Err(anyhow!(
+                "custody break: the handoff sidecar beside the bundle does not describe this \
+                 bundle ({}: {}). Remove or replace {} (handoff_sidecar emit writes a fresh one) \
+                 — a kit must not carry a sidecar that contradicts its evidence. Refusing to \
+                 package.",
+                fail.subject,
+                fail.detail,
+                beside.display()
+            ));
+        }
+        // A verified sidecar can still describe another disclosure: an
+        // unseal sidecar whose `file` happens to name these bytes passes
+        // every structural check (its pairing is only declared). A kit
+        // carries the export sidecar of its own bundle and nothing else.
+        // For an export sidecar the verifier already pins pairing to the
+        // embedded export receipt and that receipt to this bundle's.
+        let parsed = handoff::HandoffSidecar::parse(&bytes)?;
+        if parsed.disclosure != handoff::Disclosure::Export {
+            return Err(anyhow!(
+                "custody break: the handoff sidecar beside the bundle does not describe this \
+                 bundle (records: this is an unseal sidecar; a kit carries the export sidecar \
+                 of its bundle). Remove or replace {} (handoff_sidecar emit writes a fresh \
+                 one) — a kit must not carry a sidecar that contradicts its evidence. \
+                 Refusing to package.",
+                beside.display()
+            ));
+        }
+        (bytes, "supplied")
+    } else {
+        let sidecar = handoff::build_export_sidecar(
+            conn,
+            bundle_bytes,
+            bundle_file_name,
+            None,
+            handoff::handoff_bucket_now()?,
+            env!("CARGO_PKG_VERSION"),
+        )?;
+        (sidecar.to_canonical_bytes()?, "generated")
     };
-    let db_key: Option<String> = match (&args.db_key, seed_for_db_key.as_deref()) {
-        (Some(key), _) => Some(key.clone()),
-        (None, Some(seed)) => {
-            let signing_key = witness_kernel::signing_key_from_seed(seed)?;
-            let seed_env = witness_kernel::db_key_seed_from_env();
-            Some(
-                witness_kernel::resolve_db_encryption_key(
-                    &signing_key,
-                    seed_env.as_ref().map(|s| s.as_str()),
+    let parsed = handoff::HandoffSidecar::parse(&bytes)?;
+    Ok((
+        bytes.clone(),
+        KitHandoff {
+            file_name,
+            sha256: hex::encode(Sha256::digest(&bytes)),
+            source,
+            binding: parsed.recipient_binding,
+            pairing: parsed.pairing,
+        },
+    ))
+}
+
+/// One packaged OpenTimestamps proof. Its state is derived from the proof,
+/// never from the row's cache columns, and is rendered as "attests":
+/// confirmation is the comparison the reader runs against a header.
+struct KitOtsAnchor {
+    file_name: String,
+    subject: String,
+    /// The digest the proof covers (what `ots verify -d` takes).
+    digest_hex: String,
+    covers: Covers,
+    calendar_url: String,
+    state: ots::ProofState,
+    /// Explorer byte order, of the lowest-height Bitcoin leaf.
+    merkle_root_display: Option<String>,
+    pending_uris: Vec<String>,
+}
+
+impl KitOtsAnchor {
+    /// `"bitcoin"` (the proof attests a Bitcoin block — nothing confirmed),
+    /// `"pending"`, or `"none"`.
+    fn attestation(&self) -> &'static str {
+        match self.state {
+            ots::ProofState::Bitcoin { .. } => "bitcoin",
+            ots::ProofState::Pending => "pending",
+            ots::ProofState::NoKnownAttestation => "none",
+        }
+    }
+
+    fn height(&self) -> Option<u64> {
+        self.state.height()
+    }
+}
+
+/// The strongest state among proofs covering `covers`: `bitcoin` >
+/// `pending` > `none`.
+fn ots_strongest(ots_anchors: &[KitOtsAnchor], covers: Covers) -> &'static str {
+    let mine: Vec<&KitOtsAnchor> = ots_anchors.iter().filter(|a| a.covers == covers).collect();
+    if mine.iter().any(|a| a.attestation() == "bitcoin") {
+        "bitcoin"
+    } else if mine.iter().any(|a| a.attestation() == "pending") {
+        "pending"
+    } else {
+        "none"
+    }
+}
+
+/// A database-supplied subject as a path component.
+fn safe_subject(subject: &str) -> String {
+    subject
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(32)
+        .collect()
+}
+
+/// The OpenTimestamps proofs this disclosure can use, selected by the same
+/// rule as the RFC 3161 tokens — by hash first, label last — and copied
+/// verbatim to `anchors/ots-NNNN-<subject>.ots`. Read-only: an absent
+/// table is an empty list.
+fn package_ots_anchors(
+    conn: &Connection,
+    kit_dir: &Path,
+    bundle_sha256: &[u8; 32],
+    receipt_entry_hash: &[u8; 32],
+) -> Result<Vec<KitOtsAnchor>> {
+    let mut out = Vec::new();
+    for row in ots::list_ots_anchors(conn)? {
+        let covers = if &row.subject_hash == bundle_sha256 {
+            Covers::BundleBytes
+        } else if &row.subject_hash == receipt_entry_hash {
+            Covers::ReceiptEntry
+        } else if row.subject_kind_or_digest() == AnchorSubject::ChainHead {
+            Covers::ChainHead
+        } else {
+            continue;
+        };
+        let proof = match ots::Proof::parse(&row.proof) {
+            Ok(p) if p.digest == row.subject_hash => p,
+            Ok(p) => {
+                eprintln!(
+                    "WARNING: ots anchor #{} excluded from the kit: its proof covers {}, not the \
+                     digest the anchor row claims ({}). Run `log_anchor verify` on this database.",
+                    row.id,
+                    hex::encode(p.digest),
+                    hex::encode(row.subject_hash)
+                );
+                continue;
+            }
+            Err(e) => {
+                eprintln!(
+                    "WARNING: ots anchor #{} excluded from the kit: its stored proof does not \
+                     parse as an OpenTimestamps proof ({e}). Run `log_anchor verify` on this \
+                     database.",
+                    row.id
+                );
+                continue;
+            }
+        };
+        if covers == Covers::ChainHead
+            && tsa::hash_in_ledger(conn, &row.subject_hash, AnchorSubject::ChainHead)?.is_none()
+        {
+            eprintln!(
+                "WARNING: ots anchor #{} excluded from the kit: it claims to anchor a chain \
+                 head, but the anchored hash is not in this database's chain history. Run \
+                 `log_anchor verify` on this database.",
+                row.id
+            );
+            continue;
+        }
+        let state = proof.state();
+        let merkle_root_display = proof
+            .leaves()
+            .into_iter()
+            .filter_map(|l| match l.attestation {
+                ots::Attestation::Bitcoin { height } => Some((height, l.msg)),
+                _ => None,
+            })
+            .min_by_key(|(h, _)| *h)
+            .map(|(_, msg)| ots::display_hex(&msg));
+        let file_name = format!("ots-{:04}-{}.ots", row.id, safe_subject(&row.subject));
+        let dir = kit_dir.join("anchors");
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join(&file_name), &row.proof)?;
+        out.push(KitOtsAnchor {
+            file_name,
+            subject: row.subject.clone(),
+            digest_hex: hex::encode(row.subject_hash),
+            covers,
+            calendar_url: row.calendar_url.clone(),
+            state,
+            merkle_root_display,
+            pending_uris: proof.pending_leaves().into_iter().map(|(u, _)| u).collect(),
+        });
+    }
+    Ok(out)
+}
+
+/// The custody record's "Disclosure context" section. A quorum export's
+/// operator fields are read from its authorizing grant (trustee-consented,
+/// bound into the request hash the trustees approved); a self-export's are
+/// the exporting operator's declaration.
+fn disclosure_context_section(
+    conn: &Connection,
+    receipt: &witness_kernel::ExportReceipt,
+    auth_label: &str,
+    handoff: &KitHandoff,
+) -> Result<String> {
+    let quorum = receipt.auth_mode == Some(ExportAuthMode::BreakGlass);
+    let mut grant: Option<BreakGlassReceipt> = None;
+    let grant_row = match receipt.authorizing_receipt {
+        Some(h) => {
+            let payload: Option<String> = conn
+                .query_row(
+                    "SELECT payload_json FROM break_glass_receipts WHERE entry_hash = ?1",
+                    [h.to_vec()],
+                    |row| row.get(0),
                 )
-                .to_string(),
+                .optional()?;
+            if let Some(p) = payload {
+                grant = serde_json::from_str(&p).ok();
+            }
+            let trustees = grant
+                .as_ref()
+                .map(|g| {
+                    g.trustees_used
+                        .iter()
+                        .map(|t| display_safe(&t.0))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_else(|| "(the grant row was not found in this database)".to_string());
+            format!(
+                "`{}` — the trustee-approved break-glass receipt this export spent; trustees \
+                 named: {}",
+                hex::encode(h),
+                trustees
             )
         }
-        (None, None) => None,
+        None if quorum => "not recorded (the receipt predates the field)".to_string(),
+        None => "not applicable (not a quorum export)".to_string(),
     };
-    // Read-only: this tool packages evidence; it must never mutate its
-    // source, must work from a forensic copy on read-only media, and a
-    // typo'd --db path must fail cleanly instead of creating an empty file.
-    let conn = Connection::open_with_flags(
+    let declared_op = receipt.context.as_ref().and_then(|c| c.operator.as_ref());
+    let (op, source) = match (&grant, declared_op) {
+        (Some(g), _) if g.context.is_some() => (
+            g.context.clone(),
+            format!(
+                "trustee-consented: bound into the request hash the trustees approved (grant \
+                 {}…)",
+                &hex::encode(receipt.authorizing_receipt.unwrap_or_default())[..16]
+            ),
+        ),
+        (_, Some(op)) => (
+            Some(op.clone()),
+            "declared by the exporting operator (device-key holder), recorded in the \
+             device-signed receipt; not trustee-consented"
+                .to_string(),
+        ),
+        _ => (None, "not recorded".to_string()),
+    };
+    let committed = receipt
+        .context
+        .as_ref()
+        .is_some_and(|c| c.recipient_commitment.is_some());
+    let recipient = match (committed, handoff.binding) {
+        (true, handoff::RecipientBinding::ReceiptCommitment) => {
+            "committed in the signed receipt; named in the handoff sidecar"
+        }
+        (true, _) => "committed in the signed receipt; not named in this kit",
+        (false, handoff::RecipientBinding::Declared) => {
+            "named in the handoff sidecar only (declared; no signed commitment)"
+        }
+        (false, _) => "none recorded",
+    };
+    let (name, reason, case_ref, key) = match &op {
+        Some(op) => (
+            display_safe(&op.requester_name),
+            display_safe(&op.reason_code),
+            op.case_ref
+                .as_deref()
+                .map(display_safe)
+                .unwrap_or_else(|| "none recorded".to_string()),
+            op.requester_key
+                .as_deref()
+                .map(|k| {
+                    format!(
+                        "{} (claimed; recorded, not checked against a registry)",
+                        display_safe(k)
+                    )
+                })
+                .unwrap_or_else(|| "none recorded".to_string()),
+        ),
+        None => (
+            "none recorded".to_string(),
+            "none recorded".to_string(),
+            "none recorded".to_string(),
+            "none recorded".to_string(),
+        ),
+    };
+    Ok(format!(
+        "## Disclosure context\n\n\
+         | Field | Value |\n\
+         |---|---|\n\
+         | Authorization | {auth} |\n\
+         | Authorizing grant | {grant} |\n\
+         | Requester | {name} |\n\
+         | Reason code | {reason} |\n\
+         | Case reference | {case_ref} |\n\
+         | Requester key | {key} |\n\
+         | Source of these fields | {source} |\n\
+         | Recipient | {recipient} |\n\n",
+        auth = auth_label,
+        grant = grant_row,
+    ))
+}
+
+fn open_db(args: &Args) -> Result<Connection> {
+    // Mirrors log_verify; read-only (this tool packages evidence and must
+    // never mutate its source). Shared with handoff_sidecar.
+    verify_helpers::open_db_read_only(
         &args.db,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        args.device_key_seed.as_deref(),
+        args.db_key.as_deref(),
+        "court_export",
     )
-    .map_err(|e| anyhow!("could not open database {}: {}", args.db, e))?;
-    if let Some(ref key) = db_key {
-        conn.pragma_update(None, "key", format!("x'{}'", key))?;
-    }
-    conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
-        .map_err(|_| {
-            anyhow!(
-                "could not read the kernel database — if it is encrypted, pass \
-                 --device-key-seed (or --db-key)"
-            )
-        })?;
-    Ok(conn)
 }
 
 /// Confirm the bundle's receipt entry is a genuine row of THIS database's
@@ -592,18 +909,7 @@ fn package_anchors(
         // The subject is database-supplied TEXT: sanitize before it becomes a
         // path component, so a tampered row cannot steer the write outside
         // `anchors/`.
-        let safe_subject: String = anchor
-            .subject
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .take(32)
-            .collect();
+        let safe_subject = safe_subject(&anchor.subject);
         // `token_der` is the bare DER TimeStampToken the TSA's response
         // carried (tsa::parse_response unwraps the TimeStampResp), so the
         // file is named `.der`, not `.tsr`: a `.tsr` is a full response and
@@ -701,6 +1007,23 @@ fn main() -> Result<()> {
         let _stage = ui.stage("Locate receipt in chain");
         locate_receipt_in_chain(&conn, &bundle, trusted_genesis.as_ref())?
     };
+    let bundle_file_name = Path::new(&args.bundle)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("export_bundle.json")
+        .to_string();
+    // The handoff sidecar: verified and copied when one sits beside the
+    // bundle, generated otherwise — decided before the kit directory exists.
+    let (handoff_bytes, kit_handoff) = {
+        let _stage = ui.stage("Handoff sidecar");
+        kit_handoff(
+            &conn,
+            &args.bundle,
+            &bundle_bytes,
+            &bundle_file_name,
+            trusted_genesis.as_ref(),
+        )?
+    };
 
     // ── 3. Assemble the kit ──────────────────────────────────────────────
     // The output directory must be fresh: MANIFEST.json attests every file in
@@ -725,12 +1048,11 @@ fn main() -> Result<()> {
     }
     std::fs::create_dir_all(kit.join("evidence"))?;
 
-    let bundle_file_name = Path::new(&args.bundle)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("export_bundle.json")
-        .to_string();
     std::fs::write(kit.join("evidence").join(&bundle_file_name), &bundle_bytes)?;
+    handoff::write_sidecar_new(
+        &kit.join("evidence").join(&kit_handoff.file_name),
+        &handoff_bytes,
+    )?;
 
     // A C2PA sidecar beside the input bundle travels with it: it signs these
     // exact bytes and is meaningless apart from them.
@@ -758,6 +1080,10 @@ fn main() -> Result<()> {
             tsa::list_anchors(&conn)?
         };
         package_clock_provenance(&conn, kit, &anchors, &anchor_records, &lineage_keys)?
+    };
+    let ots_anchors = {
+        let _stage = ui.stage("Package OpenTimestamps proofs");
+        package_ots_anchors(&conn, kit, &bundle_sha256, &bundle.receipt_entry.entry_hash)?
     };
     let digest_anchors: Vec<&KitAnchor> = anchors
         .iter()
@@ -791,8 +1117,21 @@ fn main() -> Result<()> {
 
     {
         let _stage = ui.stage("Write kit documents");
-        write_readme(kit, &bundle_file_name, anchored, &clock)?;
+        write_readme(
+            kit,
+            &bundle_file_name,
+            anchored,
+            &clock,
+            &kit_handoff,
+            &ots_anchors,
+        )?;
         write_system_description(kit)?;
+        let disclosure_context = disclosure_context_section(
+            &conn,
+            receipt,
+            auth_mode_label(receipt.auth_mode),
+            &kit_handoff,
+        )?;
         write_custody_record(
             kit,
             &bundle_file_name,
@@ -809,7 +1148,10 @@ fn main() -> Result<()> {
             chain_length,
             identity_verified,
             &anchors,
+            &ots_anchors,
             &clock,
+            &disclosure_context,
+            &kit_handoff,
         )?;
         write_verification(
             kit,
@@ -819,7 +1161,9 @@ fn main() -> Result<()> {
             receipt_anchored,
             &device_key_hex,
             &anchors,
+            &ots_anchors,
             &clock,
+            &kit_handoff,
         )?;
         write_certifications(kit, &bundle_file_name, &bundle_hex, &artifact_hash_hex)?;
         write_manifest(
@@ -835,7 +1179,10 @@ fn main() -> Result<()> {
             receipt_anchored,
             identity_verified,
             &anchors,
+            &ots_anchors,
             &clock,
+            receipt,
+            &kit_handoff,
         )?;
     }
 
@@ -848,6 +1195,16 @@ fn main() -> Result<()> {
         );
     }
     println!("  evidence:  evidence/{}", bundle_file_name);
+    println!(
+        "  handoff:   evidence/{} ({}); recipient: {}",
+        kit_handoff.file_name,
+        if kit_handoff.source == "supplied" {
+            "supplied, verified"
+        } else {
+            "generated"
+        },
+        handoff::binding_str(kit_handoff.binding)
+    );
     println!("  digest:    sha256 {}", bundle_hex);
     println!(
         "  custody:   receipt {} of {} in the signed export chain",
@@ -860,6 +1217,18 @@ fn main() -> Result<()> {
         anchors
             .iter()
             .filter(|a| a.covers == Covers::ReceiptEntry)
+            .count()
+    );
+    println!(
+        "  ots:       {} proof(s), {} attest a Bitcoin block, {} pending",
+        ots_anchors.len(),
+        ots_anchors
+            .iter()
+            .filter(|a| a.attestation() == "bitcoin")
+            .count(),
+        ots_anchors
+            .iter()
+            .filter(|a| a.attestation() == "pending")
             .count()
     );
     println!(
@@ -896,7 +1265,32 @@ fn write_readme(
     bundle_file_name: &str,
     anchored: bool,
     clock: &ClockKit,
+    kit_handoff: &KitHandoff,
+    ots_anchors: &[KitOtsAnchor],
 ) -> Result<()> {
+    // By state, derived from the proofs: a pending proof is in no Bitcoin
+    // block and is not yet evidence of time, so it is never described as
+    // tying anything to the blockchain.
+    let attested = ots_anchors
+        .iter()
+        .filter(|a| a.attestation() == "bitcoin")
+        .count();
+    let ots_sentence = if ots_anchors.is_empty() {
+        ""
+    } else if attested == ots_anchors.len() {
+        " OpenTimestamps proofs in `anchors/*.ots` attest Bitcoin blocks for digests named \
+         in `CUSTODY_AND_CONTROL.md`; `VERIFICATION.md` shows the `ots` command and the \
+         block to look up."
+    } else if attested > 0 {
+        " OpenTimestamps proofs in `anchors/*.ots` attest Bitcoin blocks for digests named \
+         in `CUSTODY_AND_CONTROL.md`, except those it lists as pending (not yet in a Bitcoin \
+         block), which are not yet evidence of time; `VERIFICATION.md` shows the `ots` \
+         command and the block to look up."
+    } else {
+        " OpenTimestamps proofs in `anchors/*.ots` are pending (not yet in a Bitcoin block) \
+         and are not yet evidence of time; `VERIFICATION.md` shows how to upgrade and check \
+         them."
+    };
     // Item 7 says what the custody record and the manifest say: the same
     // three ledger states, and "none recorded" only when that is the case.
     let mut clock_item = match clock.status {
@@ -951,7 +1345,7 @@ fn write_readme(
          its position in the signed, hash-chained receipt ledger.\n\
          3. `VERIFICATION.md` — steps any party can run with `sha256sum` and \
          `openssl` (plus `xxd`, `cut` and `date` for the clock records); no SecuraCV \
-         software required for the trust-critical checks.\n\
+         software required for the trust-critical checks.{ots_sentence}\n\
          4. `CERTIFICATION_FRE_902_13.md` / `CERTIFICATION_FRE_902_14.md` — draft \
          self-authentication certifications for the person who performed the \
          verification to review, complete, and sign.\n\
@@ -960,6 +1354,8 @@ fn write_readme(
          6. `MANIFEST.json` — machine-readable list of every file here with its \
          SHA-256.\n\
          {clock_item}\
+         8. `evidence/{handoff}` — the handoff sidecar: this disclosure's signed records, \
+         for a downstream chain-of-custody system (`docs/handoff_sidecars.md`).\n\
          \n\
          {anchor_note}\n\
          \n\
@@ -972,6 +1368,8 @@ fn write_readme(
         bundle = bundle_file_name,
         anchor_note = anchor_note,
         clock_item = clock_item,
+        handoff = kit_handoff.file_name,
+        ots_sentence = ots_sentence,
     );
     std::fs::write(kit.join("README.md"), text)?;
     Ok(())
@@ -1054,7 +1452,10 @@ fn write_custody_record(
     chain_length: i64,
     identity_verified: bool,
     anchors: &[KitAnchor],
+    ots_anchors: &[KitOtsAnchor],
     clock: &ClockKit,
+    disclosure_context: &str,
+    kit_handoff: &KitHandoff,
 ) -> Result<()> {
     let time_source = time_source_section(anchors, clock);
     let identity = if identity_verified {
@@ -1067,7 +1468,7 @@ fn write_custody_record(
          is what turns self-consistency into a confirmed identity"
     };
     let mut anchor_rows = String::new();
-    if anchors.is_empty() {
+    if anchors.is_empty() && ots_anchors.is_empty() {
         anchor_rows.push_str("(none recorded)\n");
     } else {
         for a in anchors {
@@ -1106,6 +1507,12 @@ fn write_custody_record(
                 }
             ));
         }
+        // OpenTimestamps proofs: "attests", never "confirmed" — the kit
+        // records the height only; the reader compares the merkle root with
+        // a header from a source they trust.
+        for o in ots_anchors {
+            anchor_rows.push_str(&ots_custody_row(o));
+        }
     }
     let text = format!(
         "# Custody and control record\n\
@@ -1134,6 +1541,7 @@ fn write_custody_record(
          | Device public key (Ed25519) | `{device_key}` |\n\
          | Device identity | {identity} |\n\
          \n\
+         {disclosure_context}\
          ## Chain of custody (digital)\n\
          \n\
          | Field | Value |\n\
@@ -1146,6 +1554,14 @@ fn write_custody_record(
          confirmed the stored bytes reproduce this entry hash. Full-chain \
          verification is available to any party via `log_verify` (see \
          `VERIFICATION.md`).\n\
+         \n\
+         ## Handoff sidecar\n\
+         \n\
+         `evidence/{handoff_file}` ({handoff_source}) carries the device-signed rows this \
+         disclosure left, verbatim, so a downstream chain-of-custody system can check them \
+         apart from this kit. It is a carrier: the sidecar itself is unsigned; every fact it \
+         vouches for is in a signed row it embeds, or is labeled declared. Recipient binding: \
+         {handoff_binding}.\n\
          \n\
          ## Independent timestamp anchors\n\
          \n\
@@ -1176,6 +1592,10 @@ fn write_custody_record(
         len = chain_length,
         anchors = anchor_rows,
         time_source = time_source,
+        disclosure_context = disclosure_context,
+        handoff_file = kit_handoff.file_name,
+        handoff_source = kit_handoff.source,
+        handoff_binding = handoff::binding_str(kit_handoff.binding),
     );
     std::fs::write(kit.join("CUSTODY_AND_CONTROL.md"), text)?;
     Ok(())
@@ -1293,9 +1713,19 @@ fn write_verification(
     receipt_anchored: bool,
     device_key_hex: &str,
     anchors: &[KitAnchor],
+    ots_anchors: &[KitOtsAnchor],
     clock: &ClockKit,
+    kit_handoff: &KitHandoff,
 ) -> Result<()> {
     let clock_steps = clock_verification_steps(anchors, clock, device_key_hex);
+    let ots_steps = ots_verification_steps(ots_anchors);
+    let ots_intro = if ots_anchors.is_empty() {
+        ""
+    } else {
+        " The optional OpenTimestamps check in step 3 also needs the open-source `ots` \
+         client (`pip install opentimestamps-client`) and a Bitcoin node or block explorer \
+         you trust."
+    };
     let mut anchor_steps = String::new();
     let covering: Vec<&KitAnchor> = anchors
         .iter()
@@ -1356,7 +1786,7 @@ fn write_verification(
         "# Verification instructions\n\
          \n\
          Steps 1-3 need only `sha256sum` and `openssl` (step 3b also `xxd`, `cut` and \
-         `date`) — no SecuraCV software.\n\
+         `date`) — no SecuraCV software.{ots_intro}\n\
          \n\
          ## 1. Confirm the manifest\n\
          \n\
@@ -1365,6 +1795,7 @@ fn write_verification(
          ```sh\n\
          sha256sum evidence/{bundle}\n\
          # expect: {bundle_hex}\n\
+         sha256sum evidence/{handoff}   # expect: {handoff_sha}\n\
          ```\n\
          \n\
          ## 2. Confirm the evidence digest\n\
@@ -1375,6 +1806,9 @@ fn write_verification(
          ## 3. Verify the timestamp anchors\n\
          \n\
          {anchor_steps}\
+         Each `token_sha256` in the handoff sidecar equals one line printed by \
+         `sha256sum anchors/*.der`.\n\
+         {ots_steps}\
          \n\
          ## 3b. Verify the clock-provenance records\n\
          \n\
@@ -1394,14 +1828,110 @@ fn write_verification(
          database access relies on steps 1-3 (which are the trust-critical \
          checks) or requests supervised verification. Two independent verifier \
          implementations (Rust and JavaScript) exist so no single \
-         implementation needs to be trusted.\n",
+         implementation needs to be trusted.\n\
+         \n\
+         The handoff sidecar's embedded records check apart from the database:\n\
+         \n\
+         ```sh\n\
+         handoff_sidecar verify --file evidence/{bundle} --sidecar evidence/{handoff} \
+         --anchors-dir anchors --public-key-file <device.pub> [--ca <tsa-ca.pem>]\n\
+         ```\n\
+         \n\
+         or the shell recipe in docs/handoff_sidecars.md (sha256sum, openssl >= 3.0, jq).\n",
         bundle = bundle_file_name,
         bundle_hex = bundle_hex,
         anchor_steps = anchor_steps,
         clock_steps = clock_steps,
+        handoff = kit_handoff.file_name,
+        handoff_sha = kit_handoff.sha256,
+        ots_steps = ots_steps,
+        ots_intro = ots_intro,
     );
     std::fs::write(kit.join("VERIFICATION.md"), text)?;
     Ok(())
+}
+
+/// One custody-record row for a packaged OpenTimestamps proof:
+/// "attests", never "confirmed" — the kit records the height only; the
+/// reader compares the merkle root with a header from a source they trust.
+fn ots_custody_row(o: &KitOtsAnchor) -> String {
+    let state = match (o.height(), &o.merkle_root_display) {
+        (Some(h), Some(root)) => format!(
+            "attests Bitcoin block {h} (merkle root {root} — check it against a header from a \
+             source you trust; this kit records the height only)"
+        ),
+        _ if !o.pending_uris.is_empty() => format!(
+            "pending (not yet in a Bitcoin block) at {}",
+            o.pending_uris.join(", ")
+        ),
+        _ => "no Bitcoin or pending attestation".to_string(),
+    };
+    format!(
+        "- `anchors/{}` — subject `{}`, OpenTimestamps proof via {}; {state}{}\n",
+        o.file_name,
+        o.subject,
+        o.calendar_url,
+        match o.covers {
+            Covers::BundleBytes => " — **covers the evidence file's exact bytes**",
+            Covers::ReceiptEntry => {
+                " — **covers this disclosure's export receipt (entry hash above)**"
+            }
+            Covers::ChainHead => "",
+        }
+    )
+}
+
+/// Step 3's optional OpenTimestamps subsection: per proof, the `ots`
+/// commands and the block to look up — "attests", never "confirmed".
+fn ots_verification_steps(ots_anchors: &[KitOtsAnchor]) -> String {
+    if ots_anchors.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("\n### OpenTimestamps proofs (optional)\n\n");
+    for o in ots_anchors {
+        let over = match o.covers {
+            Covers::BundleBytes => "the evidence file",
+            Covers::ReceiptEntry => "this disclosure's export receipt entry",
+            Covers::ChainHead => "the producing device's chain head",
+        };
+        match (o.height(), &o.merkle_root_display) {
+            (Some(h), Some(root)) => out.push_str(&format!(
+                "```sh\n\
+                 # OpenTimestamps proof over {over} — attests Bitcoin block {h}\n\
+                 ots info anchors/{file}\n\
+                 ots --no-bitcoin verify -d {digest} anchors/{file}\n\
+                 #   prints: To verify manually, check that Bitcoin block {h} has merkleroot {root}\n\
+                 #   (without a Bitcoin node the run ends in failure: nothing has been checked yet)\n\
+                 ```\n\
+                 Compare that merkle root with block {h}'s merkle root from a Bitcoin node you \
+                 run (`bitcoin-cli getblockheader $(bitcoin-cli getblockhash {h})`, field \
+                 `merkleroot`) or a block explorer you trust; it must read `{root}`. With a node \
+                 configured, `ots verify -d {digest} anchors/{file}` prints `Success! Bitcoin \
+                 block {h} attests existence as of <date>`. A match shows that these exact bytes \
+                 existed before block {h} was mined; it says nothing about who made them. Bitcoin \
+                 fixes time only to roughly the block interval, and block times are set by miners \
+                 within consensus bounds, not read from a reference clock. The calendar that \
+                 relayed the commitment is a public service with no identity or accreditation; \
+                 once the Bitcoin path exists it needs no trust. Looking a block up on a public \
+                 explorer tells that explorer which block you are interested in.\n\n",
+                file = o.file_name,
+                digest = o.digest_hex,
+            )),
+            _ => out.push_str(&format!(
+                "```sh\n\
+                 # OpenTimestamps proof over {over} — pending\n\
+                 ots info anchors/{file}\n\
+                 ```\n\
+                 This proof is pending (not yet in a Bitcoin block): it shows only that the \
+                 calendar at `{uri}` received a commitment. `ots upgrade anchors/{file}` fetches \
+                 its Bitcoin path once the calendar has committed it (this contacts the \
+                 calendar). Until then it is not evidence of time.\n\n",
+                file = o.file_name,
+                uri = o.pending_uris.first().map(String::as_str).unwrap_or(&o.calendar_url),
+            )),
+        }
+    }
+    out
 }
 
 /// Step 3b: every stored fact of a packaged clock-provenance record
@@ -1640,7 +2170,10 @@ fn write_manifest(
     receipt_anchored: bool,
     identity_verified: bool,
     anchors: &[KitAnchor],
+    ots_anchors: &[KitOtsAnchor],
     clock: &ClockKit,
+    receipt: &witness_kernel::ExportReceipt,
+    kit_handoff: &KitHandoff,
 ) -> Result<()> {
     // Enumerate every file the kit contains (the manifest itself excluded) and
     // hash the bytes actually on disk — the manifest attests the kit as built.
@@ -1660,8 +2193,12 @@ fn write_manifest(
     if let Some(name) = sidecar_name {
         paths.push(kit.join("evidence").join(name));
     }
+    paths.push(kit.join("evidence").join(&kit_handoff.file_name));
     for a in anchors {
         paths.push(kit.join("anchors").join(&a.file_name));
+    }
+    for o in ots_anchors {
+        paths.push(kit.join("anchors").join(&o.file_name));
     }
     for c in &clock.records {
         paths.push(kit.join("clock_provenance").join(&c.file_name));
@@ -1692,6 +2229,23 @@ fn write_manifest(
             "receipt_entry_hash": entry_hash_hex,
             "device_public_key": device_key_hex,
             "auth_mode": auth_mode,
+            "context": receipt.context.as_ref().map(|c| serde_json::json!({
+                "operator": c.operator.as_ref().map(|op| serde_json::json!({
+                    "requester_name": op.requester_name,
+                    "reason_code": op.reason_code,
+                    "case_ref": op.case_ref,
+                    "requester_key": op.requester_key,
+                })),
+                "recipient_commitment": c.recipient_commitment.map(hex::encode),
+            })),
+            "authorizing_receipt": receipt.authorizing_receipt.map(hex::encode),
+        },
+        "handoff": {
+            "file": format!("evidence/{}", kit_handoff.file_name),
+            "sha256": kit_handoff.sha256,
+            "source": kit_handoff.source,
+            "pairing": handoff::pairing_name(kit_handoff.pairing),
+            "recipient_binding": handoff::binding_str(kit_handoff.binding),
         },
         "identity_verified": identity_verified,
         "anchored": anchored,
@@ -1728,6 +2282,28 @@ fn write_manifest(
             })
             .collect::<Vec<_>>(),
         "clock_provenance_ledger": clock.status.as_str(),
+        // OpenTimestamps proofs: additive keys, always present. `anchors[]`,
+        // `anchor_count`, `anchored` and `receipt_anchored` stay RFC 3161
+        // only. "bitcoin" means the proof attests a Bitcoin block, not that
+        // anything was confirmed against a header.
+        "ots_anchor_count": ots_anchors.len(),
+        "ots_bundle_attestation": ots_strongest(ots_anchors, Covers::BundleBytes),
+        "ots_receipt_attestation": ots_strongest(ots_anchors, Covers::ReceiptEntry),
+        "ots_anchors": ots_anchors
+            .iter()
+            .map(|o| {
+                serde_json::json!({
+                    "file": format!("anchors/{}", o.file_name),
+                    "subject": o.subject,
+                    "covers": o.covers.as_str(),
+                    "calendar_url": o.calendar_url,
+                    "attestation": o.attestation(),
+                    "bitcoin_height": o.height(),
+                    "merkle_root": o.merkle_root_display,
+                    "pending_uris": o.pending_uris,
+                })
+            })
+            .collect::<Vec<_>>(),
         "files": files,
     });
     std::fs::write(
@@ -1735,4 +2311,76 @@ fn write_manifest(
         format!("{}\n", serde_json::to_string_pretty(&manifest)?),
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn kit_ots_from(file: &str, covers: Covers) -> KitOtsAnchor {
+        let bytes = std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/ots")
+                .join(file),
+        )
+        .unwrap();
+        let proof = ots::Proof::parse(&bytes).unwrap();
+        let merkle_root_display = proof
+            .leaves()
+            .into_iter()
+            .filter_map(|l| match l.attestation {
+                ots::Attestation::Bitcoin { height } => Some((height, l.msg)),
+                _ => None,
+            })
+            .min_by_key(|(h, _)| *h)
+            .map(|(_, m)| ots::display_hex(&m));
+        KitOtsAnchor {
+            file_name: "ots-0007-digest.ots".to_string(),
+            subject: "digest".to_string(),
+            digest_hex: hex::encode(proof.digest),
+            covers,
+            calendar_url: "https://alice.btc.calendar.opentimestamps.org".to_string(),
+            state: proof.state(),
+            merkle_root_display,
+            pending_uris: proof.pending_leaves().into_iter().map(|(u, _)| u).collect(),
+        }
+    }
+
+    #[test]
+    fn attests_rendering_text() {
+        let o = kit_ots_from("bitcoin.ots", Covers::BundleBytes);
+        assert_eq!(o.attestation(), "bitcoin");
+        let row = ots_custody_row(&o);
+        assert!(
+            row.starts_with(
+                "- `anchors/ots-0007-digest.ots` — subject `digest`, OpenTimestamps proof via \
+                 https://alice.btc.calendar.opentimestamps.org; attests Bitcoin block 449397 \
+                 (merkle root 18f21f7933f1fcf0bd7648bcdc9032986988c32f44cd4e60a31dbcd6a0a8177c — \
+                 check it against a header from a source you trust; this kit records the height \
+                 only) — **covers the evidence file's exact bytes**"
+            ),
+            "{row}"
+        );
+        let steps = ots_verification_steps(&[o]);
+        assert!(steps.contains("### OpenTimestamps proofs (optional)"));
+        assert!(steps.contains(
+            "ots --no-bitcoin verify -d 6fd9c1c4f096b77e6d4457bac1c7f51010d318db483f2868d3795843f098d378 anchors/ots-0007-digest.ots"
+        ));
+        assert!(steps.contains(
+            "#   prints: To verify manually, check that Bitcoin block 449397 has merkleroot 18f21f7933f1fcf0bd7648bcdc9032986988c32f44cd4e60a31dbcd6a0a8177c"
+        ));
+        let pending = kit_ots_from("pending-bob.ots", Covers::ChainHead);
+        let prow = ots_custody_row(&pending);
+        assert!(prow.contains(
+            "; pending (not yet in a Bitcoin block) at https://bob.btc.calendar.opentimestamps.org\n"
+        ), "{prow}");
+        let psteps = ots_verification_steps(&[pending]);
+        assert!(psteps.contains("This proof is pending (not yet in a Bitcoin block)"));
+        // Kit text never claims a confirmation or a verification it did not run.
+        for text in [&row, &steps, &prow, &psteps] {
+            let lower = text.to_lowercase();
+            assert!(!lower.contains("confirmed"), "{text}");
+            assert!(!lower.contains("verified"), "{text}");
+        }
+    }
 }

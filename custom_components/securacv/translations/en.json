@@ -246,7 +246,7 @@
       },
       "settings": {
         "title": "Evidence exports",
-        "description": "How many evidence packs to keep under the Home Assistant configuration directory (securacv/evidence). When a new export exceeds the limit, the oldest pack is removed and the export notification says so.",
+        "description": "How many of this kernel entry's evidence packs to keep under the Home Assistant configuration directory (securacv/evidence). The limit is per entry: when this entry's export takes it past the limit, its oldest pack is removed, along with any older pack no configured entry owns, and the export notification says so. Another entry's packs are never removed.",
         "data": {
           "evidence_keep": "Exports to keep (1–200)"
         }
@@ -572,7 +572,7 @@
     },
     "export_evidence": {
       "name": "Export evidence",
-      "description": "Downloads the kernel's signed evidence bundle for the last N hours and writes ONE zip under the configuration directory (securacv/evidence, readable by Home Assistant only): the bundle verbatim, the offline viewer, a README for the recipient and the witness key. A persistent notification carries a download link valid 24 hours; the pack is also under Media → SecuraCV evidence. Nothing is added to, removed from or re-serialized in the bundle.",
+      "description": "Downloads the kernel's signed evidence bundle for the last N hours and writes ONE zip under the configuration directory (securacv/evidence, readable by Home Assistant only): the bundle verbatim, the offline viewer, a README for the recipient and the witness key. A persistent notification carries a download link valid 24 hours; the pack is also under Media → SecuraCV evidence. Nothing is added to, removed from or re-serialized in the bundle. Older packs from this entry past its Exports to keep limit are removed, oldest first. Administrators only: a signed-in user who is not an administrator is refused.",
       "fields": {
         "window_hours": {
           "name": "Window",
@@ -586,7 +586,7 @@
     },
     "staged_update": {
       "name": "Staged firmware update",
-      "description": "Installs the fleet's pending firmware updates one Canary at a time: each node must report the new version through its own update entity before the next one starts, and the rollout stops at the first node that fails or times out. Installs only what each node's own signed-OTA engine accepts. Returns what was installed, skipped and not attempted.",
+      "description": "Installs the fleet's pending firmware updates one Canary at a time: each node must report the new version through its own update entity before the next one starts, and the rollout stops at the first node that fails or times out. Installs only what each node's own signed-OTA engine accepts. Returns what was installed, skipped and not attempted. Administrators only: a signed-in user who is not an administrator is refused.",
       "fields": {
         "entity_id": {
           "name": "Update entities",

@@ -49,14 +49,34 @@ For break-glass receipts, `log_verify`:
    - recompute `entry_hash = SHA256(prev_hash || payload_json)`
    - verify the Ed25519 signature over `entry_hash`
    - verify the approvals commitment matches the stored approvals JSON
-2) Report success/failure.
+   - apply the token-redemption rules (`token_redemption`): one redemption
+     per nonce and per grant, restating its grant — and, for an `Unsealed`
+     row, that it names an earlier redemption, is the only one for it, is
+     not an `export:events` redemption, restates the redemption's envelope,
+     ruleset, request hash and bucket, and carries no approvals (U1–U5).
+     For an `Unsealed` row these run before the per-receipt quorum and
+     attribution check, so a forged row naming trustees reports U5 as
+     `token_redemption`, exactly as `envelope_verify` and the viewer do
+2) Report success/failure. The count line reads `verified N receipt entries
+   (G granted, D denied, R redeemed, U unsealed)`; `, U unsealed` appears only
+   when an unseal record exists, and the JSON report's `break_glass_unsealed`
+   is omitted while there is none (and on a failed report).
 
 For export receipts, `log_verify`:
 1) Iterates `export_receipts` in ascending id:
    - verify each `prev_hash` matches the running expected chain head
    - recompute `entry_hash = SHA256(prev_hash || payload_json)`
    - verify the Ed25519 signature over `entry_hash`
-2) Report success/failure.
+2) Then, before the clock-provenance walk, check every export receipt that
+   names its authorizing grant (`authorizing_receipt`) against the
+   break-glass chain (R0–R6, `spec/break_glass.md` "Auditing receipts"): a
+   real, redeemed `export:events` grant, named by one export only, with no
+   operator restated beside it. A failure is `FailedLedger::ExportReceipts`
+   with the new kind `export_authorization` (`integrity check failed at
+   export receipt id N: <rule>`).
+3) Report success/failure. The count line gains `, A name their authorizing
+   grant` when any does; the JSON report's `export_receipts_authorized` is
+   omitted while none does.
 
 For the clock-provenance ledger (`docs/timestamping.md`, "Clock
 provenance"), `log_verify`:
@@ -122,6 +142,24 @@ log_anchor --db <db> verify --ca <tsa-ca.pem>)`; the JSON report gains
 report from such a database is byte-identical to before; on a failed report
 it counts the rows checked before the failing one). Warnings about damaged
 rows print under `=== Anchor Audit ===`, apart from the timeline audit.
+
+**OpenTimestamps rows** (when the database has an `ots_anchors` table) are
+checked by the same structural rules — the row is well-formed, the proof
+parses, its digest equals the row's hash, the cached `attestation` and
+`bitcoin_height` agree with the proof, and a head-kind row's hash is in its
+declared ledger's history (a missing one fails the verdict as
+`anchor_regression` on the ledger `ots_anchors`, `entry_id` = the
+`ots_anchors` row id). Bitcoin attestations are never checked here — there is
+no header input, and this runs at `witnessd` boot. The human report prints
+`ots anchors: N checked (structural; Bitcoin attestations: log_anchor --db
+<db> verify --bitcoin-headers <file>)`; the JSON report gains
+`ots_anchors_checked`, with the same contract as `anchors_checked` (omitted
+when the table is absent; `anchors_checked` stays RFC 3161 only). The four
+warnings — `ots anchor #N: row is malformed (…)`, `… stored proof does not
+parse as an OpenTimestamps proof`, `… proof digest does not match the subject
+hash the row claims`, `… attestation columns disagree with the stored proof`,
+each ending `; run log_anchor verify` — print under `=== Anchor Audit ===`
+and carry no hash, height, URL or time.
 
 **Clock-provenance records against the anchors table.** After the anchor
 rows, every clock-provenance record is cross-checked against them, as
@@ -223,11 +261,12 @@ Failure kinds and the gist of their guidance:
 | `untrusted_signer` | checkpoint or high-water-mark signed by a key outside the device lineage | do not trust the checkpoint or this database's origin |
 | `high_water_regression` | the live log is behind the signed external high-water-mark (`--high-water-mark`): tail truncation, rollback or wipe | recover the newer database; never re-sign a shorter chain |
 | `anchor_regression` (ledger `anchors`, `entry_id` = the `tsa_anchors` row id) | a head-kind anchor covers a hash that is not in its declared ledger's history, or that survives only in a checkpoint whose signature does not verify: rollback, truncation, or a different history than the one anchored | `log_anchor verify` for the per-anchor picture; `relabel` only for a head at or below the cutoff of a database pruned by an older build; never delete the row |
+| `anchor_regression` (ledger `ots_anchors`, `entry_id` = the `ots_anchors` row id) | an OpenTimestamps proof's head-kind row covers a hash that is not in its declared ledger's history: the same causes, plus a chain head anchored only on the OpenTimestamps leg and pruned without a checkpoint by a witnessd older than this table | `log_anchor verify` for the per-anchor picture; `log_anchor relabel --ots --id N --subject digest` only for a head at or below the cutoff of a database pruned by an older build (without `--ots`, `relabel` acts on the RFC 3161 row with that id); upgrade witnessd before stamping chain heads; never delete the row |
 
 With `--json`, the same information is machine-readable: the report gains a
 `failure` object (`{ledger, entry_id, kind, detail}`) next to the unchanged
 `error` string. `ledger` is one of `sealed_events`, `break_glass_receipts`,
-`export_receipts`, `checkpoint`, `key_lineage`, `high_water_mark`, `anchors`. The HTTP API's `POST /verify` returns the same report.
+`export_receipts`, `checkpoint`, `key_lineage`, `high_water_mark`, `anchors`, `clock_provenance`, `ots_anchors`. The HTTP API's `POST /verify` returns the same report.
 
 ## Future work
 - Support multiple checkpoints and archived compacted segments.

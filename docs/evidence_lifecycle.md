@@ -30,6 +30,8 @@ This document describes how evidence moves through the Privacy Witness Kernel (P
 
 - Exports are **explicit artifacts** created by a deliberate act, not continuous feeds.
 - Each export is accompanied by a **tamper-evident receipt** that records the disclosure act without expanding the data itself. Exactly two routes are receipted — the bulk event export (`GET /events` with no cursor) and the export bundle (`GET /export/bundle`) — and the receipt names the credential that asked (`auth_mode`: the kernel's own token, a paired Home Assistant with its token id, a self-export, break-glass). Receipts are never pruned.
+- An export receipt may also carry a declared `context` — a self-export's own operator (requester, reason code, case reference; declared, never trustee-consented) and a salted commitment to a declared recipient — and a quorum export's receipt names the `Granted` break-glass receipt whose token authorized it (`authorizing_receipt`), so the requester's identity stays on the grant the trustees approved and is never copied into a second ledger.
+- Every file an export or an unseal writes gets a **handoff sidecar** beside it (`<file>.securacv-handoff.json`, 0600): the disclosure's device-signed rows, verbatim, for the receiving party's own chain-of-custody system ([`handoff_sidecars.md`](handoff_sidecars.md)).
 - Exported events keep coarse time buckets and zone identifiers; precise timestamps and identity fields remain forbidden.
 - In Home Assistant an export is one **evidence pack**: the kernel's bundle byte for byte, the offline viewer, a README for the recipient and the public witness key, zipped under the owner's configuration directory (readable by Home Assistant only, never under a public path) and handed out only through an authenticated view with a link that expires in 24 hours. The pack is the hand-off unit — the owner sends the whole zip.
 
@@ -46,7 +48,7 @@ This document describes how evidence moves through the Privacy Witness Kernel (P
 ## 6) Dispute (Break-glass access with quorum)
 
 - If a dispute requires raw evidence, the only path is **break-glass by quorum**.
-- Break-glass access is auditable and produces receipts for each attempt.
+- Break-glass access is auditable and produces receipts for each attempt; an unseal leaves three device-signed rows — the grant, the redemption that spent the token, and the `Unsealed` record that the device decrypted the envelope to the plaintext a salted commitment fixes (the salt lives only in the handoff sidecar, so the never-pruned ledger holds no media fingerprint).
 - Raw media, if present in the Evidence Vault, is isolated and cannot be accessed without quorum authorization.
 
 **Ties to existing concepts:** Evidence Vault; Break-glass quorum; Break-glass receipts.
