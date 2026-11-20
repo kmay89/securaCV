@@ -44,6 +44,9 @@ on:
       - "firmware/boards/xiao-esp32c6-mr60/**"
       - "firmware/boards/waveshare-esp32s3-lcd43/**"
       - "firmware/common/**"
+      # The patched core-2 WebServer the Vision's lib_extra_dirs names:
+      # desktop_parity.test.js's F384 scan reads every Vision library.
+      - "firmware/third_party/**"
       - "ios/Shared/FleetFigures.swift"
       - "firmware/boards/*/pins/pins.h"
       - "ios/Shared/FleetFigureBridge.swift"
@@ -319,6 +322,9 @@ on:
       - "firmware/boards/xiao-esp32c6-mr60/**"
       - "firmware/boards/waveshare-esp32s3-lcd43/**"
       - "firmware/common/**"
+      # The patched core-2 WebServer the Vision's lib_extra_dirs names:
+      # desktop_parity.test.js's F384 scan reads every Vision library.
+      - "firmware/third_party/**"
       - "ios/Shared/FleetFigures.swift"
       - "firmware/boards/*/pins/pins.h"
       - "ios/Shared/FleetFigureBridge.swift"

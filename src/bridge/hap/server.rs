@@ -22,10 +22,10 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::accessory::{accessories_json, CanaryAccessory, BRIDGE_AID};
 use super::http::{self, content_type, HttpError, Request};
@@ -47,6 +47,21 @@ pub const MAX_CONNECTIONS: usize = 16;
 /// How long a connection may sit idle before the accessory closes it. Also
 /// bounds the "peer promised bytes it never sent" case in the framing layer.
 pub const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// How many connections that have not completed Pair Verify may be open at
+/// once, from every peer together. Well below [`MAX_CONNECTIONS`], so a host
+/// that opens sockets and never pairs cannot hold the slots a controller
+/// needs.
+pub const MAX_UNVERIFIED: usize = 4;
+
+/// How many connections that have not completed Pair Verify one peer address
+/// may hold at once.
+pub const MAX_UNVERIFIED_PER_PEER: usize = 2;
+
+/// How long a connection may stay open without completing Pair Verify,
+/// however many bytes it trickles in. Long enough for a person to read a
+/// setup code and type it between Pair Setup M2 and M3.
+pub const UNVERIFIED_DEADLINE: Duration = Duration::from_secs(180);
 
 /// Everything the server shares across connections.
 pub struct ServerState {
@@ -173,6 +188,12 @@ pub struct Connection {
     raw: Vec<u8>,
     /// Decrypted (or pre-session plaintext) bytes awaiting HTTP parsing.
     plain: Vec<u8>,
+    /// Set when this connection must end: a frame failed to authenticate,
+    /// or the controller it verified is no longer paired. The reader thread
+    /// checks it after every read and the metronome on every tick, and
+    /// either one shuts the socket down. A connection whose session ended
+    /// must never fall back to plaintext on the same stream.
+    closed: bool,
 }
 
 impl Connection {
@@ -186,6 +207,7 @@ impl Connection {
             subscriptions: BTreeSet::new(),
             raw: Vec::new(),
             plain: Vec::new(),
+            closed: false,
         })
     }
 
@@ -194,9 +216,48 @@ impl Connection {
         self.session.is_some()
     }
 
+    /// Whether this connection has ended and its socket must be shut down.
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
+
     /// What this controller is subscribed to.
     pub fn subscriptions(&self) -> &BTreeSet<(u64, u64)> {
         &self.subscriptions
+    }
+
+    /// Whether the controller this connection verified is still in the
+    /// pairing table. Removing a pairing must end that controller's live
+    /// session too, not only its next Pair Verify.
+    fn still_paired(&self, state: &ServerState) -> bool {
+        self.pair_verify
+            .verified_controller()
+            .is_some_and(|id| state.pairings.get(id).is_some())
+    }
+
+    /// Whether this connection may use the routes behind Pair Verify: it has
+    /// a session, and the controller that opened it is still paired. A
+    /// session whose controller was removed ends here, on its next request.
+    fn authorized(&mut self, state: &ServerState) -> bool {
+        if !self.is_secure() {
+            return false;
+        }
+        if self.still_paired(state) {
+            return true;
+        }
+        self.end();
+        false
+    }
+
+    /// End the connection: forget everything Pair Verify established, drop
+    /// any buffered bytes, and mark it for the socket loop to close.
+    fn end(&mut self) {
+        self.session = None;
+        self.pending_session = None;
+        self.pair_verify = PairVerify::new();
+        self.raw.clear();
+        self.plain.clear();
+        self.closed = true;
     }
 
     /// Feed bytes from the socket; get bytes to write back.
@@ -233,9 +294,11 @@ impl Connection {
             // A frame that fails to authenticate ends the connection: there
             // is no way to resynchronize a counter-based stream, and
             // pretending otherwise would accept attacker-chosen framing.
-            self.session = None;
-            self.raw.clear();
-            self.plain.clear();
+            // Pair Verify is reset with the session, so bytes injected after
+            // the bad frame cannot re-arm a session under the controller
+            // this connection had verified, and `closed` tells the socket
+            // loop to shut the stream rather than read on in plaintext.
+            self.end();
             return out;
         }
 
@@ -262,6 +325,18 @@ impl Connection {
             // has been written in the clear.
             if let Some(session) = self.pending_session.take() {
                 self.session = Some(session);
+                // Bytes that arrived in the same read as M3 were moved into
+                // `plain` before any session existed. They must not be
+                // parsed as plaintext under the session M3 just opened, or
+                // an on-path host could append a request to the controller's
+                // M3 and have it run with that controller's rights. Put them
+                // back in front of `raw`, so they have to authenticate as
+                // frames like everything else after M4.
+                let mut rest = std::mem::take(&mut self.plain);
+                rest.append(&mut self.raw);
+                self.raw = rest;
+                out.extend(self.feed(&[], state));
+                return out;
             }
         }
         out
@@ -308,6 +383,12 @@ impl Connection {
         // No session, no notification: an unauthenticated peer is told
         // nothing about the fleet's state.
         self.session.as_ref()?;
+        // A controller removed while connected is told nothing more either,
+        // and its connection ends on this tick.
+        if !self.still_paired(state) {
+            self.end();
+            return None;
+        }
         let mut entries = Vec::new();
         for (aid, iid) in &self.subscriptions {
             if let Some(value) = state.value_at(*aid, *iid) {
@@ -354,25 +435,25 @@ impl Connection {
                 http::response(200, content_type::TLV8, &body)
             }
             ("GET", "/accessories") => {
-                if !self.is_secure() {
+                if !self.authorized(state) {
                     return http::empty_response(470);
                 }
                 http::response(200, content_type::JSON, state.accessories().as_bytes())
             }
             ("GET", "/characteristics") => {
-                if !self.is_secure() {
+                if !self.authorized(state) {
                     return http::empty_response(470);
                 }
                 self.read_characteristics(req, state)
             }
             ("PUT", "/characteristics") => {
-                if !self.is_secure() {
+                if !self.authorized(state) {
                     return http::empty_response(470);
                 }
                 self.write_characteristics(req, state)
             }
             ("POST", "/pairings") => {
-                if !self.is_secure() {
+                if !self.authorized(state) {
                     return http::empty_response(470);
                 }
                 self.pairings(req, state)
@@ -499,6 +580,11 @@ impl Connection {
                 {
                     state.pairings.remove(&id);
                 }
+                // A controller that removed itself is done: its connection
+                // closes once this response has been written.
+                if !self.still_paired(state) {
+                    self.closed = true;
+                }
                 // Removing the last pairing makes the accessory discoverable
                 // again, which controllers learn from the advertisement.
                 state.config_number = state.config_number.saturating_add(1);
@@ -618,6 +704,19 @@ pub fn txt_records(
 struct LiveConnection {
     proto: Mutex<Connection>,
     write: Mutex<TcpStream>,
+    /// A second handle on the same socket, used only to shut it down. It
+    /// takes no lock, because a peer that stops reading can park a writer
+    /// inside `write`, and closing a connection must not wait on that.
+    ctl: TcpStream,
+    /// The peer's address, for the per-peer budget on unverified
+    /// connections.
+    peer: IpAddr,
+    /// When the connection was accepted, for the unverified deadline.
+    accepted: Instant,
+    /// Whether the connection had a Pair Verify session after its last
+    /// request. Kept outside `proto` so the accept loop can weigh every slot
+    /// without taking each connection's lock.
+    verified: AtomicBool,
     /// Cleared when the serving thread exits. A dropped connection's mutex
     /// still locks perfectly well, so liveness has to be tracked explicitly
     /// rather than inferred from whether a lock succeeds — otherwise dead
@@ -634,10 +733,168 @@ impl LiveConnection {
     fn retire(&self) {
         self.alive.store(false, Ordering::Relaxed);
     }
+
+    fn is_verified(&self) -> bool {
+        self.verified.load(Ordering::Relaxed)
+    }
+
+    /// Whether this connection has been open past the unverified deadline
+    /// without completing Pair Verify.
+    fn overdue(&self) -> bool {
+        unverified_too_long(self.is_verified(), self.accepted.elapsed())
+    }
+
+    /// Shut the socket down, which also ends the thread reading it, and
+    /// drop the connection from the live set.
+    fn close(&self) {
+        let _ = self.ctl.shutdown(Shutdown::Both);
+        self.retire();
+    }
 }
 
 /// Every connection the server is currently serving.
 type Connections = Arc<Mutex<Vec<Arc<LiveConnection>>>>;
+
+/// Whether a connection that is `verified` (or not) and has been open for
+/// `age` must be closed for never completing Pair Verify.
+fn unverified_too_long(verified: bool, age: Duration) -> bool {
+    !verified && age >= UNVERIFIED_DEADLINE
+}
+
+/// What the accept loop does with a new connection.
+#[derive(Debug, PartialEq, Eq)]
+enum Admission {
+    /// There is room for it.
+    Admit,
+    /// Close the live connection at this index first, then admit it.
+    Evict(usize),
+    /// Every slot holds a verified session: refuse it.
+    Refuse,
+}
+
+/// Decide what to do with a new connection from `peer`, given each live
+/// connection's peer address and whether it has completed Pair Verify,
+/// oldest first.
+///
+/// Connections that have not verified share a small budget, per peer and
+/// in total, so a host that opens sockets and never pairs cannot hold the
+/// slots a controller needs. A newcomer over that budget displaces the
+/// oldest unverified connection rather than being turned away, so the slot
+/// a squatter holds is always the one that goes.
+fn admission(live: &[(IpAddr, bool)], peer: IpAddr) -> Admission {
+    let unverified: Vec<usize> = live
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, verified))| !verified)
+        .map(|(i, _)| i)
+        .collect();
+    let from_peer: Vec<usize> = unverified
+        .iter()
+        .copied()
+        .filter(|&i| live.get(i).is_some_and(|(ip, _)| *ip == peer))
+        .collect();
+    if from_peer.len() >= MAX_UNVERIFIED_PER_PEER {
+        if let Some(&oldest) = from_peer.first() {
+            return Admission::Evict(oldest);
+        }
+    }
+    if unverified.len() >= MAX_UNVERIFIED {
+        if let Some(&oldest) = unverified.first() {
+            return Admission::Evict(oldest);
+        }
+    }
+    if live.len() >= MAX_CONNECTIONS {
+        return match unverified.first() {
+            Some(&oldest) => Admission::Evict(oldest),
+            None => Admission::Refuse,
+        };
+    }
+    Admission::Admit
+}
+
+/// What the advertisement says about pairing: whether anyone is paired (the
+/// `sf` flag), and the config number (`c#`).
+fn advertised(state: &ServerState) -> (bool, u64) {
+    (!state.pairings.is_empty(), state.config_number)
+}
+
+/// The TXT records to announce when what the advertisement says about
+/// pairing has moved since `last` was announced, or `None` when it has not.
+fn readvertisement(
+    device_id: &str,
+    last: Option<(bool, u64)>,
+    now: (bool, u64),
+) -> Option<HashMap<String, String>> {
+    if last == Some(now) {
+        return None;
+    }
+    let (paired, config_number) = now;
+    Some(txt_records(
+        device_id,
+        config_number,
+        paired,
+        CATEGORY_BRIDGE,
+    ))
+}
+
+/// The mDNS advertisement, kept alive for the server's lifetime and
+/// re-announced whenever pairing changes what it says.
+///
+/// A failure here is logged and tolerated: the accessory is still reachable
+/// by IP, and refusing to serve because Bonjour is unavailable would be a
+/// worse outcome than being hard to find.
+struct Advertiser {
+    daemon: mdns_sd::ServiceDaemon,
+    device_id: String,
+    instance: String,
+    port: u16,
+    last: Option<(bool, u64)>,
+}
+
+impl Advertiser {
+    fn start(device_id: &str, port: u16) -> Option<Self> {
+        match mdns_sd::ServiceDaemon::new() {
+            Ok(daemon) => Some(Advertiser {
+                daemon,
+                device_id: device_id.to_string(),
+                instance: device_id.replace(':', ""),
+                port,
+                last: None,
+            }),
+            Err(e) => {
+                log::warn!("HAP: mDNS unavailable ({e}); reachable by IP only");
+                None
+            }
+        }
+    }
+
+    /// Announce `now` if it differs from what was last announced. mdns-sd
+    /// re-announces a service registered again under the same name, so a
+    /// second `register` is the update.
+    fn refresh(&mut self, now: (bool, u64)) {
+        let Some(txt) = readvertisement(&self.device_id, self.last, now) else {
+            return;
+        };
+        // Recorded whatever the outcome, so a daemon that keeps failing logs
+        // once per change rather than once per tick.
+        self.last = Some(now);
+        match mdns_sd::ServiceInfo::new(
+            HAP_SERVICE,
+            &self.instance,
+            &format!("{}.local.", self.instance),
+            (),
+            self.port,
+            txt,
+        ) {
+            Ok(info) => {
+                if let Err(e) = self.daemon.register(info.enable_addr_auto()) {
+                    log::warn!("HAP: mDNS registration failed ({e}); reachable by IP only");
+                }
+            }
+            Err(e) => log::warn!("HAP: could not build mDNS record ({e})"),
+        }
+    }
+}
 
 /// A running server's handle.
 pub struct HapServer {
@@ -672,46 +929,38 @@ pub fn serve(
     bind: SocketAddr,
     state: ServerState,
     pacing: PacingConfig,
+    tick: impl FnMut(&mut ServerState) -> Vec<(u64, u64)> + Send + 'static,
+) -> std::io::Result<HapServer> {
+    serve_with(bind, state, pacing, tick, true)
+}
+
+/// [`serve`], with the mDNS advertisement optional, so a socket test does
+/// not announce an accessory on the network of the machine running it.
+fn serve_with(
+    bind: SocketAddr,
+    state: ServerState,
+    pacing: PacingConfig,
     mut tick: impl FnMut(&mut ServerState) -> Vec<(u64, u64)> + Send + 'static,
+    advertise: bool,
 ) -> std::io::Result<HapServer> {
     let listener = TcpListener::bind(bind)?;
     let addr = listener.local_addr()?;
     let setup_code = state.setup_code.clone();
-    let device_id = state.identity.pairing_id().to_string();
-    let paired = !state.pairings.is_empty();
-    let config_number = state.config_number;
+
+    // Discovery. The metronome owns the advertiser from here on and
+    // re-announces it when a pairing is added or the last one is removed,
+    // so `sf` and `c#` follow the pairing table without a restart.
+    let mut advertiser = if advertise {
+        Advertiser::start(state.identity.pairing_id(), addr.port())
+    } else {
+        None
+    };
+    if let Some(a) = advertiser.as_mut() {
+        a.refresh(advertised(&state));
+    }
 
     let state = Arc::new(Mutex::new(state));
     let stop = Arc::new(AtomicBool::new(false));
-
-    // Discovery. A failure here is logged and tolerated: the accessory is
-    // still reachable by IP, and refusing to serve because Bonjour is
-    // unavailable would be a worse outcome than being hard to find.
-    match mdns_sd::ServiceDaemon::new() {
-        Ok(daemon) => {
-            let txt = txt_records(&device_id, config_number, paired, CATEGORY_BRIDGE);
-            let instance = device_id.replace(':', "");
-            match mdns_sd::ServiceInfo::new(
-                HAP_SERVICE,
-                &instance,
-                &format!("{instance}.local."),
-                (),
-                addr.port(),
-                txt,
-            ) {
-                Ok(info) => {
-                    let info = info.enable_addr_auto();
-                    if let Err(e) = daemon.register(info) {
-                        log::warn!("HAP: mDNS registration failed ({e}); reachable by IP only");
-                    }
-                }
-                Err(e) => log::warn!("HAP: could not build mDNS record ({e})"),
-            }
-            // The daemon must outlive the server or the advertisement stops.
-            std::mem::forget(daemon);
-        }
-        Err(e) => log::warn!("HAP: mDNS unavailable ({e}); reachable by IP only"),
-    }
 
     let connections: Connections = Arc::new(Mutex::new(Vec::new()));
 
@@ -738,6 +987,11 @@ pub fn serve(
                 // blocked socket must not stall the metronome, and a stalled
                 // metronome would be a visible gap in the cadence.
                 let mut outbound: Vec<(Arc<LiveConnection>, Vec<u8>)> = Vec::new();
+                // A connection the protocol has ended (its controller was
+                // removed, or a frame failed to authenticate), or one still
+                // unverified past its deadline, is shut down on this tick
+                // rather than left to its reader's idle timeout.
+                let mut closing: Vec<Arc<LiveConnection>> = Vec::new();
                 for conn in conns.iter() {
                     let Ok(mut proto) = conn.proto.lock() else {
                         conn.retire();
@@ -746,10 +1000,17 @@ pub fn serve(
                     if let Some(bytes) = proto.notification(&s) {
                         outbound.push((Arc::clone(conn), bytes));
                     }
+                    if proto.is_closed() || conn.overdue() {
+                        closing.push(Arc::clone(conn));
+                    }
                 }
+                let advert = advertised(&s);
                 drop(conns);
                 drop(s);
 
+                for conn in closing {
+                    conn.close();
+                }
                 for (conn, bytes) in outbound {
                     let Ok(mut stream) = conn.write.lock() else {
                         conn.retire();
@@ -758,6 +1019,9 @@ pub fn serve(
                     if stream.write_all(&bytes).is_err() {
                         conn.retire();
                     }
+                }
+                if let Some(a) = advertiser.as_mut() {
+                    a.refresh(advert);
                 }
             }
         });
@@ -776,26 +1040,44 @@ pub fn serve(
                 if stream.set_read_timeout(Some(IDLE_TIMEOUT)).is_err() {
                     continue;
                 }
+                let Ok(peer_addr) = stream.peer_addr() else {
+                    continue;
+                };
                 // Refuse rather than queue past the cap, so a peer opening
                 // sockets cannot grow our thread count without bound.
                 let Ok(mut conns) = connections.lock() else {
                     break;
                 };
+                // An unverified connection past its deadline gives its slot
+                // back before the newcomer is weighed.
+                for c in conns.iter() {
+                    if c.overdue() {
+                        c.close();
+                    }
+                }
                 // Drop entries whose thread has exited before testing the
                 // cap, or routine controller reconnects would fill it.
                 conns.retain(|c| c.is_alive());
-                if conns.len() >= MAX_CONNECTIONS {
-                    continue;
+                let slots: Vec<(IpAddr, bool)> =
+                    conns.iter().map(|c| (c.peer, c.is_verified())).collect();
+                match admission(&slots, peer_addr.ip()) {
+                    Admission::Admit => {}
+                    Admission::Evict(i) => conns.remove(i).close(),
+                    Admission::Refuse => continue,
                 }
                 let Ok(connection) = Connection::new(&setup_code) else {
                     continue;
                 };
-                let Ok(peer) = stream.try_clone() else {
+                let (Ok(peer), Ok(ctl)) = (stream.try_clone(), stream.try_clone()) else {
                     continue;
                 };
                 let live = Arc::new(LiveConnection {
                     proto: Mutex::new(connection),
                     write: Mutex::new(stream),
+                    ctl,
+                    peer: peer_addr.ip(),
+                    accepted: Instant::now(),
+                    verified: AtomicBool::new(false),
                     alive: AtomicBool::new(true),
                 });
                 conns.push(Arc::clone(&live));
@@ -813,12 +1095,14 @@ pub fn serve(
                         // Same order as the metronome: state, then proto.
                         // Both are released before the socket write, which
                         // takes only the leaf `write` lock.
-                        let out = {
+                        let (out, closed) = {
                             let Ok(mut s) = state.lock() else { break };
                             let Ok(mut proto) = live.proto.lock() else {
                                 break;
                             };
-                            proto.feed(&buf[..n], &mut s)
+                            let out = proto.feed(&buf[..n], &mut s);
+                            live.verified.store(proto.is_secure(), Ordering::Relaxed);
+                            (out, proto.is_closed())
                         };
                         if !out.is_empty() {
                             let Ok(mut stream) = live.write.lock() else {
@@ -828,8 +1112,13 @@ pub fn serve(
                                 break;
                             }
                         }
+                        // A connection the protocol ended is closed once its
+                        // last response is out, never read on in plaintext.
+                        if closed {
+                            break;
+                        }
                     }
-                    live.retire();
+                    live.close();
                 });
             }
         });
@@ -1023,6 +1312,12 @@ mod tests {
         }
 
         fn pair_verify(&mut self, conn: &mut Connection, state: &mut ServerState) {
+            self.pair_verify_over(|wire| conn.feed(&wire, state));
+        }
+
+        /// Pair Verify over any transport: `send` delivers one request and
+        /// returns the accessory's reply. Both are plaintext, M4 included.
+        fn pair_verify_over(&mut self, mut send: impl FnMut(Vec<u8>) -> Vec<u8>) {
             let mut scalar = [0u8; 32];
             scalar[0] = 77;
             let secret = StaticSecret::from(scalar);
@@ -1032,7 +1327,7 @@ mod tests {
             m1.push_u8(ty::STATE, 1)
                 .push(ty::PUBLIC_KEY, my_pk.to_vec());
             let wire = self.request("POST", "/pair-verify", content_type::TLV8, &m1.encode());
-            let body = self.read_body(&conn.feed(&wire, state));
+            let body = self.read_body(&send(wire));
             let m2 = Tlv::decode(&body).expect("m2");
             let acc_pk: [u8; 32] = m2.get(ty::PUBLIC_KEY).expect("pk").try_into().unwrap();
             let shared = secret.diffie_hellman(&XPublicKey::from(acc_pk)).to_bytes();
@@ -1056,7 +1351,7 @@ mod tests {
                 crypto::seal(&sk, nonce::PV_MSG03, b"", &sub.encode()),
             );
             let wire = self.request("POST", "/pair-verify", content_type::TLV8, &m3.encode());
-            let body = self.read_body(&conn.feed(&wire, state));
+            let body = self.read_body(&send(wire));
             let m4 = Tlv::decode(&body).expect("m4");
             assert_eq!(m4.get_u8(ty::STATE), Some(4), "pair verify completed");
 
@@ -1477,5 +1772,320 @@ mod tests {
             serde_json::from_str(&text).expect("a controller must be able to parse this");
         assert!(parsed["characteristics"].is_array(), "got: {text:?}");
         assert!(text.ends_with(' '), "expected trailing pad, got: {text:?}");
+    }
+
+    /// The re-arm the audit found (A2-13): after a frame fails to
+    /// authenticate, an injected plaintext M1, with no M3 from anyone, must
+    /// not bring back a session under the controller this connection had
+    /// verified. Before the fix it did: the socket stayed open in plaintext,
+    /// Pair Verify kept the old controller's id, and the M1 sender's keys
+    /// were promoted with the old controller's admin rights.
+    #[test]
+    fn a_corrupt_frame_then_a_bare_m1_does_not_reopen_the_session() {
+        let (mut state, mut conn) = fixture();
+        let mut ctrl = Controller::new("controller-1");
+        ctrl.pair_setup(&mut conn, &mut state, CODE);
+        ctrl.pair_verify(&mut conn, &mut state);
+        assert!(conn.is_secure());
+
+        // Junk injected into the encrypted stream.
+        let out = conn.feed(&[0u8; 34], &mut state);
+        assert!(out.is_empty(), "no response to an unauthenticated frame");
+        assert!(!conn.is_secure(), "session torn down");
+        assert!(conn.is_closed(), "the socket loop is told to close");
+
+        // The injector's own M1, in plaintext.
+        let mut intruder = Controller::new("intruder");
+        let mut scalar = [0u8; 32];
+        scalar[0] = 66;
+        let intruder_pk = XPublicKey::from(&StaticSecret::from(scalar)).to_bytes();
+        let mut m1 = Tlv::new();
+        m1.push_u8(ty::STATE, 1)
+            .push(ty::PUBLIC_KEY, intruder_pk.to_vec());
+        let wire = intruder.request("POST", "/pair-verify", content_type::TLV8, &m1.encode());
+        conn.feed(&wire, &mut state);
+        assert!(!conn.is_secure(), "a bare M1 re-armed a session");
+
+        let wire = intruder.request("GET", "/accessories", content_type::JSON, b"");
+        let out = conn.feed(&wire, &mut state);
+        assert_eq!(Controller::status(&out), 470);
+    }
+
+    /// The length of the first HTTP response in `wire`, read from its
+    /// headers, so a reply that carries more after it can be split.
+    fn first_response_len(wire: &[u8]) -> usize {
+        let head_end = wire
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .expect("a header terminator")
+            + 4;
+        let head = std::str::from_utf8(&wire[..head_end]).expect("ascii headers");
+        let body_len: usize = head
+            .lines()
+            .find_map(|l| l.strip_prefix("Content-Length: "))
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(0);
+        head_end + body_len
+    }
+
+    /// Plaintext that rides in the same read as a real controller's M3 must
+    /// not run under the session that M3 opens. An on-path host that appends
+    /// a plaintext `POST /pairings` ADD_PAIRING to the M3 segment it relays
+    /// would otherwise get an admin pairing of its own, with the verified
+    /// controller's rights. The appended bytes have to authenticate as
+    /// frames; they do not, so the connection ends.
+    #[test]
+    fn plaintext_after_m3_in_the_same_read_does_not_run_as_the_controller() {
+        let (mut state, mut conn) = fixture();
+        let mut ctrl = Controller::new("controller-1");
+        ctrl.pair_setup(&mut conn, &mut state, CODE);
+
+        let mut attacker = Controller::new("attacker");
+        let mut add = Tlv::new();
+        add.push_u8(ty::STATE, 1)
+            .push_u8(ty::METHOD, method::ADD_PAIRING)
+            .push(ty::IDENTIFIER, b"attacker".to_vec())
+            .push(ty::PUBLIC_KEY, vec![7u8; 32])
+            .push_u8(ty::PERMISSIONS, 1);
+        let injected = attacker.request("POST", "/pairings", content_type::TLV8, &add.encode());
+
+        // The second request Pair Verify sends is M3; the injection rides
+        // behind it in one feed. Only the first response goes back to the
+        // controller, so its M4 reads cleanly whatever follows it.
+        let mut sent = 0;
+        let mut trailing = Vec::new();
+        ctrl.pair_verify_over(|mut wire| {
+            sent += 1;
+            if sent == 2 {
+                wire.extend_from_slice(&injected);
+            }
+            let mut reply = conn.feed(&wire, &mut state);
+            let first = first_response_len(&reply);
+            trailing = reply.split_off(first);
+            reply
+        });
+
+        assert!(
+            state.pairings.get("attacker").is_none(),
+            "plaintext after M3 ran as the verified controller"
+        );
+        assert!(trailing.is_empty(), "the injected request was answered");
+        assert!(conn.is_closed(), "the socket loop is told to close");
+        assert!(!conn.is_secure(), "the session ended");
+    }
+
+    /// A controller removed while it holds a live session (A2-14) is refused
+    /// on its next request, and its connection ends.
+    #[test]
+    fn a_removed_controller_is_refused_on_its_next_request() {
+        let (mut state, mut conn, mut ctrl) = paired_and_subscribed();
+        assert!(state.pairings.remove("controller-1"));
+
+        let wire = ctrl.request("GET", "/accessories", content_type::JSON, b"");
+        let out = conn.feed(&wire, &mut state);
+        assert_eq!(Controller::status(&out), 470);
+        assert!(!conn.is_secure(), "session ended");
+        assert!(conn.is_closed(), "the socket loop is told to close");
+        assert!(conn.notification(&state).is_none());
+    }
+
+    /// The same removal reaches the notification path, so a removed
+    /// controller that only listens stops hearing on the next tick.
+    #[test]
+    fn a_removed_controller_is_not_notified() {
+        let (mut state, mut conn, mut ctrl) = paired_and_subscribed();
+        let frame = conn.notification(&state).expect("notified while paired");
+        ctrl.read_body(&frame);
+
+        assert!(state.pairings.remove("controller-1"));
+        assert!(
+            conn.notification(&state).is_none(),
+            "removed, still notified"
+        );
+        assert!(conn.is_closed(), "the metronome is told to close it");
+        assert!(!conn.is_secure());
+    }
+
+    /// Send `POST /pairings` REMOVE_PAIRING for `id` over `ctrl`'s session and
+    /// return the reply's TLV.
+    fn remove_pairing(
+        ctrl: &mut Controller,
+        conn: &mut Connection,
+        state: &mut ServerState,
+        id: &str,
+    ) -> Tlv {
+        let mut req = Tlv::new();
+        req.push_u8(ty::STATE, 1)
+            .push_u8(ty::METHOD, method::REMOVE_PAIRING)
+            .push(ty::IDENTIFIER, id.as_bytes().to_vec());
+        let wire = ctrl.request("POST", "/pairings", content_type::TLV8, &req.encode());
+        let body = ctrl.read_body(&conn.feed(&wire, state));
+        Tlv::decode(&body).expect("tlv")
+    }
+
+    /// An admin that removes itself gets its reply over the session it
+    /// still had, and then its connection closes.
+    #[test]
+    fn a_controller_that_removes_itself_is_closed_after_the_reply() {
+        let (mut state, mut conn, mut ctrl) = paired_and_subscribed();
+        let reply = remove_pairing(&mut ctrl, &mut conn, &mut state, "controller-1");
+        assert_eq!(reply.get_u8(ty::STATE), Some(2), "the reply decrypts");
+        assert!(state.pairings.is_empty());
+        assert!(conn.is_closed());
+    }
+
+    /// The advertisement follows the pairing table while the server runs
+    /// (A2-15): the first pairing flips `sf` to 0, removing the last pairing
+    /// flips it back to 1, every config-number bump is announced, and an
+    /// unchanged table announces nothing.
+    #[test]
+    fn the_advertisement_is_refreshed_when_pairing_changes() {
+        let (mut state, mut conn) = fixture();
+        let id = state.identity.pairing_id().to_string();
+        let sf = |txt: &HashMap<String, String>| txt.get("sf").cloned();
+        let cn = |txt: &HashMap<String, String>| txt.get("c#").cloned();
+
+        let start = advertised(&state);
+        let txt = readvertisement(&id, None, start).expect("the first announcement");
+        assert_eq!(sf(&txt).as_deref(), Some("1"));
+        assert!(readvertisement(&id, Some(start), start).is_none());
+
+        let mut ctrl = Controller::new("controller-1");
+        ctrl.pair_setup(&mut conn, &mut state, CODE);
+        let paired = advertised(&state);
+        let txt = readvertisement(&id, Some(start), paired).expect("pairing is announced");
+        assert_eq!(sf(&txt).as_deref(), Some("0"));
+        assert_eq!(cn(&txt), Some(state.config_number.to_string()));
+
+        let bumped = (paired.0, paired.1 + 1);
+        let txt = readvertisement(&id, Some(paired), bumped).expect("a c# bump is announced");
+        assert_eq!(cn(&txt), Some(bumped.1.to_string()));
+
+        ctrl.pair_verify(&mut conn, &mut state);
+        remove_pairing(&mut ctrl, &mut conn, &mut state, "controller-1");
+        let unpaired = advertised(&state);
+        let txt =
+            readvertisement(&id, Some(paired), unpaired).expect("the last removal is announced");
+        assert_eq!(sf(&txt).as_deref(), Some("1"));
+    }
+
+    fn ip(last: u8) -> IpAddr {
+        IpAddr::from([192, 168, 1, last])
+    }
+
+    /// The accept loop's budget for connections that never verify (A2-16).
+    #[test]
+    fn unverified_connections_share_a_small_budget() {
+        assert_eq!(admission(&[], ip(1)), Admission::Admit);
+
+        // One peer holds its two; its third displaces its own oldest.
+        let one_peer = [(ip(9), true), (ip(1), false), (ip(1), false)];
+        assert_eq!(admission(&one_peer, ip(1)), Admission::Evict(1));
+        // Another peer is still let in beside it.
+        assert_eq!(admission(&one_peer, ip(2)), Admission::Admit);
+
+        // At the global unverified cap a newcomer displaces the oldest
+        // unverified, never a verified session.
+        let spread = [
+            (ip(9), true),
+            (ip(1), false),
+            (ip(2), false),
+            (ip(3), false),
+            (ip(4), false),
+        ];
+        assert_eq!(admission(&spread, ip(5)), Admission::Evict(1));
+
+        // Every slot taken: a squatter's slot goes; verified sessions stay.
+        let mut full: Vec<(IpAddr, bool)> = (0..MAX_CONNECTIONS).map(|_| (ip(9), true)).collect();
+        assert_eq!(admission(&full, ip(1)), Admission::Refuse);
+        full[7] = (ip(1), false);
+        assert_eq!(admission(&full, ip(2)), Admission::Evict(7));
+    }
+
+    #[test]
+    fn an_unverified_connection_has_a_deadline_and_a_verified_one_does_not() {
+        let just_under = UNVERIFIED_DEADLINE - Duration::from_secs(1);
+        assert!(!unverified_too_long(false, just_under));
+        assert!(unverified_too_long(false, UNVERIFIED_DEADLINE));
+        assert!(!unverified_too_long(true, UNVERIFIED_DEADLINE * 10));
+    }
+
+    /// Read one whole plaintext response off `sock`.
+    fn read_plain_response(sock: &mut TcpStream) -> Vec<u8> {
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            if let Ok(Some((_, used))) = Request::parse(&buf) {
+                buf.truncate(used);
+                return buf;
+            }
+            let n = sock.read(&mut chunk).expect("the accessory answers");
+            assert!(n > 0, "the accessory closed the connection");
+            buf.extend_from_slice(&chunk[..n]);
+        }
+    }
+
+    /// Read one whole sealed response off `sock` and return its body.
+    fn read_sealed_body(sock: &mut TcpStream, session: &mut Session) -> Vec<u8> {
+        let mut raw = Vec::new();
+        let mut plain = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            while let Ok(Some(frame)) = session.open_frame(&mut raw) {
+                plain.extend_from_slice(&frame);
+            }
+            if let Ok(Some((response, _))) = Request::parse(&plain) {
+                return response.body;
+            }
+            let n = sock.read(&mut chunk).expect("the accessory answers");
+            assert!(n > 0, "the accessory closed the connection");
+            raw.extend_from_slice(&chunk[..n]);
+        }
+    }
+
+    /// The lockout the audit found (A2-16), over real sockets: every slot
+    /// the accept loop had, held by peers that sent one byte and never
+    /// paired, must not stop a paired controller from verifying and reading
+    /// `/accessories`. Before the fix the 17th connection was dropped at
+    /// accept.
+    #[test]
+    fn idle_unverified_sockets_do_not_lock_a_controller_out() {
+        let (mut state, mut conn) = fixture();
+        let mut ctrl = Controller::new("controller-1");
+        ctrl.pair_setup(&mut conn, &mut state, CODE);
+
+        let server = serve_with(
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            state,
+            PacingConfig::default(),
+            |_| Vec::new(),
+            false,
+        )
+        .expect("bind");
+        let addr = server.local_addr();
+
+        let mut squatters = Vec::new();
+        for _ in 0..MAX_CONNECTIONS {
+            let mut s = TcpStream::connect(addr).expect("connect");
+            s.write_all(b"G").expect("one byte");
+            squatters.push(s);
+        }
+
+        let mut sock = TcpStream::connect(addr).expect("connect");
+        sock.set_read_timeout(Some(Duration::from_secs(10)))
+            .expect("timeout");
+        ctrl.pair_verify_over(|wire| {
+            sock.write_all(&wire).expect("write");
+            read_plain_response(&mut sock)
+        });
+
+        let wire = ctrl.request("GET", "/accessories", content_type::JSON, b"");
+        sock.write_all(&wire).expect("write");
+        let session = ctrl.session.as_mut().expect("session");
+        let doc = String::from_utf8(read_sealed_body(&mut sock, session)).expect("utf8");
+        assert!(doc.contains("Porch Canary"), "got: {doc}");
+
+        server.stop();
+        drop(squatters);
     }
 }

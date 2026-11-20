@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "canary/config.h"
+#include "canary/detect_config.h"       // detect().beacon_detect (owner opt-in)
 #include "canary/witness.h"             // chain_length(), ready()
 #include "canary/diagnostics.h"         // diag::get().level -> degraded flag
 #include "canary/net/wifi_mgr.h"        // wifi_connected() -> on_wifi_sta flag
@@ -28,7 +29,8 @@ bool    s_fp_valid = false;   // fp2 captured from a ready witness identity
 uint8_t s_fp0 = 0;
 uint8_t s_fp1 = 0;
 
-// Live detection state (fleet_beacon_note_detection).
+// Live detection state (fleet_beacon_note_detection). Held cleared while the
+// owner has not opted in (share_detection), so nothing below ever sees it.
 bool     s_det_active = false;
 uint8_t  s_det_class  = FLEET_BEACON_DETECT_NONE;
 int      s_det_score  = -1;
@@ -62,6 +64,11 @@ void capture_fp() {
   s_fp_valid = true;
 }
 
+// The owner's opt-in (detect_config.h beacon_detect, default off). The
+// beacon is cleartext on every band, so a live detection is broadcast only
+// when the owner turned this on.
+bool share_detection() { return canary::cfg::detect().beacon_detect; }
+
 }  // namespace
 
 size_t fleet_beacon_payload_build(uint8_t out[FLEET_BEACON_MFG_V2_LEN]) {
@@ -77,7 +84,10 @@ size_t fleet_beacon_payload_build(uint8_t out[FLEET_BEACON_MFG_V2_LEN]) {
   if (canary::net::improv_ble::setup_open()) {
     flags |= FLEET_BEACON_FLAG_SETUP_OPEN;   // the Bluetooth setup door is open
   }
-  if (s_det_active) {
+  // Checked here as well as at the input, so turning the opt-in off clears
+  // the next frame even before the next vision tick feeds a new state.
+  const bool det = s_det_active && share_detection();
+  if (det) {
     flags |= FLEET_BEACON_FLAG_ALERT;
   }
 
@@ -86,8 +96,8 @@ size_t fleet_beacon_payload_build(uint8_t out[FLEET_BEACON_MFG_V2_LEN]) {
   uint8_t payload[FLEET_BEACON_PAYLOAD_V2_LEN];
   fleet_beacon_build_v2(payload, flags, /*battery_pct=*/-1, /*health_pct=*/-1,
                         chain_height, s_fp0, s_fp1,
-                        s_det_active ? s_det_class : FLEET_BEACON_DETECT_NONE,
-                        s_det_active ? s_det_score : -1);
+                        det ? s_det_class : FLEET_BEACON_DETECT_NONE,
+                        det ? s_det_score : -1);
 
   // The company id belongs in the buffer even though NimBLE prepends its own
   // on air: carrying the FULL blob is what lets a UDP datagram and a BLE
@@ -102,6 +112,14 @@ uint32_t fleet_beacon_payload_generation() { return s_generation; }
 
 void fleet_beacon_note_detection(bool active, uint8_t detect_class,
                                  int score_pct, uint32_t now) {
+  // Opted out: record "nothing seen". Gating the input, not just the bytes,
+  // also keeps the generation still, so no carrier sends an off-schedule
+  // frame whose timing alone would mark a detection edge.
+  if (!share_detection()) {
+    active = false;
+    detect_class = FLEET_BEACON_DETECT_NONE;
+    score_pct = -1;
+  }
   // An edge is what a display must hear NOW: presence flipping, or the class
   // changing mid-presence. A mere confidence wobble rides the next refresh.
   const bool edge = (active != s_det_active) ||

@@ -33,7 +33,7 @@ Loads when you touch a file here; the root `AGENTS.md` still applies.
   published, where "publishing" silently overwrites.
 - Before touching an app build or release workflow (Flasher, Lab, iPhone,
   iPad, tvOS, Mac), grep [`RELEASE_LESSONS.md`](RELEASE_LESSONS.md) for your
-  target (`rg <target> .github/RELEASE_LESSONS.md`); it holds 107 dated entries
+  target (`rg <target> .github/RELEASE_LESSONS.md`); it holds 111 dated entries
   and is not read whole. What holds on every platform: copy bundled payloads
   with `cp -RL` (a dangling symlink makes the bundler abort with "resource …
   doesn't exist"); pin or log every upstream ref; prove the bundle with the

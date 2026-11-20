@@ -235,6 +235,36 @@ fn main() -> Result<()> {
                 if let Some(mode) = bundle.receipt_entry.receipt.auth_mode {
                     println!("bundle authorization: {:?}", mode);
                 }
+                let receipt = &bundle.receipt_entry.receipt;
+                if let Some(op) = receipt.context.as_ref().and_then(|c| c.operator.as_ref()) {
+                    let safe = witness_kernel::break_glass::display_safe;
+                    println!(
+                        "  disclosure context: {} ({}{}) — declared by the exporting operator, \
+                         not trustee-consented",
+                        safe(&op.requester_name),
+                        safe(&op.reason_code),
+                        op.case_ref
+                            .as_deref()
+                            .map(|c| format!(", case {}", safe(c)))
+                            .unwrap_or_default()
+                    );
+                }
+                if let Some(grant) = receipt.authorizing_receipt {
+                    println!(
+                        "  authorizing grant: {} (consent recorded on the grant)",
+                        hex::encode(grant)
+                    );
+                }
+                if receipt
+                    .context
+                    .as_ref()
+                    .is_some_and(|c| c.recipient_commitment.is_some())
+                {
+                    println!(
+                        "  recipient: committed in the signed receipt (named only in a handoff \
+                         sidecar)"
+                    );
+                }
                 (
                     bundle.receipt_entry.receipt.artifact_hash,
                     Some(bundle.receipt_entry.entry_hash),

@@ -401,7 +401,11 @@ pub struct EnvelopeReport {
     pub break_glass_denied: u64,
     /// `TokenRedeemed` rows: tokens actually spent at the unseal gate.
     pub break_glass_redeemed: u64,
+    /// `Unsealed` rows: decrypts the device recorded after a redemption.
+    pub break_glass_unsealed: u64,
     pub export_receipts: u64,
+    /// Export receipts that name their authorizing grant (R0–R6 held).
+    pub export_receipts_authorized: u64,
     pub pq_checked: bool,
     pub warnings: Vec<String>,
 }
@@ -590,7 +594,8 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         match receipt.outcome {
             crate::BreakGlassOutcome::Granted => granted += 1,
             crate::BreakGlassOutcome::Denied { .. } => denied += 1,
-            crate::BreakGlassOutcome::TokenRedeemed { .. } => {}
+            crate::BreakGlassOutcome::TokenRedeemed { .. }
+            | crate::BreakGlassOutcome::Unsealed { .. } => {}
         }
         // Chain-internal redemption rules (one redemption per nonce and per
         // grant, restating the grant it redeems). The burn table is not part
@@ -607,6 +612,7 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
             })?;
     }
     let redeemed = redemptions.redeemed();
+    let unsealed = redemptions.unsealed();
 
     // 6. Export receipts chain.
     let exp_iter = envelope.ledgers.export_receipts.entries.iter().map(|e| {
@@ -634,6 +640,26 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         envelope.ledgers.export_receipts.head_hash,
         exp_head,
     )?;
+    // 6b. Export authorizations (R0–R6): the envelope carries both ledgers
+    // from genesis, so this walk gives the verdict `log_verify` gives.
+    let export_receipts_authorized = verify::check_export_authorizations(
+        &redemptions,
+        envelope
+            .ledgers
+            .export_receipts
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(idx, e)| (idx as i64, e.payload_json.as_str())),
+    )
+    .map_err(|(idx, why)| {
+        chain_fail(
+            "export_receipts",
+            idx as usize,
+            verify::FailureKind::ExportAuthorization,
+            format!("export receipt authorization invalid: {}", why),
+        )
+    })?;
 
     // 7. Artifact binding + export-receipt entry signature.
     let artifact_bytes = serde_json::to_vec(&envelope.artifact)?;
@@ -749,7 +775,9 @@ pub fn verify_envelope(envelope: &EvidenceEnvelope, mode: SignatureMode) -> Resu
         break_glass_granted: granted,
         break_glass_denied: denied,
         break_glass_redeemed: redeemed,
+        break_glass_unsealed: unsealed,
         export_receipts: envelope.ledgers.export_receipts.entries.len() as u64,
+        export_receipts_authorized,
         pq_checked,
         warnings,
     })

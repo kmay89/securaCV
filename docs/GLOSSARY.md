@@ -88,6 +88,34 @@ the Lab.
 opens — by quorum, never by one person.
 → [`spec/break_glass.md`](../spec/break_glass.md)
 
+**Handoff sidecar** — The file that travels with every disclosed file,
+`<file>.securacv-handoff.json` (0600): the device-signed rows of the
+disclosure that released it, verbatim — the trustees' grant, the
+redemption, and the unseal record or export receipt — plus anchors
+referenced by hash. Unsigned itself: a carrier, and everything it does not
+embed signed is labeled *declared*. Always two words.
+→ [handoff sidecars](handoff_sidecars.md)
+
+**Unseal record** — The device-signed `Unsealed` row the kernel appends
+after a successful decrypt and before any byte is written: "the device
+decrypted envelope E, under redemption R, to the plaintext this salted
+commitment fixes." The salt lives only in the handoff sidecar, so the
+ledger holds no media fingerprint.
+→ [`spec/break_glass.md`](../spec/break_glass.md)
+
+**Recipient commitment** — A salted SHA-256 commitment to the recipient the
+operator *declared* at disclosure, signed into the unseal record or export
+receipt; the name and salt live only in the handoff sidecar. It fixes the
+declaration against later substitution — it does not verify who received
+the file.
+→ [handoff sidecars](handoff_sidecars.md)
+
+**Authorizing receipt** — The field of a quorum export's receipt that names
+the `Granted` break-glass receipt whose token it spent. The requester's
+trustee-consented context stays on that grant, named by reference, never
+copied into the export ledger.
+→ [`spec/evidence_envelope.md`](../spec/evidence_envelope.md)
+
 **Sealed snapshot** — Not the Vault. One camera frame a canary-wap seals when
 an alarm it was armed for fires, encrypted to one person's X25519 key; the
 Canary keeps only the public half, so it cannot open its own file. Being
@@ -618,6 +646,39 @@ ledger's head is the anchor subject `clock_provenance_head`. It answers "the
 device's clock was wrong" with a signed measurement; it never makes an
 event's 10-minute bucket finer. → [timestamping](timestamping.md) ·
 [design](design/clock_provenance.md)
+
+**OpenTimestamps proof** — A `.ots` file over a SHA-256 digest: a chain of
+hash operations from the digest to a calendar's commitment and, once the
+calendar has committed it, to a Bitcoin block's merkle root. `anchor-all`
+stores one per (subject, calendar) in `ots_anchors`; a court kit packages
+them as `anchors/ots-NNNN-<subject>.ots`. Once its path is checked against a
+block header you trust, it shows existence before that block, never identity;
+a pending proof is not yet evidence of time. → [timestamping](timestamping.md) ·
+[design](design/opentimestamps_leg.md)
+
+**Calendar (OpenTimestamps)** — A public server that aggregates submitted
+commitments into one Bitcoin transaction. A relay, not an authority: once a
+proof reaches a Bitcoin block it needs no trust in the calendar. Declared in
+the anchor policy's `ots` object by name and URL. →
+[timestamping](timestamping.md)
+
+**Commitment (OpenTimestamps)** — What a calendar receives:
+`SHA256(hash ‖ 16 fresh random bytes)`, a fresh nonce per subject, calendar
+and run, so no calendar sees a ledger head or an empty-ledger sentinel. →
+[timestamping](timestamping.md)
+
+**Attests Bitcoin block N / Confirmed in Bitcoin block N** — "Attests": the
+proof carries a Bitcoin attestation at height N, a claim anyone can write
+into a file. "Confirmed": `log_anchor verify` matched the proof's path to the
+merkle root of block N's header, supplied by the verifier
+(`--bitcoin-headers`). Only confirmed rows count toward an anchor policy;
+court kits say "attests", because the reader runs the comparison. →
+[timestamping](timestamping.md)
+
+**Pending (not yet in a Bitcoin block)** — An OpenTimestamps proof whose only
+attestation names a calendar that received the commitment. Not evidence of
+time; `anchor-all` polls it for an upgrade for 7 days. →
+[timestamping](timestamping.md)
 
 **Empty-ledger sentinel** — The fixed per-subject digest `anchor-all` requests
 when a ledger has no head yet, so a scheduled run always sends the same number
