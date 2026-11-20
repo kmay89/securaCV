@@ -924,7 +924,9 @@ jobs:
           key: cargo-about-${{ env.CARGO_ABOUT_VERSION }}-${{ runner.os }}
       - name: Install cargo-about
         if: steps.tool.outputs.cache-hit != 'true'
-        run: cargo install cargo-about --version "$CARGO_ABOUT_VERSION" --locked
+        # cargo-about builds its binary only with the `cli` feature: without
+        # it, `cargo install` compiles the library, warns, and installs nothing.
+        run: cargo install cargo-about --version "$CARGO_ABOUT_VERSION" --locked --features cli
       - name: Write THIRD_PARTY_LICENSES.html
         run: bash .github/scripts/third_party_notices.sh flasher "$RUNNER_TEMP/notices/THIRD_PARTY_LICENSES.html"
       - name: Upload the notices as a workflow artifact

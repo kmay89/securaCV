@@ -1,4 +1,33 @@
 <!-- The Supervisor shows this file on the app's page after an update. Newest first. -->
+## 0.9.3
+
+- **Frigate's per-camera MQTT images are off in every config the wizard
+  writes.** Frigate otherwise publishes a cropped JPEG of every object it
+  tracks, per camera, to the broker, a switch separate from snapshots. The
+  configs the wizard writes now set `mqtt: enabled: false` on each camera,
+  and where Frigate keeps its own config the done screen says to turn
+  those images off there too.
+- **Exporting evidence is for administrators.** The integration's Export
+  evidence action and button, and the staged-update action, now refuse a
+  Home Assistant user who is not an administrator. An export prunes only
+  its own entry's oldest packs, never another kernel entry's.
+- **The kernel, the integration and the app move to 0.9.3 together.**
+
+## 0.9.2
+
+- **"Only Frigate alerts" is checked against your own Frigate config.**
+  Where Frigate keeps its own camera config, the wizard now reads its
+  record setting (a camera's own `record.enabled`, else the top-level one;
+  Frigate's default is off) for the cameras SecuraCV seals. Frigate creates
+  alerts only for cameras that record, so when it records none of them the
+  choice is not applied, every tracked object is sealed instead, and the
+  done screen says why and how to turn alerts on. When only some of them
+  record, the choice is kept and the screen names the cameras that will
+  seal nothing. A config the wizard cannot read, or a record setting it
+  cannot resolve (YAML anchors, aliases, merge keys, a templated value), is
+  taken at your word, as before.
+- **The kernel, the integration and the app move to 0.9.2 together.**
+
 ## 0.9.1
 
 - **The encrypted database runs on a fixed SQLite.** The kernel inside the

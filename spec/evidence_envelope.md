@@ -173,6 +173,34 @@ part of the signed format. Verifiers predating these fields will reject bundles 
 (re-serialization drops the unknown fields and the entry hash no longer matches); verify such
 bundles with a current verifier.
 
+Three more OPTIONAL trailing fields follow, in this order, each serialized only when present:
+
+- `token_id`: the paired bearer's id (8 hex) when `auth_mode` is `"paired"`.
+- `context`: `{ operator?, recipient_commitment? }`, declared at export. `operator` is a
+  self-export's own declaration (`{requester_name, reason_code, case_ref, requester_key}`, the
+  last two written as `null` when absent) and is never trustee-consented; `recipient_commitment`
+  is a salted 32-byte commitment to a declared recipient (the name and salt travel only in the
+  handoff sidecar, `docs/handoff_sidecars.md`). Both members are skipped when absent; the kernel
+  never writes `"context":{}`.
+- `authorizing_receipt`: `auth_mode: "break_glass"` only — the 32-byte entry hash of the
+  `Granted` break-glass receipt whose token this export redeemed. LAST.
+
+A quorum export names its operator by reference (`authorizing_receipt`) and never restates it:
+every verifier fails a receipt carrying `context.operator` beside `authorizing_receipt`. Receipts
+without the new fields serialize byte-identically to before (pinned in Rust and JS).
+
+**The `Unsealed` outcome.** The `break_glass_receipts` ledger may carry a third receipt outcome
+beside `Granted`/`Denied` and `TokenRedeemed`: `{"Unsealed": {redemption_entry_hash,
+plaintext_commitment, recipient_commitment?}}`, the device's record that it decrypted the
+redemption's envelope to the plaintext a salted commitment fixes. Verifiers walking the ledger
+apply U1–U5 (the row names an earlier redemption, at most one per redemption, never an
+`export:events` redemption, restates the redemption's envelope, ruleset, request hash and bucket,
+carries no approvals or trustees; failure kind `token_redemption`) and, across both ledgers,
+R0–R6 on every export receipt that carries `authorizing_receipt` (failure kind
+`export_authorization`; `spec/break_glass.md` "Auditing receipts" lists them). A verifier built
+before the `Unsealed` outcome fails to parse such a row; see the upgrade order in
+`docs/handoff_sidecars.md`.
+
 ## 9. `whole_envelope_digest` — Tier 2, canonical
 
 The single fingerprint a custodian cites (e.g. in court). Computed as:

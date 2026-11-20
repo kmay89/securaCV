@@ -87,7 +87,7 @@ final class DeviceStore: ObservableObject {
 
     /// Build an authed API client for a paired device, if it's HTTP-pairable.
     func api(for ref: PairedDeviceRef) throws -> DeviceAPI {
-        guard let url = ref.baseURL else { throw DeviceError.notPairable }
+        guard let url = ref.baseURL else { throw DeviceError.noDirectAddress }
         guard let token = token(for: ref.id) else { throw DeviceError.notPairable }
         // An https ref with no fingerprint throws .tlsPinMissing here — the
         // refusal is DeviceAPI's, surfaced wherever this call's error is shown.

@@ -27,13 +27,15 @@ profiles:
     notes: XIAO ESP32-S3 Sense — OPI PSRAM enabled (required for camera streaming)
     fqbn: esp32:esp32:XIAO_ESP32S3:PSRAM=opi,FlashSize=8M,CDCOnBoot=default,USBMode=hwcdc
     platforms:
-      - platform: esp32:esp32 (3.3.8)
+      - platform: esp32:esp32 (3.3.11)
         platform_index_url: https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
     # esp_camera ships inside the esp32 core (3.x), but NimBLE-Arduino (2.x)
     # is a separate library the FULL profile's BLE stack needs — ble_config.h
-    # errors at compile time without it. This matches the set the CI
-    # arduino-cli build installs (Crypto, ArduinoJson, NimBLE-Arduino).
+    # errors at compile time without it. These are the exact versions the
+    # WAP rows of firmware-release.yml, flasher-release.yml and ram_audit.yml
+    # install; scripts/gen_firmware_sbom.py fails generation when a row's pin
+    # and this profile's differ.
     libraries:
-      - ArduinoJson
-      - Crypto
-      - NimBLE-Arduino
+      - ArduinoJson (7.4.3)
+      - Crypto (0.4.0)
+      - NimBLE-Arduino (2.5.2)

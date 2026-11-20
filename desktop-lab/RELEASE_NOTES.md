@@ -16,6 +16,52 @@ version, newest first. Same contract as the Flasher's
 
 Heading grammar is `## <version> — <YYYY-MM-DD>`.
 
+## 0.4.4 — 2026-11-16
+
+**Firmware 2.4.21, and a hub that keeps camera images off its broker.**
+
+- **A hub it sets up keeps Frigate's camera images off the broker.** The
+  Frigate config the hub setup writes now also turns off each camera's
+  MQTT images, the cropped picture of every tracked object that Frigate
+  otherwise publishes to your broker (a switch separate from snapshots).
+  A camera you add beside the example needs the same line, and the setup
+  step says so.
+- **Firmware 2.4.21** is the catalog this version carries. In it: a
+  display no longer lets an unsigned nearby broadcast raise a lasting red
+  alarm or push a real Canary off its screen; a Canary Vision no longer
+  broadcasts whether a room is occupied unless you turn on **Broadcast
+  detection**; a display's settings and logs refuse a page served under
+  another name; the WAP's 10-second hold also clears the camera vault's
+  key and a custom update server; and every library in the release
+  builds is pinned to an exact version.
+
+## 0.4.3 — 2026-11-16
+
+**Hub setup from the hub's own console says plainly what is left for you.**
+
+- **The MQTT step is left for one click, with the reason.** The hub plan the
+  Lab carries no longer attempts the MQTT connection when it runs from the
+  hub's host console, where Home Assistant's API refuses Core's own token.
+  It installs everything else and tells you to press **Add** on the MQTT
+  card under Settings → Devices & Services, then Submit.
+- **Firmware 2.4.20** is the catalog this version carries.
+- **Third-party notices ship beside the installers** as
+  `THIRD_PARTY_LICENSES.html`, for the first time.
+
+**Coming from 0.4.1, this update also brings 0.4.2**, which was built but
+never published:
+
+- Leaving or quitting a running flash asks first, and the updater waits
+  until the flash is done.
+- The status strip updates in place and speaks only when something
+  changes; the Home and Your fleet no longer redraw under the keyboard.
+- Open links and the hub address are limited to your own network.
+- The flash bench names settings too long for the board and refuses a
+  backup made for another chip.
+- The app's window is granted only events and opening links.
+- On Linux the serial rule no longer opens a Canary's port to every
+  account (over SSH, join the `dialout` group once).
+
 ## 0.4.2 — 2026-11-15
 
 **A flash in progress is no longer lost by accident, the status strip stops
