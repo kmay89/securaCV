@@ -1,6 +1,48 @@
 # Changelog
 
 ## [Unreleased]
+### Trustee keys can be wrapped at rest: `trustee keygen`, `wrap` and `pubkey`; a passphrase comes from the terminal or `--passphrase-fd`, never argv or the environment
+
+- **`break_glass trustee keygen --id ID --output F`**, run by the trustee on
+  their own machine, mints an Ed25519 key, wraps it under a passphrase and
+  writes one line, `securacv-trustee-key:v1 <hex>`, mode 0600, never
+  overwriting. It prints the public key and its fingerprint, never the
+  secret, so a trustee no longer needs an external Ed25519 tool to enroll.
+  **`trustee wrap --signing-key OLD --id ID --output F`** migrates a
+  plaintext key (and says the plaintext file is yours to destroy; it is not
+  deleted). **`trustee pubkey --signing-key F`** prints the key a file signs
+  with.
+- **The container, TKG1**, is the vault keyguard's MKG1 layout under its own
+  magic and AAD domain: Argon2id (64 MiB, 3 passes, 1 lane, any other
+  parameters refused before derivation) and ChaCha20-Poly1305 over the
+  32-byte seed, followed by a public trailer naming the trustee id and public
+  key. The trailer is the AAD, so a renamed trustee or a swapped key does not
+  open, and the decrypted seed must yield the recorded key.
+- **`approve` and `policy approve`** read either form from `--signing-key`
+  and take `--passphrase-fd N`. A plaintext key still signs and prints
+  `WARNING: {path} is an unwrapped trustee key — anyone who copies it can
+  sign as this trustee. Wrap it: break_glass trustee wrap --signing-key
+  {path} --id <id> --output <id>.tkey`. With a wrapped key, no terminal and
+  no fd, the command refuses: `wrapped trustee key needs a passphrase: run
+  on a terminal or pass --passphrase-fd`.
+- **The passphrase prompt.** While echo is off, Ctrl-C, SIGQUIT, SIGTERM
+  and SIGHUP put the terminal back before the command dies of the signal,
+  and Ctrl-Z is ignored, so the process is never stopped with echo off and
+  resumed reading with it on. A line over 1024 bytes is refused and the rest
+  of it discarded from the terminal, so the shell never reads it. An fd
+  named by `--passphrase-fd` that is itself a terminal is read with echo
+  off too. `approve` and `policy approve` always run their stage plain, so
+  no spinner redraws over the prompt, and the next steps `request` and
+  `policy propose` print name `--signing-key <name>.tkey`.
+- **`trustee enroll --generate` is deprecated** and prints a warning: it
+  leaves the operator holding the trustee's secret.
+- **Nothing changes on the hub.** The quorum policy records nothing about
+  wrapping (the hub cannot check it), approvals are byte-identical, and the
+  vault keyguard (MKG1) is unchanged; a test pins its bytes against the
+  pre-change encoder. The ceremony runbook's trustee-key rows move from
+  **GAP** to **PROC** + **CODE** tool, and the practice statement's 6.2
+  declares key protection per trustee. Hardware trustee keys remain a gap.
+
 ### The witness refuses a hash that failed and a key draw that came out flat, a Chirp suppress vote needs a presence row, canary-wap reads settings keys as keys and measures its answers, Bluetooth refuses what its own link did not set up, an Opera joiner keeps its opera from a stranger, the dashboards hold their raw splices, Home Assistant reads only what was sent, the Vision app asks for a `.local` name, the slot check warns early, and the parity ledgers say what the code does (#1966, wave 25)
 
 - **The witness refuses a SHA-256 that failed (F455).** The canary (PIO)
@@ -115,47 +157,30 @@
   Arduino compiles are CI's, and `BUILD_PROFILE_MINIMAL` is compiled by no
   job. Nothing was run on a device, and no new bench row has been run.
 
-### Trustee keys can be wrapped at rest: `trustee keygen`, `wrap` and `pubkey`; a passphrase comes from the terminal or `--passphrase-fd`, never argv or the environment
+### One name per Lab bench, and three app screens say what their search does
 
-- **`break_glass trustee keygen --id ID --output F`**, run by the trustee on
-  their own machine, mints an Ed25519 key, wraps it under a passphrase and
-  writes one line, `securacv-trustee-key:v1 <hex>`, mode 0600, never
-  overwriting. It prints the public key and its fingerprint, never the
-  secret, so a trustee no longer needs an external Ed25519 tool to enroll.
-  **`trustee wrap --signing-key OLD --id ID --output F`** migrates a
-  plaintext key (and says the plaintext file is yours to destroy; it is not
-  deleted). **`trustee pubkey --signing-key F`** prints the key a file signs
-  with.
-- **The container, TKG1**, is the vault keyguard's MKG1 layout under its own
-  magic and AAD domain: Argon2id (64 MiB, 3 passes, 1 lane, any other
-  parameters refused before derivation) and ChaCha20-Poly1305 over the
-  32-byte seed, followed by a public trailer naming the trustee id and public
-  key. The trailer is the AAD, so a renamed trustee or a swapped key does not
-  open, and the decrypted seed must yield the recorded key.
-- **`approve` and `policy approve`** read either form from `--signing-key`
-  and take `--passphrase-fd N`. A plaintext key still signs and prints
-  `WARNING: {path} is an unwrapped trustee key — anyone who copies it can
-  sign as this trustee. Wrap it: break_glass trustee wrap --signing-key
-  {path} --id <id> --output <id>.tkey`. With a wrapped key, no terminal and
-  no fd, the command refuses: `wrapped trustee key needs a passphrase: run
-  on a terminal or pass --passphrase-fd`.
-- **The passphrase prompt.** While echo is off, Ctrl-C, SIGQUIT, SIGTERM
-  and SIGHUP put the terminal back before the command dies of the signal,
-  and Ctrl-Z is ignored, so the process is never stopped with echo off and
-  resumed reading with it on. A line over 1024 bytes is refused and the rest
-  of it discarded from the terminal, so the shell never reads it. An fd
-  named by `--passphrase-fd` that is itself a terminal is read with echo
-  off too. `approve` and `policy approve` always run their stage plain, so
-  no spinner redraws over the prompt, and the next steps `request` and
-  `policy propose` print name `--signing-key <name>.tkey`.
-- **`trustee enroll --generate` is deprecated** and prints a warning: it
-  leaves the operator holding the trustee's secret.
-- **Nothing changes on the hub.** The quorum policy records nothing about
-  wrapping (the hub cannot check it), approvals are byte-identical, and the
-  vault keyguard (MKG1) is unchanged; a test pins its bytes against the
-  pre-change encoder. The ceremony runbook's trustee-key rows move from
-  **GAP** to **PROC** + **CODE** tool, and the practice statement's 6.2
-  declares key protection per trustee. Hardware trustee keys remain a gap.
+- **The Lab's benches.** `canary-local/build-line.json` renamed seven benches
+  and keeps the old names as `wasNamed`; the page titles followed in #1991
+  and the pages' own headlines had not. A tab that said "Flash over USB"
+  opened a page headed "The Canary Nursery", "Boards" opened "The Board
+  Room", "Set up break-glass" opened "The Operator's Bench", and the same
+  went for Meet the fleet, First boot, Watch it work and What the mic hears.
+  The room led with "Canary Lab" under an "ERRERLabs" kicker, and the site
+  map with a slogan. Each `<h1>` now leads with the name its `<title>`
+  leads with, and the links between benches use it (the fleet page's
+  buttons, five footers, four "next" lists, and `gen_start.py`'s wiring
+  link). `tools/gen_head.py --check` refuses a headline that does not, and
+  `tests/head.test.js` holds the rule on its own reading of the pages. The
+  flasher keeps "where Canaries hatch"; its screens still call it the
+  Nursery, and its lede now introduces the nickname.
+- **The apps.** Two iPhone screens said "nothing leaves your home" about a
+  Bluetooth search, and the Witness Wall's searching card said "nothing
+  leaves this room" while its settings screen takes a hub address somewhere
+  else. They now say "a short-range search that uses no internet" and "The
+  search stays on your network." `scripts/tests/test_device_copy_claims.py`
+  reads the iPhone, watch and Apple TV sources and takes "this room" with
+  "your home". The edits are string literals and were not compiled here; the
+  iOS and tvOS workflows build them.
 
 ### Compliance maps say which mechanism stands behind which clause, and never more
 
