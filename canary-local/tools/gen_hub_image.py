@@ -377,7 +377,7 @@ def main() -> None:
                 "Inherited from HAOS: A/B rollback + Supervisor watchdog + hands-off updates; our "
                 "add-on rides the Supervisor update channel."
             ),
-            "custody": "No cloud, nothing phones home; the image is a post-processed pinned official artifact (Inv. IV).",
+            "custody": "No cloud account and no SecuraCV server in the loop; the image is a post-processed pinned official artifact (Inv. IV).",
         },
         "meta": {
             "design": "docs/design/raspberry_pi_hub_flashing.md",

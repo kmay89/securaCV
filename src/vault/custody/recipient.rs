@@ -637,12 +637,10 @@ impl RecipientSecret {
 
 #[cfg(feature = "pqc-vault")]
 fn generate_mlkem() -> Result<(Vec<u8>, Zeroizing<Vec<u8>>), CustodyError> {
-    use pqcrypto_traits::kem::{PublicKey as _, SecretKey as _};
-    let (pk, sk) = pqcrypto_mlkem::mlkem768::keypair();
-    Ok((
-        pk.as_bytes().to_vec(),
-        Zeroizing::new(sk.as_bytes().to_vec()),
-    ))
+    // The vault's own ML-KEM-768 keygen: the same `ml-kem` crate and the
+    // same stored encoding (the 2400-byte decapsulation key).
+    let kp = crate::vault::crypto::KemKeypair::generate();
+    Ok((kp.public_bytes(), Zeroizing::new(kp.secret_bytes())))
 }
 
 #[cfg(not(feature = "pqc-vault"))]

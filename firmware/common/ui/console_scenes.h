@@ -200,8 +200,8 @@ inline void welcome_card(const Renderer& r, const char* device_id,
   center_into(line, sizeof line, "chirp!", inner - 2);
   row(r, inner, COL_MOSS, line);               // a little hello, centered under the bird
   row_blank(r, inner);
-  row(r, inner, COL_NONE, "I make tamper-proof records of what I see -");
-  row(r, inner, COL_NONE, "so nobody can change the story later.");
+  row(r, inner, COL_NONE, "I make tamper-evident records of what I see");
+  row(r, inner, COL_NONE, "so any edit to the story shows up later.");
   row_blank(r, inner);
   // The one thing to do, made obvious with an arrow — works for a first-timer.
   row(r, inner, COL_TEXT, "New here? Everything I do, explained:");

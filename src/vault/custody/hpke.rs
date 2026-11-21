@@ -382,14 +382,19 @@ pub(crate) fn seal_box2(
     pt: &[u8],
     rng: &mut dyn CustodyRng,
 ) -> Result<(Vec<u8>, Vec<u8>), CustodyError> {
-    use pqcrypto_traits::kem::{Ciphertext as _, PublicKey as _, SharedSecret as _};
-    let pk =
-        pqcrypto_mlkem::mlkem768::PublicKey::from_bytes(pk_m).map_err(|_| CustodyError::MlKem)?;
-    let (shared, ct_m) = pqcrypto_mlkem::mlkem768::encapsulate(&pk);
+    use ml_kem::{Encapsulate, EncapsulationKey768, TryKeyInit};
+    use zeroize::Zeroize;
+    // `ML-KEM.Encaps` (FIPS 203 section 7.2) through the same `ml-kem`
+    // crate the vault uses; the encapsulation key check of that section
+    // (length and modulus) is the import.
+    let pk = EncapsulationKey768::new_from_slice(pk_m).map_err(|_| CustodyError::MlKem)?;
+    let (ct_m, mut shared) =
+        pk.encapsulate_with_rng(&mut rand::rand_core::UnwrapErr(rand::rngs::SysRng));
     let mut ss_m = Zeroizing::new([0u8; 32]);
-    ss_m.copy_from_slice(shared.as_bytes());
+    ss_m.copy_from_slice(&shared[..]);
+    shared.zeroize();
     let ikm_e = Zeroizing::new(random_array::<32>(rng));
-    seal_box2_psk_layer_derand(pk_x, &ss_m, ct_m.as_bytes(), info, aad, pt, &ikm_e)
+    seal_box2_psk_layer_derand(pk_x, &ss_m, &ct_m[..], info, aad, pt, &ikm_e)
 }
 
 /// Open box 2: decapsulate `ct_M` with `sk_m`, then open the HPKE PSK
@@ -403,17 +408,27 @@ pub(crate) fn open_box2(
     aad: &[u8],
     ct: &[u8],
 ) -> Result<Zeroizing<Vec<u8>>, CustodyError> {
-    use pqcrypto_traits::kem::{Ciphertext as _, SecretKey as _, SharedSecret as _};
+    use ml_kem::{Decapsulate, DecapsulationKey768, ExpandedDecapsulationKey, MlKem768};
+    use zeroize::Zeroize;
     if enc.len() != BOX2_ENC_LEN {
         return Err(CustodyError::HpkeOpen);
     }
-    let sk =
-        pqcrypto_mlkem::mlkem768::SecretKey::from_bytes(sk_m).map_err(|_| CustodyError::MlKem)?;
-    let ct_m = pqcrypto_mlkem::mlkem768::Ciphertext::from_bytes(&enc[..MLKEM768_CT_LEN])
+    // The stored 2400-byte decapsulation key, imported the way the vault's
+    // `KemKeypair::from_bytes` imports it (FIPS 203 section 7.3's hash
+    // check is the import); `ml-kem` marks the expanded import deprecated
+    // in favor of seeds, and a stored key has no seed to return to.
+    let mut encoded =
+        ExpandedDecapsulationKey::<MlKem768>::try_from(sk_m).map_err(|_| CustodyError::MlKem)?;
+    #[allow(deprecated)]
+    let decoded = DecapsulationKey768::from_expanded(&encoded);
+    encoded.zeroize();
+    let sk = decoded.map_err(|_| CustodyError::MlKem)?;
+    let mut shared = sk
+        .decapsulate_slice(&enc[..MLKEM768_CT_LEN])
         .map_err(|_| CustodyError::MlKem)?;
-    let shared = pqcrypto_mlkem::mlkem768::decapsulate(&ct_m, &sk);
     let mut ss_m = Zeroizing::new([0u8; 32]);
-    ss_m.copy_from_slice(shared.as_bytes());
+    ss_m.copy_from_slice(&shared[..]);
+    shared.zeroize();
     open_box2_psk_layer(sk_x, &ss_m, enc, info, aad, ct)
 }
 
@@ -691,31 +706,23 @@ mod tests {
     #[cfg(feature = "pqc-vault")]
     #[test]
     fn box2_round_trip() {
-        use pqcrypto_traits::kem::{PublicKey as _, SecretKey as _};
-        let (pk_m, sk_m) = pqcrypto_mlkem::mlkem768::keypair();
+        let kp = crate::vault::crypto::KemKeypair::generate();
+        let (pk_m, sk_m) = (kp.public_bytes(), kp.secret_bytes());
         let (sk_x, pk_x) = derive_keypair(b"box2 recipient");
         let mut rng = OsCustodyRng;
-        let (enc, ct) = seal_box2(
-            &pk_x,
-            pk_m.as_bytes(),
-            b"info",
-            b"aad",
-            b"share bytes",
-            &mut rng,
-        )
-        .unwrap();
+        let (enc, ct) = seal_box2(&pk_x, &pk_m, b"info", b"aad", b"share bytes", &mut rng).unwrap();
         assert_eq!(enc.len(), BOX2_ENC_LEN);
-        let pt = open_box2(&sk_x, sk_m.as_bytes(), &enc, b"info", b"aad", &ct).unwrap();
+        let pt = open_box2(&sk_x, &sk_m, &enc, b"info", b"aad", &ct).unwrap();
         assert_eq!(*pt, b"share bytes".to_vec());
         // Both halves are needed: the wrong X25519 key, the wrong ML-KEM
         // key, and a changed ML-KEM ciphertext all fail.
         let (other_x, _) = derive_keypair(b"other");
-        assert!(open_box2(&other_x, sk_m.as_bytes(), &enc, b"info", b"aad", &ct).is_err());
-        let (_, other_m) = pqcrypto_mlkem::mlkem768::keypair();
-        assert!(open_box2(&sk_x, other_m.as_bytes(), &enc, b"info", b"aad", &ct).is_err());
+        assert!(open_box2(&other_x, &sk_m, &enc, b"info", b"aad", &ct).is_err());
+        let other_m = crate::vault::crypto::KemKeypair::generate().secret_bytes();
+        assert!(open_box2(&sk_x, &other_m, &enc, b"info", b"aad", &ct).is_err());
         let mut bent = enc.clone();
         bent[5] ^= 1;
-        assert!(open_box2(&sk_x, sk_m.as_bytes(), &bent, b"info", b"aad", &ct).is_err());
-        assert!(open_box2(&sk_x, sk_m.as_bytes(), &enc, b"info", b"aaD", &ct).is_err());
+        assert!(open_box2(&sk_x, &sk_m, &bent, b"info", b"aad", &ct).is_err());
+        assert!(open_box2(&sk_x, &sk_m, &enc, b"info", b"aaD", &ct).is_err());
     }
 }

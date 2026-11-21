@@ -525,8 +525,10 @@ check; custody on a 1-of-m quorum.
 - Process memory during collection; `PR_SET_DUMPABLE` covers ptrace and core
   dumps only.
 - The issuing hub is the dealer, which already holds the master key.
-- `pqcrypto-mlkem` 0.1.1 does not zeroize its secret key or shared secret
-  types; the existing `KemKeypair` has the same residual.
+- ML-KEM-768 runs through RustCrypto's `ml-kem` 0.3.4, the crate the vault
+  itself moved to when the PQClean bindings were removed (#1991); box 2
+  scrubs the shared secret and the expanded key bytes it imports, and
+  `ml-kem`'s own key types zeroize under its `zeroize` feature.
 - The zero-overwrite at retirement depends on the medium.
 - No automated agent holds share authority: a `won't`, not a `can't`.
 
@@ -550,8 +552,8 @@ Checked while building S:
 
 Still unverified: RFC 9496 and RFC 9180 as published (only the sources
 above); RFC 7748 and RFC 8439 except through the HPKE vectors; FIPS 203 and
-PQClean's conformance to it, and whether `PublicKey::from_bytes` validates an
-encapsulation key; SP 800-57 / FIPS 140-3 "split knowledge"; the literature
+`ml-kem`'s conformance to it (its import makes FIPS 203's encapsulation-key
+and decapsulation-key checks, as the vault relies on); SP 800-57 / FIPS 140-3 "split knowledge"; the literature
 (Pedersen 1991, Feldman 1987, Desmedt–Jajodia 1997, Herzberg et al. 1995,
 Okamoto 1992, eprint 2021/509) — the code is checked for correctness only,
 never for security, and a cryptographer's review of §2–§5 and of S's code is

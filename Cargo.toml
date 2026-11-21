@@ -48,9 +48,20 @@ curve25519-dalek = { version = "5.0.0", default-features = false, features = ["a
 c2pa = { version = "0.91", default-features = false, features = ["rust_native_crypto"], optional = true }
 # X.509 generation for the device-local C2PA credential chain (CA + leaf).
 rcgen = { version = "0.14", optional = true }
-pqcrypto-mldsa = { version = "0.1", optional = true }
-pqcrypto-traits = { version = "0.3", optional = true }
-pqcrypto-mlkem = { version = "0.1", optional = true }
+# ML-DSA-44 (FIPS 204) for the hybrid log signatures (feature
+# `pqc-signatures`): RustCrypto's pure-Rust implementation. default-features
+# off drops `pkcs8` (keys are stored as raw FIPS 204 encodings, never DER)
+# and `getrandom` (randomness comes from the same `rand::rngs::SysRng` the
+# rest of the kernel draws from, through `rand_core`). `alloc` keeps the
+# expanded key and the public matrix on the heap; `zeroize` scrubs the
+# signing key on drop.
+ml-dsa = { version = "0.1.2", default-features = false, features = ["alloc", "rand_core", "zeroize"], optional = true }
+# ML-KEM-768 (FIPS 203) for the vault's `pq` and `hybrid` modes (feature
+# `pqc-vault`): RustCrypto's pure-Rust implementation, which makes the
+# FIPS 203 input checks on every key it imports. default-features is only
+# `alloc`, kept; `zeroize` scrubs the decapsulation key on drop. Randomness
+# comes from `rand::rngs::SysRng`, so `getrandom` stays off.
+ml-kem = { version = "0.3.4", default-features = false, features = ["alloc", "zeroize"], optional = true }
 ctrlc = { version = "3.4", features = ["termination"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"], optional = true }
 ureq = { version = "3.0", optional = true }
@@ -139,8 +150,8 @@ bridge-homekit-server = ["bridge-homekit", "dep:srp", "dep:x25519-dalek", "dep:m
 adapter-meshtastic = []
 adapter-can-bus = []
 adapter-sandbox = []
-pqc-signatures = ["pqcrypto-mldsa", "pqcrypto-traits"]
-pqc-vault = ["pqcrypto-mlkem", "pqcrypto-traits"]
+pqc-signatures = ["dep:ml-dsa"]
+pqc-vault = ["dep:ml-kem"]
 pqc-tls = ["rustls", "webpki-roots", "rustls-pki-types"]
 # RFC 3161 trusted timestamping: enables log_anchor's online `request`
 # subcommand (the offline query/import flow needs no feature).
