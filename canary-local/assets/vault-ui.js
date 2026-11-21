@@ -236,7 +236,7 @@ export function buildQuorumDemo(demo, quorum) {
     const distinct = countDistinctApprovals(st.approvals);
     if (quorumOutcome(distinct, demo.n) !== "granted") {
       receipt("DENIED", `insufficient approvals: ${distinct}/${demo.n}`);
-      status.textContent = `Denied — ${distinct}/${demo.n}. A grant can't be forged: the kernel re-derives quorum from the approvals.`;
+      status.textContent = `Denied — ${distinct}/${demo.n}. A grant is never taken on anyone's word: the kernel re-derives the quorum from the approvals.`;
       return;
     }
     if (st.spent) {
