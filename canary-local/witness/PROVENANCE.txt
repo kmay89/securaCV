@@ -5,7 +5,8 @@ app copy in one pass, so the Flasher and the Lab can never drift apart —
 scripts/check_witness_emulator_sync.sh enforces that in CI).
 
   witness.html      <- witness-wall.html, one deterministic transform: site
-                       chrome removed (header/footer/fonts/site.css/site.js),
+                       chrome removed (header/footer/fonts/site.css/site.js,
+                       the structured-data block, the site font preload),
                        script path flattened, root-relative links absolutized.
   tv-emulator.js    <- js/tv-emulator.js  (byte-identical; window.witnessWall +
                        the witness:appear/connect/fleet/skin/profile API)
