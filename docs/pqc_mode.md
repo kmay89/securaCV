@@ -20,7 +20,10 @@ seals vaults with ChaCha20-Poly1305 only, and its MQTT TLS is classic
 
 ## Signatures (pqc-signatures)
 
-Uses **ML-DSA-44** (FIPS 204) via the `pqcrypto-mldsa` crate.
+Uses **ML-DSA-44** (FIPS 204) via the [`ml-dsa`](https://crates.io/crates/ml-dsa)
+crate (RustCrypto, pure Rust). Signing is the standard's hedged form with an
+empty context string: fresh randomness goes into every signature, so two
+signatures over the same entry differ.
 
 When the feature is enabled, log entries are signed with a **SignatureSet**:
 
@@ -47,14 +50,31 @@ the PQ public key.
 When PQ signatures are enabled, the kernel generates an ML-DSA-44 keypair and
 stores it in `device_metadata`:
 
-- `pq_public_key` (public key bytes)
-- `pq_secret_key` (secret key bytes, zeroized on drop)
+- `pq_public_key` (public key bytes: the 1312-byte FIPS 204 encoding)
+- `pq_secret_key` (secret key bytes, zeroized on drop: the 2560-byte FIPS 204
+  private-key encoding)
 
 PQ keys are local-only and are **never transmitted** by the kernel.
 
+The stored secret key is the expanded encoding, not a seed. `ml-dsa` imports
+and exports it through functions it marks deprecated in favor of 32-byte
+seeds; a key that was stored expanded has no seed to return to, so the kernel
+depends on that import for as long as such keys exist. A stored secret key
+whose secret-vector coefficients are out of range is refused, as an error,
+when the kernel opens.
+
 ## Vault Encryption (pqc-vault)
 
-Uses **ML-KEM-768** (FIPS 203) via the `pqcrypto-mlkem` crate.
+Uses **ML-KEM-768** (FIPS 203) via the [`ml-kem`](https://crates.io/crates/ml-kem)
+crate (RustCrypto, pure Rust).
+
+The vault's keypair is `kem-mlkem768.key` in the vault directory: the
+1184-byte encapsulation key and the 2400-byte decapsulation key (the expanded
+FIPS 203 encoding, not a seed; `ml-kem` marks its import deprecated in the
+same way). Both FIPS 203 input checks are made when that file is loaded,
+before anything is sealed to the key or opened with it: the modulus check on
+the encapsulation key (section 7.2) and the hash check on the decapsulation
+key (section 7.3). A file that fails either does not open the vault.
 
 When enabled, vault envelopes can use hybrid encryption:
 
@@ -64,6 +84,21 @@ When enabled, vault envelopes can use hybrid encryption:
   first, falls back to classical if AEAD verification fails (handles legacy
   Kyber768 envelopes transparently)
 
+## Builds through 0.9.3
+
+Kernel builds through 0.9.3 linked the PQClean bindings for these two
+features (`pqcrypto-mldsa` and `pqcrypto-mlkem`; 0.1.2 and 0.1.1 in 0.9.3).
+Those crates are unmaintained and carry RUSTSEC-2026-0586 and
+RUSTSEC-2026-0585; what that meant for a build that used them is in
+[`SECURITY.md`](../SECURITY.md#known-dependency-advisories), Group 7.
+
+Nothing they wrote changes meaning: keys, signatures, key files and envelopes
+keep their encodings, labels and file names.
+[`tests/fixtures/pqcrypto_kat/`](../tests/fixtures/pqcrypto_kat/README.md)
+holds a keypair, signatures, a signed envelope, a vault key file and sealed
+envelopes written by the kernel while it linked those crates, and the tests
+beside it hold the current implementation to them.
+
 ## Limitations
 
 - **Large signatures**: ML-DSA-44 signatures (~2.4 KB) are much larger than
@@ -71,3 +106,12 @@ When enabled, vault envelopes can use hybrid encryption:
 - **Key rotation**: No PQ key rotation or migration tooling is included yet.
 - **Strict mode requires PQ public keys**: Verifiers must supply PQ public keys
   when strict mode is enabled.
+- **Unaudited implementations**: `ml-dsa` and `ml-kem` say in their own
+  READMEs that they have never been independently audited. Ed25519 stays
+  required on every entry in both verification modes, and a `hybrid` envelope
+  needs the master-key secret as well as the KEM secret; in `pq` mode an
+  envelope rests on ML-KEM alone.
+- **Stored keys are not seeds**: both crates read the stored private keys
+  through imports they have deprecated (above). A later release of either
+  that drops the import leaves existing keys unreadable until there is a way
+  to replace them, which is the missing rotation tooling.

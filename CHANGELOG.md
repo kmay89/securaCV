@@ -1,6 +1,66 @@
 # Changelog
 
 ## [Unreleased]
+### The post-quantum features leave the unmaintained PQClean bindings: `ml-dsa` signs, `ml-kem` seals, and `cargo audit` is clean again
+
+- **Why.** Two advisories of 2026-11-20 name the crates behind the optional
+  `pqc-signatures` and `pqc-vault` features, with no fixed release, and the
+  Dependency Audit had failed on the root `Cargo.lock` since.
+  RUSTSEC-2026-0586: `pqcrypto-mldsa`, on an x86_64 CPU with AVX2, verifies
+  ML-DSA without the bound on the response z (FIPS 204, Algorithm 8, line
+  13). RUSTSEC-2026-0585: `pqcrypto-mlkem` makes neither FIPS 203 input
+  check. Both wrap PQClean, which is archived. The features now build on
+  RustCrypto's `ml-dsa` 0.1.2 and `ml-kem` 0.3.4, the four `pqcrypto-*`
+  crates are gone from `Cargo.lock`, and nothing was added to
+  `.cargo/audit.toml`. The analysis is `SECURITY.md`, Group 7.
+- **No format change.** `device_metadata` keeps the FIPS 204 public-key and
+  private-key encodings, signatures keep the `mldsa44` scheme id,
+  `kem-mlkem768.key` keeps its layout and the FIPS 203 keys in it, and
+  envelopes keep their KEM labels. `tests/fixtures/pqcrypto_kat/` holds a
+  keypair, signatures, a signed evidence envelope, a vault key file and three
+  sealed envelopes written by the kernel while it linked the old crates, and
+  the tests pass on both implementations: stored keys load and re-encode byte
+  for byte, stored signatures verify in strict mode, the key file opens every
+  stored envelope, and a kernel whose database holds the stored key signs a
+  log that `log_verify --sig-mode strict` passes. What the new code writes
+  was read back by PQClean once, before the crates were removed (the fixture
+  README has the counts). Default builds carry neither feature, so none of
+  this code is in them.
+- **Rebuild a `pqc-signatures` binary.** One built from 0.9.3 or earlier, on
+  an x86_64 CPU with AVX2, still verifies with the old code: it accepts an
+  out-of-bound ML-DSA signature that the key's holder made, and rejects one
+  boundary class of valid ones. Ed25519 was required on every entry
+  throughout.
+- **What a caller can see.** A signature that is the wrong length, has a hint
+  that is not canonical or a response at or past the bound is refused as
+  `invalid pq signature bytes: ...`; other failures stay
+  `pq signature verification failed`. A stored ML-DSA secret key with a
+  secret-vector coefficient out of range is
+  `invalid pq secret key bytes: a coefficient of s1 or s2 is out of range`
+  from `Kernel::open` (the import would otherwise panic on it). A
+  `kem-mlkem768.key` whose encapsulation key has a coefficient of q or more,
+  or whose decapsulation key has an altered hash or embedded encapsulation
+  key, is `invalid KEM public key` or `invalid KEM secret key` and the vault
+  does not open; a key the old code generated never is. ML-DSA signing
+  returns an error when the OS random source fails. Signing stays hedged:
+  two signatures over one entry differ, as before.
+- **API, inside the two modules.** `PqPublicKey` and `PqSecretKey` were
+  aliases of `pqcrypto` types and are kernel types now (`from_bytes` is
+  inherent; `PqSecretKey` is `Clone`, no longer `Copy`), and the public
+  fields of `KemKeypair` hold `ml-kem`'s key types. The kernel's function
+  signatures and feature names are unchanged.
+- **What this rests on.** Neither crate has had an independent audit, and
+  both read the stored private keys (expanded encodings, not seeds) through
+  imports they mark deprecated, so the kernel depends on those imports for
+  as long as such keys exist (`docs/pqc_mode.md`). Both features stay
+  experimental.
+- **Lockfile.** The fixed `memmap2` 0.9.12 (RUSTSEC-2026-0186), `rustix`
+  1.1.6 (RUSTSEC-2026-0486) and `tokio` 1.54.1 (RUSTSEC-2026-0386), and
+  `chacha20` 0.10.2 and `spin` 0.9.9 in place of yanked versions.
+  `cargo audit` reports no vulnerability, no unsound and no yanked entry;
+  three unmaintained warnings remain (`chrono` and `proc-macro-error` under
+  `c2pa`, and `rustls-pemfile`), none with a fixed release.
+
 ### Compliance maps say which mechanism stands behind which clause, and never more
 
 - **`docs/compliance/`** (roadmap item 7, CP1): eleven closed clause → mechanism → status maps (21 CFR Part 11, EU GMP Annex 11, ALCOA+, HIPAA 164.312, US evidence rules, eIDAS qualified electronic ledgers, the C2PA conformance program, BS 10008 by topic, the FIPS split-knowledge vocabulary, and the capture-provenance and enterprise-assurance trackers), each row with one status from the new `compliance_map_status` block of `spec/witness_dictionary.json`; the README's pinned posture paragraph (maps, never determinations); the verification methodology; the BS 10008 operator pack and its template; the capture-provenance note; and the design notes for the SIEM projection, validation sheets and CAWG co-signing. Every regime clause is marked unverified: no regime source could be fetched.
