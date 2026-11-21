@@ -1,6 +1,6 @@
 #pragma once
 // esp_system.h stand-in: IDF's reset reasons, 4.4.7's list (UNKNOWN through
-// SDIO) for core 2 and 5.5.4's for core 3 (the same, then USB, JTAG, eFuse,
+// SDIO) for core 2 and 5.5.5's for core 3 (the same, then USB, JTAG, eFuse,
 // power glitch and CPU lockup, in that order; the glue gates the USB, JTAG
 // and glitch reasons it names at IDF 5.1),
 // and the reset reason the test sets (a power-on unless it says otherwise:

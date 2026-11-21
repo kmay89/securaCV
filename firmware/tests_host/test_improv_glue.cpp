@@ -7,7 +7,7 @@
 // drops and the first-boot window's record across a reset. Its rules are
 // improv_core.h's, host-tested in test_improv_core.cpp; this suite compiles
 // the glue itself, unedited, over the stand-ins in stubs/improv_glue/ (the
-// NimBLE-Arduino 2.5.0 shape and Arduino-ESP32 3.3.8's scan rules for
+// NimBLE-Arduino 2.5.0 shape and Arduino-ESP32 3.3.11's scan rules for
 // ESP_ARDUINO_VERSION_MAJOR 3, 1.4.3 and 2.0.17's for 2; the Makefile builds
 // both) and plays the radio's part: connects, drops and writes in the order
 // the stack delivers them, the stack's disconnect event after the glue asks
@@ -674,7 +674,7 @@ static void scan() {
   const uint32_t t0 = g_now;
   int deleted = WiFi.count("scanDelete");
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
-  // Core 3.3.8 waits 60 s for the driver; the glue gives up at its own 30 s.
+  // Core 3.3.11 waits 60 s for the driver; the glue gives up at its own 30 s.
   tick_to(t0 + 29900);
   CHECK(results_since(from).empty(), "29.9 s into a silent sweep: still waiting");
   tick_to(t0 + 30200);

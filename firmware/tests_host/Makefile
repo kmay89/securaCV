@@ -228,7 +228,7 @@ IMPROV_BIN = $(BUILD_DIR)/test_improv_core
 # The Sense and Vision Improv glue (common/network/improv_ble.cpp, sweep
 # F472), compiled unedited over the NimBLE / Arduino / WiFi / esp stand-ins
 # in stubs/improv_glue/ for both NimBLE majors the families build (2.x on
-# core 3.3.8 for ESP_ARDUINO_VERSION_MAJOR 3, 1.4.x on core 2.0.17 for 2)
+# core 3.3.11 for ESP_ARDUINO_VERSION_MAJOR 3, 1.4.x on core 2.0.17 for 2)
 # and driven as the radio drives it: the host task's write stamp and
 # mailboxes, the 32-bit connect generation, link_of()'s handle check, the
 # hub hand-off's gate and the board's store verdict, the Wi-Fi settings

@@ -2,16 +2,18 @@
 // NimBLE-Arduino stand-in for test_improv_glue.cpp: the surface
 // firmware/common/network/improv_ble.cpp calls, nothing more, in the shape of
 // NimBLE-Arduino 2.5.0 when ESP_ARDUINO_VERSION_MAJOR >= 3 and 1.4.3 below.
-// The envs that compile the glue float their pins (canary-sense.ini
-// h2zero/NimBLE-Arduino@^2.3.8 on core 3, canary-vision.ini ~1.4.3 on core
-// 2), so CI builds the newest release each admits; 2.5.0 and 1.4.3 are the
-// releases these signatures were checked against. Names, parameter lists,
-// return types and the callbacks each release calls (and in what order) are
-// copied from those releases' headers and their gap-event handlers, so the
-// glue's calls meet each release's signatures here too; the compile against
-// the real library is still the family envs' in CI. (2.3.8 and 2.3.9, which
-// ^2.3.8 also admits, declare NimBLEServer::start() void; the glue tests its
-// result on core 3, so it builds on 2.4.0 and later only.)
+// The envs that compile the glue pin exact releases (canary-sense.ini
+// h2zero/NimBLE-Arduino@2.5.2 on core 3, canary-vision.ini @1.4.3 on core 2,
+// since #1986). These signatures were checked against 2.5.0 and 1.4.3; the
+// 2.5.2 headers this file mirrors, and NimBLEServer.cpp's gap-event handler,
+// are byte-identical to 2.5.0's (2.5.2's NimBLEDevice.cpp moves only its
+// white-list and deinit() paths, which the glue never calls). Names,
+// parameter lists, return types and the callbacks each release calls (and in
+// what order) are copied from those releases' headers and their gap-event
+// handlers, so the glue's calls meet each release's signatures here too; the
+// compile against the real library is still the family envs' in CI. (2.3.x
+// declares NimBLEServer::start() void and the glue tests its result on core
+// 3; canary-sense.ini's comment names 2.4.0 as the floor.)
 //
 // What the glue branches on is the test's to set: the connect handle, the
 // encryption bit, the disconnect reason, whether NimBLE is up, whether
