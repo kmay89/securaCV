@@ -84,7 +84,13 @@ TITLE_MAX, DESC_MIN, DESC_MAX = 65, 70, 160
 def pages() -> list[Path]:
     """Every page the Lab publishes at its top level. witness/witness.html is
     the website's own Witness Wall page (its canonical is on securacv.com) and
-    the emulator harness is a developer fixture; neither is a Lab page."""
+    the emulator harness is a developer fixture; neither is a Lab page.
+    voice/index.html, the Canary Voice sound board build-line.json links, is
+    a Lab page these rules do not reach yet: it was a generated page when
+    they were written, and stamping it needs copy nobody has written (a title
+    ending in the Lab's name, a description, a headline that leads with the
+    title's name). Its Content-Security-Policy line is gen_csp.py's, as every
+    page's is."""
     return sorted(LAB.glob("*.html"))
 
 
