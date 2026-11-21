@@ -623,9 +623,9 @@ fn lock_orphan(path: &std::path::Path) -> Option<std::fs::File> {
 }
 
 /// Sweep files a crash or pulled plug could have orphaned: the ~2.5 GB raw
-/// images we stage in the temp dir (whose drop-time cleanup can't run if the
-/// process is killed) and any half-finished `.partial` downloads in the image
-/// cache. Best-effort and quiet — a file we can't remove is simply skipped.
+/// images we stage in the staging dir (the app's cache; the temp dir before
+/// 0.12.6), whose drop-time cleanup can't run if the process is killed, and
+/// any half-finished `.partial` downloads in the image cache. Best-effort and quiet — a file we can't remove is simply skipped.
 /// Run once at startup, before this process flashes anything of its own, so it
 /// never races its own work; a raw image another running instance still
 /// holds is skipped (`sweep_raw_images`).
