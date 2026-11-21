@@ -84,8 +84,9 @@ pub struct WriteReceipt {
 
 /// Write the raw image behind `authz` to its authorized target device and
 /// read-back verify it. `raw_image` is the decompressed image file;
-/// `raw_sha256` is its hash from [`crate::xz::decompress`] — the value the
-/// device must reproduce.
+/// `raw_sha256` is its hash from [`crate::xz::decompress`] or
+/// [`crate::xz::decompress_into`] (the Flasher's hub writer uses the second) —
+/// the value the device must reproduce.
 pub fn write_image(
     authz: WriteAuthorization,
     raw_image: &Path,

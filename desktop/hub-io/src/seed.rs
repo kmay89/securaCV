@@ -842,9 +842,14 @@ pub(crate) mod tests {
     /// the bcrypt hash in the clear, in the staging dir, for the whole write
     /// and read-back, so it must be owner-only. Before 0.12.6 `File::create`
     /// made it `0666 & !umask`: 0644 under the usual 022, readable by every
-    /// account on the machine. The umask is set to that usual value for the
-    /// decompress (and put back), so this asserts the same thing on a runner
-    /// whose own umask is stricter.
+    /// account on the machine. Step 5 runs both ways hub-io offers: the
+    /// writer's own, `xz::decompress_into` on a staging file made the way
+    /// its `private_raw_image` makes one (`tempfile`: exclusive, a random
+    /// name, 0600), and `xz::decompress`'s create-new, for a caller with no
+    /// file of its own. The umask is set to that usual value for step 5 (and
+    /// put back), so this asserts the same thing on a runner whose own umask
+    /// is stricter. That `decompress_into` tightens a wider file it is handed
+    /// is `xz`'s own test (`an_existing_dest_is_tightened_to_owner_only`).
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn the_staged_image_is_owner_only_once_it_carries_the_secrets() {
@@ -857,37 +862,34 @@ pub(crate) mod tests {
         enc.write_all(&std::fs::read(&plain).unwrap()).unwrap();
         std::fs::write(&xz, enc.finish().unwrap()).unwrap();
 
-        // Step 5. SAFETY: umask(2) only swaps the process's file-creation
-        // mask; it cannot fail and touches no memory.
-        let raw = dir.path().join("securacv-hub-staged.img");
+        // Step 5, both ways. SAFETY: umask(2) only swaps the process's
+        // file-creation mask; it cannot fail and touches no memory.
         let previous = unsafe { libc::umask(0o022) };
-        let decompressed = crate::xz::decompress(&xz, &raw, &CancelToken::default(), |_| {});
+        // The writer's way: the staging file made first, under the writer's
+        // prefix and suffix, then decompressed into.
+        let staged = tempfile::Builder::new()
+            .prefix("securacv-hub-")
+            .suffix(".img")
+            .tempfile_in(dir.path())
+            .map(tempfile::NamedTempFile::into_temp_path);
+        let filled = staged
+            .as_ref()
+            .map_err(|e| e.to_string())
+            .and_then(|raw| crate::xz::decompress_into(&xz, raw, &CancelToken::default(), |_| {}));
+        // The other way: a file `decompress` creates new.
+        let created = dir.path().join("securacv-hub-created.img");
+        let decompressed = crate::xz::decompress(&xz, &created, &CancelToken::default(), |_| {});
         unsafe { libc::umask(previous) };
+        let staged = staged.expect("the staging file");
+        filled.expect("decompress_into");
         decompressed.expect("decompress");
 
-        // Step 5b, with both secrets the image can carry.
         let account = crate::account::mint_owner_store(&crate::account::OwnerAccount {
             name: "Alex Smith",
             username: "alex",
             password: "correct horse battery staple",
         })
         .expect("mints");
-        let report = inject_into_image(
-            &raw,
-            Some(&seed("Home Wi-Fi", "staged-image-passphrase")),
-            &account,
-            &[],
-            None,
-            |_| {},
-        )
-        .expect("injection");
-        assert!(report.wifi_written && report.account_written);
-
-        // The secrets really are in the staged bytes, so the mode is the only
-        // thing between them and another account...
-        let bytes = std::fs::read(&raw).unwrap();
-        let holds = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
-        assert!(holds(b"psk=staged-image-passphrase"), "the passphrase");
         let provider = account
             .iter()
             .find(|f| f.relative_path.ends_with("auth_provider.homeassistant"))
@@ -895,9 +897,32 @@ pub(crate) mod tests {
         let provider: serde_json::Value = serde_json::from_str(&provider.contents).unwrap();
         let hash = provider["data"]["users"][0]["password"].as_str().unwrap();
         assert!(hash.starts_with("$2"), "{hash}");
-        assert!(holds(hash.as_bytes()), "the bcrypt hash");
-        // ...and the mode keeps every other account out.
-        let mode = std::fs::metadata(&raw).unwrap().permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600, "staged image mode {mode:o}");
+
+        for raw in [&*staged, created.as_path()] {
+            // Step 5b, with both secrets the image can carry.
+            let report = inject_into_image(
+                raw,
+                Some(&seed("Home Wi-Fi", "staged-image-passphrase")),
+                &account,
+                &[],
+                None,
+                |_| {},
+            )
+            .expect("injection");
+            assert!(report.wifi_written && report.account_written);
+
+            // The secrets really are in the staged bytes, so the mode is the
+            // only thing between them and another account...
+            let bytes = std::fs::read(raw).unwrap();
+            let holds = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
+            assert!(
+                holds(b"psk=staged-image-passphrase"),
+                "the passphrase in {raw:?}"
+            );
+            assert!(holds(hash.as_bytes()), "the bcrypt hash in {raw:?}");
+            // ...and the mode keeps every other account out.
+            let mode = std::fs::metadata(raw).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "staged image {raw:?} mode {mode:o}");
+        }
     }
 }
