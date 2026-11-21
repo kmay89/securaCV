@@ -103,10 +103,12 @@
   A100, D23 and CI28 are closed. F30, F364, F412, F447, F459, F473, F372,
   C10, C12, C21, C25, C33 and C37 now say what remains, most of it a
   maintainer's call, and F251 and F476 say their dashboard move restates the
-  parity plan. New from the wave: F484-F493, A136-A138, C39, D28 and
-  CI31-CI33, among them the canary tree's fingerprint and opera id that are
-  used as zeros when they do not hash (F484), the Chirp send's other narrowed
-  fields (F485) and the compares left as `memcmp()` (F486).
+  parity plan. New from the wave: F484-F490, F492, F493, A136-A138, C39,
+  D28 and CI31-CI33, among them the canary tree's fingerprint and opera id
+  that are used as zeros when they do not hash (F484), the Chirp send's
+  other narrowed fields (F485) and the compares left as `memcmp()` (F486).
+  F491, Sense's NimBLE floor, was filed here and closed by #1986 before the
+  wave landed.
 - Host-tested here: the canary-wap host suite under g++, clang++ 18 and
   ASan/UBSan, firmware.yml's mesh + ble_scan step, `firmware/tests_host`
   (the Improv glue and constant-time suites, ASan/UBSan included), the

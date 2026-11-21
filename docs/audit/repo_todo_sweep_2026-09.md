@@ -1089,8 +1089,9 @@ so — see D2 below.)
   (`firmware/tests_host/test_improv_glue.cpp` drives `improv_ble.cpp` on both
   NimBLE majors; its `race` and `wrap` scenarios hold the host-task stamp and
   the 32-bit generation), and `magic_pairing.md` §9's "Another link is
-  refused" row is unrun (F254). The three glue findings that suite surfaced
-  are F489-F491. From code. Found by F254's bench rows (#1920).
+  refused" row is unrun (F254). Of the three glue findings that suite
+  surfaced, F489 and F490 are open, and #1986 closed the third (Sense's
+  NimBLE floor). From code. Found by F254's bench rows (#1920).
 
 - [ ] **F448 [decision] canary-vision: widen the served `connect-src` to
   reach IP-only devices?** Since #1966 the SPA refuses an IP that is not
@@ -1229,17 +1230,6 @@ so — see D2 below.)
   first-boot door would open short or already spent. Declare it `volatile`, or
   read it through a volatile pointer at `begin()`. From a host compile. Found
   by F472 (#W26PR).
-
-- [ ] **F491 [code] canary-sense's `NimBLE-Arduino@^2.3.8` floor admits a
-  release the Improv glue does not compile against.** `NimBLEServer::start()`
-  returns `void` in NimBLE-Arduino 2.3.8 and 2.3.9 and `bool` from 2.4.0, and
-  `improv_ble.cpp` tests its result under `ESP_ARDUINO_VERSION_MAJOR >= 3`.
-  The caret in `firmware/envs/platformio/canary-sense.ini` resolves to the
-  newest 2.x when PlatformIO builds it in CI, so nothing fails, but a build
-  that resolved 2.3.x would not compile the glue. Raise the floor to `^2.4.0`
-  (or `^2.5.0`, the release `test_improv_glue.cpp`'s stand-in follows) and
-  regenerate the firmware SBOM. From the releases' headers. Found by F472
-  (#W26PR).
 
 - [ ] **F492 [decision] canary-vision: three calls the CSP class move left.**
   `spa/app.js` sets no inline style, and `el()` throws on a `style` key, so an
