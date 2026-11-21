@@ -19,12 +19,25 @@ name: Firmware Release
 # firmware/common/ota/src/ota_release_key.h, and install via the
 # pull-OTA engine (firmware/common/ota/).
 #
-# Required repository secret:
+# Required secret:
 #   OTA_SIGNING_KEY_PEM — the Ed25519 release private key (PEM, PKCS8),
 #   generated offline with:
 #     python firmware/scripts/ota_release.py keygen --private-key releaser.pem
 #   Its PUBLIC half must match ota_release_key.h — this workflow fails
 #   loudly if they drift, because devices would reject every artifact.
+#
+# Who may use that key. The job that signs runs in the `firmware-release`
+# environment, and that is where the secret belongs (an environment secret,
+# not a repository secret, which any workflow file on any branch can read).
+# The environment's required reviewers are the second person in the loop; they
+# are a repository setting, so this file can name the environment but cannot
+# prove it has reviewers (docs/RELEASE_PROCESS.md § "Who can sign"). What this
+# file does enforce, on both paths: a dispatch runs only from main, and a
+# commit that is not on main is refused before the key is read. Both checks
+# are this file's, and the copy that runs is the one at the commit being
+# released: they stop a tag or a dispatch made by mistake, not a commit that
+# edits this file (or one from before the checks existed), which is what the
+# key in the environment and its reviewers are for.
 
 on:
   # Path A — the git-tag ceremony (unchanged): push a fw-v* tag and this cuts
@@ -70,8 +83,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # A dispatch from any ref but main. The signing job below does not run for
+  # it, and a skipped job says nothing: the run would end gray, with nothing
+  # built, and whoever pressed the button would be left to guess. This job is
+  # that run's red line. It is outside the environment on purpose (no secret,
+  # no token, and no reviewer needed to be told no). "Update everything" does
+  # not dispatch firmware off main at all (its firmware gate); this covers a
+  # dispatch made here by hand.
+  main-only:
+    name: Refuse a dispatch that is not from main
+    if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Say why nothing was built
+        run: |
+          echo "::error::Firmware Release signs only from main, and this dispatch is on ${GITHUB_REF}: nothing was built or signed. Merge first, then run it with 'Use workflow from' set to main (docs/RELEASE_PROCESS.md § Who can sign)."
+          exit 1
+
   build-sign-release:
     name: Build, sign, and publish firmware
+    # A dispatch signs only from main (the job above says so, in red, for any
+    # other ref); a tag push is checked against main in the first step (a tag
+    # can sit on any commit, so the ref cannot say).
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    # Holds OTA_SIGNING_KEY_PEM. flasher-release.yml and
+    # vision-model-release.yml sign with the same key, in the same environment.
+    environment: firmware-release
     runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 90
     outputs:
@@ -88,6 +127,17 @@ jobs:
           IN_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
+          # Both paths, before the key is read: the commit being released must
+          # be on main. A fw-v* tag can be pushed at any commit by anyone who
+          # can push a tag, and this job signs what it builds with the fleet's
+          # release key. The checkout is depth 1, so fetch main's recent
+          # history to ask; a commit more than 200 commits behind main's tip
+          # is refused too (release from a newer one).
+          if ! { git fetch --no-tags --depth=200 origin main \
+                 && git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; }; then
+            echo "::error::release commit ${GITHUB_SHA} is not on main (within its last 200 commits). Firmware is signed only from main: merge first, then tag or dispatch from main."
+            exit 1
+          fi
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             # Dispatch path (Actions tab): derive VERSION + TAG from the inputs. The source
             # triple (canary's FIRMWARE_VERSION) is the fallback for a release.
@@ -187,7 +237,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "$OTA_SIGNING_KEY_PEM" ]; then
-            echo "::error::OTA_SIGNING_KEY_PEM secret is not set. Generate a key with 'ota_release.py keygen' and add it as a repository secret."
+            echo "::error::OTA_SIGNING_KEY_PEM secret is not set. Generate a key with 'ota_release.py keygen' and add it as a secret of the firmware-release environment (Settings → Environments → firmware-release)."
             exit 1
           fi
           printf '%s' "$OTA_SIGNING_KEY_PEM" > /tmp/releaser.pem
@@ -276,14 +326,34 @@ jobs:
           #define MQTT_USER nullptr
           #define MQTT_PASS nullptr
           HEADER
-          pio run -e canary-vision-default -e canary-vision-xiao-c3 -e canary-vision-xiao-s3
+          # Every canary-vision env serves HTTP on core 2.0.17, whose own
+          # WebServer sizes a stack buffer from the client's multipart boundary
+          # (GHSA-8cmm-3887-r32j); they link firmware/third_party's patched
+          # copy through lib_extra_dirs. Each log's dependency graph says which
+          # one an env linked, and check_webserver_link.py fails the core's,
+          # as firmware.yml's webserver_gate does on every push.
+          LOG="$RUNNER_TEMP/pio-run-canary-vision.log"
+          pio run -e canary-vision-default -e canary-vision-xiao-c3 -e canary-vision-xiao-s3 2>&1 | tee "$LOG"
+          BUILT=${PIPESTATUS[0]}
+          if [ "$BUILT" -ne 0 ]; then exit "$BUILT"; fi
+          if ! python3 "$GITHUB_WORKSPACE/firmware/scripts/check_webserver_link.py" pio "$LOG"; then
+            echo "::error::canary-vision links core 2.0.17's own WebServer (GHSA-8cmm-3887-r32j). Its envs list ../../third_party in lib_extra_dirs: firmware/third_party/WebServer-2.0.17-securacv/README.md."
+            exit 1
+          fi
           # The C3 Super Mini reach port — flasher-only, same rationale as the
           # canary reach ports above (no OTA manifest until it is benched), and
-          # non-blocking so it can never sink the signed release.
-          if pio run -e canary-vision-c3-super-mini; then
-            echo "✓ canary-vision-c3-super-mini"
-          else
+          # non-blocking so it can never sink the signed release. One that
+          # links the core's WebServer is withheld, as a failed build is.
+          LOG="$RUNNER_TEMP/pio-run-canary-vision-c3-super-mini.log"
+          pio run -e canary-vision-c3-super-mini 2>&1 | tee "$LOG"
+          BUILT=${PIPESTATUS[0]}
+          if [ "$BUILT" -ne 0 ]; then
             echo "::warning::canary-vision-c3-super-mini failed to build — absent from this release's flasher catalog"
+          elif ! python3 "$GITHUB_WORKSPACE/firmware/scripts/check_webserver_link.py" pio "$LOG"; then
+            rm -rf .pio/build/canary-vision-c3-super-mini
+            echo "::error::canary-vision-c3-super-mini links core 2.0.17's own WebServer (GHSA-8cmm-3887-r32j) — withheld from this release's flasher catalog"
+          else
+            echo "✓ canary-vision-c3-super-mini"
           fi
 
       - name: Build canary-sense (release)
@@ -292,7 +362,7 @@ jobs:
         # builds canary/canary-vision on the official espressif32 platform
         # first — and the two ship a package literally named
         # `framework-arduinoespressif32` at incompatible versions (2.0.x vs
-        # 3.3.8). Sharing ~/.platformio, pioarduino sees the official copy
+        # 3.3.11). Sharing ~/.platformio, pioarduino sees the official copy
         # already "installed", skips its own, and fails with
         # FRAMEWORK_DIR=None before any compile. A warm cache masked this
         # until the cache was evicted (fw-v2.3.0, 2026-07-27). Isolate the
@@ -315,8 +385,8 @@ jobs:
           PLATFORMIO_CORE_DIR="$GITHUB_WORKSPACE/.pio-core-canary-sense" \
             pio run -e canary-sense-default -e canary-sense-wellbeing
 
-      - name: Install Arduino CLI + ESP32 core 3.3.8 (WAP row, exclusive)
-        # Pinned to the WAP sketch.yaml's core (3.3.8, the core inside
+      - name: Install Arduino CLI + ESP32 core 3.3.11 (WAP row, exclusive)
+        # Pinned to the WAP sketch.yaml's core (3.3.11, the core inside
         # platform_core3), so a release builds on a core a PR has already
         # compiled the sketch on, not on whatever the action's weekly "latest"
         # is that day. firmware.yml's PR row keeps floating on "latest" by
@@ -329,15 +399,23 @@ jobs:
         # no-op) and the unversioned FQBN would take the newer
         # (RELEASE_LESSONS 2026-07-29 (k)). The action uninstalls the
         # installed esp32:esp32 release before installing, and fails the step
-        # unless 3.3.8 is the one installed afterwards.
+        # unless 3.3.11 is the one installed afterwards.
         uses: ./.github/actions/setup-arduino-esp32
         with:
-          core-version: "3.3.8"
+          core-version: "3.3.11"
           exclusive-core: "true"
+          # Exact library pins, like the core: an unversioned name installs
+          # whatever Library Manager has as newest on the day the tag is cut,
+          # straight into a signed image. These are the versions the fw-v2.4.20
+          # release run and firmware.yml's last green main run installed. A
+          # bump is a reviewed edit of this row, the flasher-release.yml and
+          # ram_audit.yml rows and the WAP sketch.yaml profile together:
+          # scripts/gen_firmware_sbom.py refuses an unversioned library on a
+          # release row and holds each pin to the profile on its core.
           libraries: |
-            Crypto
-            ArduinoJson
-            NimBLE-Arduino
+            Crypto@0.4.0
+            ArduinoJson@7.4.3
+            NimBLE-Arduino@2.5.2
 
       - name: Build canary-wap (arduino-cli)
         run: |
@@ -358,11 +436,11 @@ jobs:
         # NimBLE 1.4.3). SPI panel: no RGB-scanout mechanism, so the
         # bench-validated core-2 row is the right one. Runs AFTER the wap
         # build on purpose: it switches the installed esp32:esp32 platform,
-        # and wap builds on its own pinned core (3.3.8).
+        # and wap builds on its own pinned core (3.3.11).
         uses: ./.github/actions/setup-arduino-esp32
         with:
           core-version: "2.0.17"
-          # Exclusive: the wap row above installed core 3.3.8 into the
+          # Exclusive: the wap row above installed core 3.3.11 into the
           # same ~/.arduino15. Without this, both versions sit there, the
           # unversioned FQBN below takes the newest, and the watch compiles
           # against core 3 with the core-2 library row — which is exactly
@@ -371,9 +449,9 @@ jobs:
           libraries: |
             GFX Library for Arduino@1.4.9
             lvgl@8.4.0
-            PubSubClient
-            Crypto
-            ArduinoJson
+            PubSubClient@2.8.0
+            Crypto@0.4.0
+            ArduinoJson@7.4.3
             NimBLE-Arduino@1.4.3
 
       - name: Build canary-display watch (arduino-cli, core-2 fqbn + staged lv_conf.h)
@@ -381,19 +459,43 @@ jobs:
         # on every push: explicit --fqbn, LVGL's config staged at the
         # libraries-dir root (libraries/lvgl/src/../../lv_conf.h is how LVGL
         # finds it). See the dash/modes step below for why NOT profile mode.
+        # --library: core 2.0.17's own WebServer sizes a stack buffer from the
+        # client's multipart boundary (GHSA-8cmm-3887-r32j) and no 2.x release
+        # fixes it, so the watch links the patched copy instead; a --library
+        # library wins over the core's. firmware/third_party/
+        # WebServer-2.0.17-securacv/README.md; scripts/tests/
+        # test_vendored_webserver_core2.py holds every 2.0.17 row to it.
+        # Passing it is not proof the build used it, so the compile reports
+        # in JSON (builder_result.used_libraries names every library it
+        # linked) and check_webserver_link.py echoes the compiler's output,
+        # then holds the one WebServer to that directory. An image that
+        # linked any other is withheld, as a failed build is: fail closed,
+        # like firmware.yml's PlatformIO gate.
+        env:
+          WEBSERVER_LIB: firmware/third_party/WebServer-2.0.17-securacv
         run: |
           cd firmware/projects/canary-display/arduino/canary_display
           rm -f flavor_local.h
           LIBDIR="$(arduino-cli config get directories.user)/libraries"
           mkdir -p "${LIBDIR}"
           cp lv_conf.h "${LIBDIR}/lv_conf.h"
-          if ! arduino-cli compile \
+          RESULT="$RUNNER_TEMP/display-watch-compile.json"
+          arduino-cli compile --format json \
+              --library "$GITHUB_WORKSPACE/$WEBSERVER_LIB" \
               --fqbn 'esp32:esp32:XIAO_ESP32S3:PSRAM=opi,CDCOnBoot=cdc,USBMode=hwcdc' \
-              --output-dir /tmp/display-watch-build canary_display.ino; then
-            echo "::warning::canary-display 'watch' build failed — absent from the browser flasher this release"
-          fi
+              --output-dir /tmp/display-watch-build canary_display.ino > "$RESULT" || true
+          RC=0
+          python3 "$GITHUB_WORKSPACE/firmware/scripts/check_webserver_link.py" cli "$RESULT" \
+              --expect "$GITHUB_WORKSPACE/$WEBSERVER_LIB" || RC=$?
+          case "$RC" in
+            0) ;;
+            2) rm -rf /tmp/display-watch-build
+               echo "::warning::canary-display 'watch' build failed — absent from the browser flasher this release" ;;
+            *) rm -rf /tmp/display-watch-build
+               echo "::error::canary-display 'watch' did not link $WEBSERVER_LIB (GHSA-8cmm-3887-r32j) — its image is withheld from this release" ;;
+          esac
 
-      - name: Install ESP32 core 3.3.10 + display libraries (core-3 row, cached)
+      - name: Install ESP32 core 3.3.11 + display libraries (core-3 row, cached)
         # The RGB-panel boards (dash + modes, the Waveshare 4.3B) MUST ship
         # the core-3 pairing: only GFX 1.6.x's Arduino_ESP32RGBPanel takes
         # bounce buffers, and without them the panel visibly
@@ -406,7 +508,7 @@ jobs:
         # platform — see canary-display.ini's [env:canary-display-dash].
         uses: ./.github/actions/setup-arduino-esp32
         with:
-          core-version: "3.3.10"
+          core-version: "3.3.11"
           # Exclusive for the same reason as the core-2 row above — this one
           # happens to have worked (3.3.x was already the newest installed),
           # which is precisely why the defect stayed invisible on this side.
@@ -414,10 +516,10 @@ jobs:
           libraries: |
             GFX Library for Arduino@1.6.6
             lvgl@9.5.0
-            PubSubClient
-            Crypto
-            ArduinoJson
-            NimBLE-Arduino@2.5.0
+            PubSubClient@2.8.0
+            Crypto@0.4.0
+            ArduinoJson@7.4.3
+            NimBLE-Arduino@2.5.2
 
       - name: Build canary-display dash + modes (arduino-cli, core-3 fqbn + staged lv_conf.h)
         # Same mechanism as the watch step, on the core-3 row firmware.yml's
@@ -594,11 +696,21 @@ jobs:
               isolated) PIO=(env "PLATFORMIO_CORE_DIR=$GITHUB_WORKSPACE/.pio-core-$E" pio run -e "$E") ;;
               *)        PIO=(env "PLATFORMIO_CORE_DIR=$GITHUB_WORKSPACE/.pio-core-$CORE" pio run -e "$E") ;;
             esac
-            if "${PIO[@]}" </dev/null; then
+            # The core-2 envs serve HTTP on 2.0.17 and link firmware/
+            # third_party's patched WebServer (GHSA-8cmm-3887-r32j); the log's
+            # dependency graph says which copy an env linked, and one that
+            # linked the core's is withheld, as a failed build is.
+            LOG="$RUNNER_TEMP/pio-run-$E.log"
+            "${PIO[@]}" </dev/null 2>&1 | tee "$LOG"
+            BUILT=${PIPESTATUS[0]}
+            if [ "$BUILT" -ne 0 ]; then
+              echo "::warning::${E} build failed — its product is absent from this release"
+            elif ! python3 "$GITHUB_WORKSPACE/firmware/scripts/check_webserver_link.py" pio "$LOG"; then
+              rm -rf ".pio/build/$E"
+              echo "::error::${E} links core 2.0.17's own WebServer (GHSA-8cmm-3887-r32j) — its product is withheld from this release"
+            else
               rm -rf "${STAGE:?}/$E"
               cp -R ".pio/build/$E" "$STAGE/$E"
-            else
-              echo "::warning::${E} build failed — its product is absent from this release"
             fi
           done < <(jq -r '.[] | [.env, .core] | @tsv' <<<"$DISPLAY_ENVS")
           mkdir -p .pio/build

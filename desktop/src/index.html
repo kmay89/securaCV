@@ -192,6 +192,11 @@
             <!-- The board's passport (readPassport); hidden until read. -->
             <div id="passport" class="passport hidden"></div>
 
+            <!-- About this board (renderThisBoard): the browser flasher's rows.
+                 The hardware address sits behind a reveal, with no copy, and
+                 is in no report or file name. -->
+            <section id="this-board" class="this-board hidden" aria-live="polite"></section>
+
             <!-- Boards whose flashing port isn't the visible one (renderAccessNotes). -->
             <div id="access-notes"></div>
 
@@ -687,7 +692,7 @@
               </details>
               <label class="check"><input type="checkbox" id="hub-provision" checked> Put the self-setup bundle and maintenance key on the card</label>
               <p class="muted" style="margin-top:12px"><strong>Pi-hole</strong> — a DNS service that shows every
-                domain every device on your network asks for, so you can see nothing phones home. It also
+                domain every device on your network asks for, so you can check what each one talks to. It also
                 blocks known ad and tracker domains. Does nothing until you point your router's DNS at the hub.</p>
               <details class="hint">
                 <summary>What Pi-hole records</summary>

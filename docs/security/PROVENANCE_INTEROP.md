@@ -7,9 +7,11 @@ medical/pharma data integrity, content provenance, high-assurance key
 ceremonies, and transparency logs — and against the adversary that frontier AI
 models make cheap.
 
-The result, stated honestly: **the technical substrate already meets or
-exceeds the core of every regime surveyed, and what's missing is almost
-entirely packaging, context, and format adoption — not cryptography.** The
+The result, stated honestly: **the technical substrate maps onto the core of
+every regime surveyed (tables in [`docs/compliance/`](../compliance/README.md)),
+and what's missing is almost entirely packaging, context, and format
+adoption — not cryptography; whether a deployment is acceptable under a regime
+is decided by its regulator, assessor or court.** The
 strategy that follows from that is *elegant compatibility*: adopt the ratified
 format wherever one exists, emit the artifact the regime actually consumes,
 and never invent a bespoke mechanism where a standard one fits. Nothing below
@@ -46,7 +48,7 @@ under the "silent witness" theory (FRE 901(b)(9)) on a prose description of a
 process that produces an accurate, unalterable result — which is a
 description of the sealed chain plus receipts.
 
-**What we satisfy:** whole-envelope SHA-256 digests, per-event hashes, signed
+**What we can point to:** whole-envelope SHA-256 digests, per-event hashes, signed
 export receipts tied to disclosure acts (Invariant IV), dual independent
 verifiers, and RFC 3161 anchors verifiable with plain openssl — everything the
 certification must *describe* already exists and is third-party checkable.
@@ -84,11 +86,13 @@ verification instructions runnable by opposing counsel with `sha256sum` and
 ### 1.2 Medical / pharma data integrity (the strictest audit-trail regime)
 
 21 CFR Part 11 requires "secure, computer-generated, time-stamped audit
-trails" where changes never obscure prior entries — the hash chain satisfies
-this **by construction**, more strongly than typical validated pharma systems.
+trails" where changes never obscure prior entries — the hash chain is designed
+to support this: a change cannot obscure a prior entry without failing
+verification ([`docs/compliance/part11.md`](../compliance/part11.md), 11.10(e)).
 HIPAA's integrity specification (45 CFR 164.312(c)(2): "mechanisms to
 corroborate that ePHI has not been altered or destroyed in an unauthorized
-manner") is a literal description of the sealed chain.
+manner") maps to the sealed chain's integrity check
+([`docs/compliance/hipaa_164_312.md`](../compliance/hipaa_164_312.md)).
 
 What these regimes score records on that we do not yet record is **human
 context**, three fields, all additive:
@@ -271,8 +275,16 @@ stay canonical in [`ENTERPRISE_CUSTODY.md`](ENTERPRISE_CUSTODY.md).
    description + `sha256sum`/`openssl`-only VERIFICATION instructions;
    per-file handoff sidecars at unseal so downstream custody chains onto
    ours. *(Implemented for event-export bundles — the `court_export` tool,
-   see `docs/court_export.md`. Still open: OTS tokens, and handoff sidecars
-   on `break_glass unseal` outputs.)*
+   see `docs/court_export.md`; per-file handoff sidecars on every unseal and
+   every `export_events` run (an API bundle gets one through
+   `handoff_sidecar emit`), `docs/handoff_sidecars.md` — the seam a downstream custody system
+   docks onto: device-signed rows it can check with `sha256sum`, `openssl`
+   and `jq`, a salted pairing of the file to the envelope the device
+   decrypted, and a declared recipient fixed by a salted commitment. The
+   sidecar is a SecuraCV format, not a C2PA manifest, and makes no C2PA
+   claim. OpenTimestamps proofs ship in the kit as
+   `anchors/ots-NNNN-<subject>.ots`, checkable with `ots info` and
+   `ots verify -d <hex>`.)*
 5. **Anchoring upgrades**: scheduled anchoring on by default; "two TSAs"
    becomes "one eIDAS-qualified + one independent"; OpenTimestamps as a
    second, trust-kind-independent leg; clock-provenance events (measured
@@ -280,8 +292,15 @@ stay canonical in [`ENTERPRISE_CUSTODY.md`](ENTERPRISE_CUSTODY.md).
    per-device ledgers: typed subjects, anchor policy with declared roles,
    anchor-all with a constant per-run request count, two-TSA distinctness
    check, TSA identity from the token; scheduled anchoring stays an operator
-   cron — never in witnessd; OpenTimestamps and clock-provenance events
-   remain design.)*
+   cron — never in witnessd. Clock-provenance events are implemented:
+   `witnessd` seals one device-signed record per anchor row — the device
+   clock against the token's `genTime`, whole clamped seconds, bound by the
+   token's hash — into a never-pruned ledger whose head is the fifth anchor
+   subject, and `court_export` packages each packaged token's record;
+   `docs/design/clock_provenance.md`. The OpenTimestamps leg is implemented
+   for the per-device ledgers — nonced commitments on the `anchor-all`
+   cadence, confirmation only against an operator-supplied header file;
+   `docs/design/opentimestamps_leg.md`. The fleet aggregate remains design.)*
 
 **Tier 2 — the spine (medium):**
 
@@ -332,7 +351,11 @@ stay canonical in [`ENTERPRISE_CUSTODY.md`](ENTERPRISE_CUSTODY.md).
     clause→mechanism→status table; verification-methodology whitepaper;
     BS 10008 operator pack ("designed to support conformance", never
     "certified"); FIPS split-knowledge vocabulary for the threshold wrap;
-    per-ruleset validation sheets (the FRE 707 answer).
+    per-ruleset validation sheets (the FRE 707 answer). *(In part:
+    [`docs/compliance/`](../compliance/README.md) — Part 11, Annex 11, ALCOA+,
+    HIPAA 164.312, US evidence, BS 10008 and FIPS-vocabulary maps, the
+    verification methodology, the operator pack; validation sheets and the
+    claims/recordings rule land with item 7 CP3.)*
 15. **Parser and comparison hardening**: fuzz targets for every
     cross-boundary parser; reject-don't-normalize; constant-time equality
     on secrets; the seccomp allowlist inversion (ENTERPRISE_CUSTODY §3).
@@ -340,7 +363,10 @@ stay canonical in [`ENTERPRISE_CUSTODY.md`](ENTERPRISE_CUSTODY.md).
     never authoritative): FHIR AuditEvent / IHE ATNA shape for SIEM export;
     CAWG identity assertions for co-signing; qualified-ledger and C2PA
     conformance-program tracking; capture-pipeline provenance toward
-    sensor-proximate signing.
+    sensor-proximate signing. *(Tracking published:
+    `docs/compliance/maps/eidas_qualified_ledger.json`, `c2pa_conformance.json`,
+    `capture_provenance.json`; the AuditEvent projection (CP2) and CAWG
+    co-signing (CP5) are design.)*
 
 ---
 

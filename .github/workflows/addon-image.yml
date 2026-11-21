@@ -24,6 +24,9 @@ name: Add-on image
 #   then run the `verify-public` gate to confirm every published arch is actually
 #   anonymously pullable (i.e. the GHCR packages are public) — a green build alone
 #   does not guarantee an installable app.
+# - A push never moves a published :<version> while the app's CHANGELOG has
+#   entries under "## Unreleased": the build leg refuses and names
+#   scripts/bump_version.sh (the step's comment says exactly what it checks).
 
 on:
   pull_request:
@@ -139,6 +142,66 @@ jobs:
             echo "::error title=Add-on image::custom_components/securacv/manifest.json version (${carried}) != privacy_witness_kernel/config.yaml version (${APP_VERSION}); run scripts/bump_version.sh"
             exit 1
           fi
+
+      # A push to main re-pushes :<version> for whatever version config.yaml
+      # names, and the Supervisor offers an update only when that string moves.
+      # So a change that lands without a bump silently puts new bytes under a
+      # version people already run, and nobody who installed it is offered
+      # them (0.9.0 was re-pushed from main while the app's CHANGELOG filed
+      # the changes under "Unreleased"). This step turns that into a red build
+      # at the one place it is knowable: the CHANGELOG still has entries under
+      # "## Unreleased" AND this arch's :<version> is already on GHCR. The
+      # probe is verify_published_image.sh's (a
+      # pull-scoped anonymous registry token, then the manifest, here a HEAD):
+      # 200 is published, 404 is a version nobody can pull yet (the first
+      # build after a bump goes ahead), and anything else refuses rather than
+      # guesses. No entries under Unreleased means no probe at all. Push
+      # events only: a pull request publishes nothing. It reads the CHANGELOG
+      # and nothing else, so a change with no entry there is not caught.
+      - name: Refuse to re-point a published version that has unreleased changes
+        if: steps.gate.outputs.run == 'true' && github.event_name != 'pull_request'
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          unreleased=$(awk '
+            /^## / { in_unreleased = ($0 ~ /^## \[?[Uu]nreleased\]?[[:space:]]*$/); next }
+            in_unreleased && /^[-*] / { n++ }
+            END { print n + 0 }' privacy_witness_kernel/CHANGELOG.md)
+          if [ "$unreleased" -eq 0 ]; then
+            echo "privacy_witness_kernel/CHANGELOG.md has no entries under '## Unreleased'; nothing to guard."
+            exit 0
+          fi
+          repo="${IMAGE#ghcr.io/}"
+          code=000
+          for attempt in 1 2 3 4 5; do
+            token=$(curl -fsS "https://ghcr.io/token?service=ghcr.io&scope=repository:${repo}:pull" 2>/dev/null \
+                      | python3 -c 'import json, sys; print(json.load(sys.stdin).get("token", ""))' 2>/dev/null || true)
+            # Every manifest media type buildx can leave behind: GHCR answers
+            # 404 for a present image whose stored type is missing from Accept.
+            code=$(curl -s -o /dev/null -w '%{http_code}' --head \
+                     -H "Authorization: Bearer ${token}" \
+                     -H 'Accept: application/vnd.oci.image.index.v1+json' \
+                     -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
+                     -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
+                     -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
+                     "https://ghcr.io/v2/${repo}/manifests/${VERSION}" || echo 000)
+            case "$code" in
+              000|429|500|502|503|504) sleep $((attempt * 3)) ;;
+              *) break ;;
+            esac
+          done
+          echo "${IMAGE}:${VERSION} -> HTTP ${code}; entries under '## Unreleased': ${unreleased}"
+          case "$code" in
+            404)
+              echo "Not published yet: this build is the first ${VERSION}." ;;
+            200)
+              echo "::error title=Add-on image::${IMAGE}:${VERSION} is already published and privacy_witness_kernel/CHANGELOG.md has entries under '## Unreleased' (${unreleased}). Pushing would put new bytes under a version people already run, with no update offered. Run scripts/bump_version.sh <next version> and retitle '## Unreleased' to '## <next version>' in that CHANGELOG."
+              exit 1 ;;
+            *)
+              echo "::error title=Add-on image::could not tell whether ${IMAGE}:${VERSION} is already published (HTTP ${code} from GHCR) while privacy_witness_kernel/CHANGELOG.md has unreleased entries; not pushing over it. Re-run this job; if the version is published, run scripts/bump_version.sh <next version>."
+              exit 1 ;;
+          esac
 
       - name: Set up Docker Buildx
         if: steps.gate.outputs.run == 'true'

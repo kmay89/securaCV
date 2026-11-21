@@ -44,6 +44,8 @@ from .api import (
     SecuraCVApiAuthError,
     SecuraCVApiConnectionError,
     SecuraCVApiError,
+    SecuraCVApiResponseError,
+    _async_read_json,
 )
 from .const import (
     AUTH_MODE_PAIRED,
@@ -577,9 +579,13 @@ class SecuraCVKernelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _note_backstop_success(self) -> None:
         self.backstop_ok = True
         self._failing_since = None
-        if self._unreachable_reported:
-            self._unreachable_reported = False
-            repairs.async_clear_kernel_unreachable(self.hass, self.entry)
+        self._unreachable_reported = False
+        # Cleared on every success, not only when THIS coordinator raised
+        # it: a reload, a reauth, a reconfigure or the key fix flow starts
+        # a fresh coordinator that never did, and the issue a previous one
+        # raised stayed open until a restart. Deleting an absent issue is a
+        # no-op (the rule _check_pin applies to tofu_mismatch).
+        repairs.async_clear_kernel_unreachable(self.hass, self.entry)
 
     @callback
     def _check_pin(self, identity: dict[str, Any]) -> None:
@@ -787,8 +793,14 @@ class SecuraCVAdapterStatsCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ) as resp:
                 if resp.status != 200:
                     raise UpdateFailed(f"stats endpoint status {resp.status}")
-                # The endpoint sends application/json; tolerate a missing/odd content-type.
-                data = await resp.json(content_type=None)
+                # Read under API_JSON_MAX_BYTES like every kernel answer: a
+                # host at this URL (a misconfigured or hostile LAN address)
+                # must not make Home Assistant buffer an unbounded body
+                # every poll. The content-type is not checked, as before.
+                try:
+                    data = await _async_read_json(resp, "adapter stats")
+                except SecuraCVApiResponseError as err:
+                    raise UpdateFailed(f"adapter stats unreadable: {err}") from err
                 return data if isinstance(data, dict) else {}
         # ValueError covers a misconfigured URL (e.g. missing scheme) raised by aiohttp.
         except (aiohttp.ClientError, TimeoutError, ValueError) as err:

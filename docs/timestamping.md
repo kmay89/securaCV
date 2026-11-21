@@ -51,9 +51,68 @@ SecuraCV's no-outbound-network principle is preserved: nothing in
 operator's cron job) runs `log_anchor`, and an offline flow exists for
 air-gapped deployments.
 
+### The OpenTimestamps leg and Invariant III
+
+1. **No kernel involvement.** `witnessd` never contacts a calendar. Stamping
+   and upgrading run only inside operator-initiated `log_anchor anchor-all`
+   (the TSA leg's process and cadence) and `request --policy` (an operator
+   one-off). The kernel's only OpenTimestamps code is structural
+   verification and the retention union. `ots_anchors` is auxiliary,
+   unsigned evidence, like `tsa_anchors`.
+2. **Constant submission count.** Every run submits exactly `|planned
+   subjects| × |calendars|` commitments: `plan_subjects` substitutes the fixed
+   sentinel for an empty ledger. There is no already-anchored lookup and no
+   skip for an unchanged head, and the leg runs whether or not the TSA leg's
+   requests failed, so a TSA failure never changes whether calendars are
+   asked.
+3. **Upgrade count is a function of cadence and calendar latency, never of
+   events.** Each run sends at most one GET per pending row created within
+   the last 7 days (a constant), polling the first pending leaf whose URI
+   equals the row's calendar URL, and only if that URL is a declared
+   calendar. Every `anchor-all` run creates the same number of rows, so the
+   pending set those runs leave is fixed by the cron interval and how fast
+   calendars commit; the horizon bounds their GET count by `|subjects| ×
+   |calendars| × runs-per-7-days`, a configuration constant. Rows stored by
+   an operator one-off — `request --policy` (a bundle digest) or `import
+   --ots-dir` (including a repeated import of the same directory) — are
+   pending rows too, and each later `anchor-all` run within the horizon polls
+   each of them with at most one GET: such a one-off adds at most `(rows it
+   added) × runs-per-7-days` GETs. Those GETs follow operator actions, never
+   witnessed events, and each names a commitment that calendar already
+   received. The horizon is two-sided: a row dated more than 7 days after the
+   host's clock (a clock that ran ahead when it was stamped) is not polled
+   either, so the bound holds whichever way the clock was skewed. Rows beyond
+   the horizon stay pending and are reported, not polled. The upgrade pass runs before the stamp pass, so rows
+   stamped in a run are never polled in it. Upgrades create no rows.
+4. **Request content is random.** Each calendar receives `SHA256(hash ‖
+   nonce16)`, with a nonce fresh per (subject, calendar, run); heads and
+   sentinels are blinded alike. A calendar cannot see a ledger head, cannot
+   recognize an empty ledger, cannot tell whether a head changed between
+   runs, and cannot link its submission to another calendar's. The TSA leg's
+   residual — the imprint repeats across runs until the head changes — does
+   not exist on this leg. An upgrade GET names the calendar's own commitment
+   (the pending message), which the calendar already holds.
+5. **Request timing is the operator's schedule.** The tool never sleeps,
+   polls or waits. A policy carrying `ots` on a build without the feature is
+   refused before the first TSA request, so a run either does every leg or
+   nothing.
+6. **No precise external time enters a record.** A proof carries no time: a
+   Bitcoin attestation is a block height. The block header's `nTime` lives in
+   the verifier's header source and is never written to the database, the
+   report, the kit, or `verify` output. `created_bucket_start` and
+   `upgraded_bucket_start` are 10-minute buckets. `VerifyReport` gains one
+   counter and no height, hash or time.
+7. **Egress is compile-time opt-in, and verification is silent.** The calls
+   exist only under `--features ots`, which no image enables. These make no
+   network call: `list`, `verify` (any flags), `import`,
+   `anchor-all --offline-dir`, `court_export`, `run_full_verify`.
+8. **Offline mirrors online.** `--offline-dir` writes `|subjects| ×
+   |calendars|` request files every run, plus one upgrade file per pollable
+   pending row. The file count never reflects events.
+
 ## Anchoring a ledger head
 
-An anchor row names what it covers — its **subject**. Four ledgers have a
+An anchor row names what it covers — its **subject**. Five ledgers have a
 head that can be anchored, selected with `--subject`:
 
 | `--subject` | What is anchored |
@@ -62,6 +121,7 @@ head that can be anchored, selected with `--subject`:
 | `export_receipt_head` | the newest export-receipt `entry_hash` |
 | `break_glass_receipt_head` | the newest break-glass-receipt `entry_hash` |
 | `policy_head` | the newest policy-change-history `entry_hash` |
+| `clock_provenance_head` | the newest clock-provenance `entry_hash` ("Clock provenance" below) |
 
 Anything else is a bare `digest` (`--digest <hex>` or `--file <path>`, which
 hashes the file's bytes in-tool); `--subject`, `--digest` and `--file` are
@@ -149,11 +209,22 @@ anchor, and what "covered" means:
       "allow_http": false,
       "cert_sha256": ["<64-hex of the TSA signing certificate, optional>"] }
   ],
-  "subjects": ["chain_head", "export_receipt_head", "break_glass_receipt_head", "policy_head"],
+  "subjects": ["chain_head", "export_receipt_head", "break_glass_receipt_head", "policy_head", "clock_provenance_head"],
   "require_roles": ["qualified", "independent"],
-  "min_distinct_tsas": 2
+  "min_distinct_tsas": 2,
+  "max_clock_offset_s": 600
 }
 ```
+
+`subjects` defaults to all five heads, `require_roles` to both roles,
+`min_distinct_tsas` to 2 and `max_clock_offset_s` (the clock-provenance
+threshold, "Clock provenance" below) to 600; `max_clock_offset_s` must be at
+least 1. **Add `max_clock_offset_s`, or list `clock_provenance_head` in
+`subjects`, only once every `log_anchor` that reads the policy is
+upgraded** — an older one refuses a policy carrying a key it does not know
+(`unknown field`) or a subject it does not know (`not a ledger head`).
+Omitting `subjects` is safe across the upgrade: a new reader anchors all
+five heads, an older one the four it knows.
 
 `ca` paths resolve relative to the policy file. Unknown fields, a missing
 format tag, a `digest` subject, a role no TSA declares, or a `min_distinct_tsas`
@@ -233,10 +304,167 @@ anchor policy anchor-policy.json: NOT SATISFIED (1 subject(s) uncovered)
 
 `current head: NO (ledger advanced since)` is normal in steady state — the
 chain head moves with every heartbeat — and is not a failure unless
-`--require-current` is given (ceremony close-out). The final line is
+`--require-current` is given (ceremony close-out).
+
+`clock_provenance_head` has its own currency rule. `witnessd` seals one
+clock-provenance record per anchor row it observes — the anchoring run's own
+rows included — so within one poll of any `anchor-all` that ledger's head has
+moved past the hash the run anchored, and plain equality could never hold
+while the daemon runs. The covered hash therefore reads current when every
+record after it binds an anchor row newer than the one the covered record
+binds — the ledger advanced only by observing later anchoring:
+
+```
+policy: clock_provenance_head: covered by dfn (qualified, declared), freetsa (independent, declared) — anchors #18, #19, bucket 2026-09-07 06:00 UTC; current head: yes (advanced since only by 10 record(s) of later anchor rows; this ledger grows by one record per anchor row, this run's own included)
+```
+
+A later record that binds an older anchor row (which the daemon's cursor never
+produces) reads `current head: NO (ledger advanced since)` and counts against
+`--require-current`. The rule cannot tell this run's rows from a row stored by
+another run in the seconds between the hash being planned and the daemon's
+next poll; the records sealing those rows are fixed in time by the next run.
+
+The first `anchor-all` that finds the clock-provenance ledger empty — on every
+new database, and the first run after the upgrade — anchors its sentinel, and
+`witnessd` then seals records for that run's rows. From then until the next
+`anchor-all`, `verify --policy` reads `policy: clock_provenance_head: NOT
+covered — anchored by no attributed TSA; …` and `NOT SATISFIED (1 subject(s)
+uncovered)`; `anchor-all` says so on stderr when it anchors that sentinel. To
+avoid the window, run `anchor-all` a second time once `witnessd` has polled
+(about 5 s later). The final line is
 `anchor policy anchor-policy.json: SATISFIED` with exit 0, or `NOT SATISFIED
 (…)` with exit 1, as above; both go to stdout, and the failing one is also
 the process's error on stderr (`Error: anchor policy …: NOT SATISFIED (…)`).
+
+## The OpenTimestamps leg
+
+An anchor policy may carry an optional `ots` object. With it, every planned
+subject is also submitted to every declared OpenTimestamps calendar — a
+trust-kind-independent leg beside the two TSAs. Its proofs live in their own
+table, `ots_anchors`, never in `tsa_anchors`; the design record is
+[`design/opentimestamps_leg.md`](design/opentimestamps_leg.md).
+
+```json
+"ots": {
+  "calendars": [
+    { "name": "alice", "url": "https://alice.btc.calendar.opentimestamps.org" },
+    { "name": "bob",   "url": "https://bob.btc.calendar.opentimestamps.org" }
+  ],
+  "required": false
+}
+```
+
+One to eight calendars; a name is unique across both rosters (TSA and
+calendar names); a URL is `https://` (or `http://` with `"allow_http": true`),
+has no trailing `/`, query or fragment, and uses only `A-Z a-z 0-9 . _ / : -`
+— the characters a pending attestation may carry, so a stored proof's pending
+URI matches its calendar entry by exact string equality. Declare the
+calendars themselves, not an aggregator pool: a response whose pending
+attestation names another URL is refused. **Add `ots` only once every policy
+reader is upgraded** — an older `log_anchor` refuses the unknown key.
+
+**Commitments.** A calendar never receives a ledger head or a sentinel. Each
+submission is `SHA256(hash ‖ 16 fresh random bytes)` — the reference client's
+own blinding — with a nonce fresh per (subject, calendar, run). The stored
+proof is the complete `.ots` file over the hash: `append(nonce)`, `sha256`,
+then the calendar's own steps to its pending attestation.
+
+**Stamp and upgrade, on the `anchor-all` cadence** (`--features tsa,ots`).
+Each run first sends at most one `GET <calendar>/timestamp/<pending message>`
+per earlier row that is still pending and was created within 7 days of the
+run's bucket (a fixed horizon, on either side, so a row dated ahead by a fast
+host clock is not polled indefinitely), then stamps every planned subject at every calendar. A
+reply that reaches a Bitcoin block-header attestation is merged into the
+stored proof (the pending leaf is kept beside the new path, as `ots upgrade`
+leaves it); rows stamped in this run are never polled in it. Rows past the
+horizon stay pending and are reported, not polled. Output:
+
+```text
+ots: stamping chain_head <hash> via alice (https://alice.btc.calendar.opentimestamps.org)   (stderr)
+ots anchor #12 stored: chain_head <hash>
+  pending at https://alice.btc.calendar.opentimestamps.org via alice
+ots anchor #7 upgraded: chain_head attests Bitcoin block 912345
+anchor-all (ots): 10 stored, 0 failed (5×2 submitted; 2 over empty-ledger sentinels); upgrades: 1 now attest a Bitcoin block, 9 still pending, 0 error(s), 0 beyond the 7-day horizon (not polled)
+```
+
+Upgrade misses and errors never fail a run; a failed submission does
+(`{f} of {M} calendar submission(s) failed`, joined to the TSA text with `; `
+when both legs failed). A build with `tsa` but not `ots` refuses a policy
+carrying `ots` before the first TSA request — a run does every leg or
+nothing — and names the offline flow.
+
+**Offline round trip.** `anchor-all --offline-dir out/` also writes, for
+every subject and calendar, `out/{subject}.{calendar}.ots-request.json`
+(`{"format":"securacv-ots-request:v1","subject_hash":…,"nonce":…,"calendar":…,"calendar_url":…}`
+— no subject field: import re-derives it from the ledgers) and
+`out/{subject}.{calendar}.ots-commitment` (the 32-byte POST body), plus one
+`out/ots-{id}.ots-upgrade.json` per row the online pass would poll now. It
+prints the `curl -sf … --data-binary @… <url>/digest > ….otsr` and
+`curl -sf … <uri>/timestamp/<hex> > out/ots-{id}.otsr` lines; then
+
+```sh
+log_anchor --db witness.db import --policy anchor-policy.json --ots-dir out/
+# import (ots): {s} stored, {u} upgraded, {p} still pending, {f} failed
+```
+
+An empty `.otsr` (curl `-f` on a 404 or error) is "no response" for a stamp
+(failed) and "still pending" for an upgrade (not a failure). An upgrade file
+binds by the pending leaf's message, which must be in the stored proof: a
+misnamed file is refused, never merged.
+
+**Bundle digests.** `request --policy p.json --file bundle.json` (online)
+stamps the digest at the policy's calendars after its TSA requests;
+`query --policy p.json --file bundle.json --out bundle.tsq` writes the
+request files beside `bundle.tsq` for the offline flow. `request --url`
+stays TSA-only.
+
+**Verifying.** `log_anchor verify` never contacts the network. Its one
+Bitcoin source is `--bitcoin-headers <file>`: one line per block, `<height>
+<160 hex of the 80-byte header>`, from a node you run:
+
+```sh
+for h in <heights>; do echo "$h $(bitcoin-cli getblockheader $(bitcoin-cli getblockhash $h) false)"; done > headers.txt
+log_anchor --db witness.db verify --bitcoin-headers headers.txt
+```
+
+Each header must pass a proof-of-work **sanity check**: its hash is at or
+below the target its own `nBits` encodes, and that target is no easier than
+Bitcoin's minimum difficulty (`0x1d00ffff`). That catches a typo, a testnet
+or regtest header, or the wrong file. It is not evidence that the header is
+on the real chain — a forger with modest hardware can satisfy it; the header
+source is the verifier's trust root. Lines per row:
+
+- `ots anchor #N: OK (proof digest matches, <membership>; confirmed in Bitcoin block H against the supplied header, block hash <hash>) via <calendar>` — a Bitcoin leaf's 32-byte message equals the supplied header's merkle root;
+- `UNVERIFIED (…; attests Bitcoin block H; merkle root NOT checked — re-run with --bitcoin-headers <file>)` or `(…; no header for block H in <file>)`;
+- `UNVERIFIED (…; pending (not yet in a Bitcoin block) at <uri>)`, with `, beyond the 7-day upgrade horizon — no longer polled; the calendar may never have committed it` past the horizon, or `, dated more than 7 days after this host's clock — not polled; check the host clock` for a row dated ahead of it;
+- `FAIL` and one problem per line: the proof does not parse, covers another hash, contradicts the row's cached `attestation`/`bitcoin_height`, carries no pending or Bitcoin leaf, has a Bitcoin leaf over a message that is not 32 bytes, a head missing from its ledger, or **any** Bitcoin leaf whose supplied header's merkle root differs (`merkle root of the supplied header for Bitcoin block H (<header root>) does not match the proof (<proof root>)`).
+
+A summary follows: `{n} OpenTimestamps anchor(s): {c} confirmed against the
+supplied header, {u} attest a Bitcoin block not checked against a header,
+{p} pending (not yet in a Bitcoin block), {f} failed`. Roots and hashes are
+printed in explorer byte order.
+
+**Under `--policy`.** Coverage counts only header-confirmed rows: pending
+never covers, and a height nobody checked never covers. The lines are
+`policy: <subject>: ots confirmed in Bitcoin block H against the supplied
+header — ots anchors #a, #b; current head: yes|NO (ledger advanced since)`
+and `policy: <subject>: ots NOT confirmed — {p} pending, {u} attested but not
+checked against a header`. With `"required": false` both end `; not required
+by this policy` and nothing counts toward the verdict. With
+`"required": true`, `verify --policy` refuses to run without
+`--bitcoin-headers`, and each non-empty subject without a confirmed proof
+adds `, {k} without a confirmed OpenTimestamps proof` to `NOT SATISFIED (…)`.
+`--require-current` does not apply to this leg: Bitcoin confirmation lags by
+hours by design, so "current head" would be unsatisfiable on any ledger that
+advances between runs; the TSA leg carries freshness and the OTS line's
+`current head` is information only. A brand-new ledger therefore fails a
+`required` policy until its first confirmation.
+
+**Clock provenance.** An OpenTimestamps row creates no clock-provenance
+record: a block height is not an issuer time.
+
+**`relabel --ots --id N --subject digest`** is `relabel` for an
+OpenTimestamps row, with the same refusals; it never creates the table.
 
 ## TSA identity
 
@@ -260,8 +488,8 @@ Per anchor this checks, in order of increasing externality:
    anchor row claims (parsed by SecuraCV's own RFC 3161 reader).
 2. **Ledger membership** — the hash is in the ledger the row declares:
    sealed-event hash or checkpoint head for `chain_head`, the
-   export-receipt, break-glass-receipt, or policy-change history for the
-   receipt-head kinds. A tampered or regenerated ledger fails here: its
+   export-receipt, break-glass-receipt, policy-change or clock-provenance
+   history for the other head kinds. A tampered or regenerated ledger fails here: its
    history no longer contains the anchored state.
 3. **The TSA countersignature** (with `--ca`) — delegated to an
    *independent implementation*, `openssl ts -verify`, the same
@@ -288,6 +516,156 @@ names the anchor row id and at most a 16-hex prefix, never a `genTime`. Check
 ledger verdict says the anchored states are still present, not that a TSA
 vouched for them — `log_verify` prints the exact `log_anchor … verify --ca`
 command as the next step.
+
+## Clock provenance (device clock vs TSA `genTime`)
+
+An anchor fixes a ledger state in the TSA's time. The events in that ledger
+carry the **device's** time — 10-minute buckets stamped by `witnessd`'s wall
+clock. Clock provenance is the record of how that clock compared with the
+TSA's at every anchor: the direct answer to "the device's clock was wrong".
+Design and the rejected alternatives: [`design/clock_provenance.md`](design/clock_provenance.md).
+
+**What is recorded.** `witnessd` polls its own `tsa_anchors` table every 5 s
+(a read of the local database; no network) and seals **one device-signed,
+hash-chained record per anchor row** into the never-pruned
+`clock_provenance` ledger:
+
+| Field | Meaning |
+|---|---|
+| `time_bucket` | the device's 10-minute bucket when it first saw the row |
+| `anchor_id` | the anchor row (a locator) |
+| `token_sha256` | SHA-256 of the row's token — what `sha256sum` prints; this is the binding |
+| `observed_offset_s` | `device wall clock − genTime`, whole seconds, clamped to ±3600; positive = the device read ahead. `null` = binding only |
+| `poll_gap_s` | whole seconds (rounded up) since the previous completed poll, 1–3600: the row was at most this old when first seen. `null` with the offset, including after a gap over 3600 s |
+| `kernel_version` | the build that measured |
+
+A row already present at the first poll of a `witnessd` process is of
+unbounded age, so it gets a **binding-only** record (both measurements
+`null`). So does a row first seen more than 3600 s after the previous
+completed poll (a stalled main loop, or an hour of failed polls): a gap
+clamped to 3600 would state a false bound on the row's age, and the offset
+would blame the device clock for the stall. The wall clock and the gap are
+read once per poll, after the poll holds the database's write lock, so a row
+committed while the poll waited for the lock is never measured against an
+earlier reading.
+
+With δ the device clock's true error, a measured record bounds
+δ ∈ (offset − poll_gap_s − d − 1, offset + 1), where *d*, the delay between
+the TSA issuing the token and the row being stored (about a second when the
+hub anchors online), is not measured, and the ±1 s comes from truncating both
+the device reading and `genTime` to whole seconds. A negative offset means the
+device read behind by more than |offset| − 1 s whatever *d* was. Anchors stored before the
+upgrade are never recorded: the first poll on an upgraded database starts at
+the newest existing row.
+
+The ledger's head is the fifth anchor subject, `clock_provenance_head`, so
+`anchor-all` fixes every record in external time at the next scheduled run.
+A failed append is sealed as a `StorageWriteFailed` failure record and the
+next poll waits 60 s; safe mode appends nothing.
+
+**`log_anchor verify`** reads the ledger (read-only; it holds no key and
+writes nothing) and checks it under the device key lineage the database
+names, so its verdict is self-consistency, never "verified". Before the
+anchors, one ledger line:
+
+```
+clock provenance: no records
+clock provenance: 3 record(s), ledger self-consistent (chain and device signatures check under the key lineage this database names; identity unverified)
+clock provenance: FAIL (integrity check failed at clock-provenance record id 2: computed_hash=…, stored_hash=…)
+```
+
+Under every anchor, one `clock:` line — the forms, with placeholders:
+
+```
+    clock: no record (anchored before clock provenance, or witnessd was not running to observe it)
+    clock: record #1: device clock +2 s vs TSA genTime (row seen within 5 s, stored in the bucket of issuance); within one bucket (600 s)
+    clock: record #2: device clock -900 s vs TSA genTime (row seen within 5 s, stored in the bucket of issuance); BEYOND one bucket (600 s)
+    clock: record #3: device clock >= +3600 s (clamped) vs TSA genTime (row seen within 5 s, stored in the bucket of issuance); BEYOND one bucket (600 s)
+    clock: record #4 binds this token (sha256 <16 hex>…); binding only, no measurement (row already present at the first poll of a witnessd process, or first seen more than 3600 s after the previous completed poll)
+    clock: record #5: device clock +30 s vs TSA genTime; row stored 1d 23h after issuance (delayed import), positive offset not evaluated
+    clock: record #6: device clock -40 s vs TSA genTime (row seen within 5 s, stored 1d 23h after issuance (delayed import; a negative offset is evaluated regardless)); within one bucket (600 s)
+    clock: record #7: device clock +2 s recorded, but genTime not readable from the token; not evaluated
+    clock: FAIL record #8 binds token sha256 <16 hex>… but the row now holds <16 hex>… — the token was replaced after the device bound it
+```
+
+The storage phrase is `stored in the bucket of issuance`, `stored <d h | h m
+| m> after issuance`, or `stored <…> before issuance by the anchoring host's
+clock`. A record is **prompt** when the anchor row's bucket starts no more
+than 1200 s after `genTime`; a prompt offset is evaluated either way, a
+delayed one only when negative — a late offline import cannot make a clock
+look fast, and behind is behind. With `--policy` the band names the policy's
+threshold (`BEYOND 30 s (max_clock_offset_s)`). Beside a beyond reading:
+
+```
+    WARNING: device clock offset beyond the structural threshold; with --policy this counts against the anchor policy
+    note: a ClockSkew failure record is retained in bucket <bucket start> (within one bucket of this reading)
+    note: no ClockSkew failure record retained within one bucket of this reading (retention prunes failure records)
+```
+
+(the first only without `--policy`). When the anchoring host's clock and the
+device's disagree — the device's reading at observation is not within
+`0..1200` s after the anchor row's bucket start:
+
+```
+    note: host clock: the device's reading at observation is -696 s from the anchor row's bucket start (expected 0 to 1199 s); the anchoring host's clock and the device clock disagree
+    note: host clock: the device's reading at observation is >= +3804 s from the anchor row's bucket start (expected 0 to 1199 s); the anchoring host's clock and the device clock disagree
+```
+
+A clamped offset is a bound on the reading, not the reading, so for one the
+note prints the gap as an inequality (`>=` at +3600, `<=` at −3600) and fires
+only when the bound alone settles it — never for a late import whose clamped
+reading says nothing about the host clock.
+
+For every `chain_head` anchor whose head is still a live sealed row, record
+or no record, a structural check: if the sealed row's bucket starts `n > 1`
+seconds after the token's `genTime`, the device read at least `n` s ahead
+when it sealed that row (a `note:` within the threshold, a `WARNING` beyond
+it, and under `--policy` a breach only when the anchor's own line is `OK`):
+
+```
+    note: the anchored sealed row's bucket starts 396 s after the TSA genTime: the device clock read at least 396 s ahead when it sealed that row
+    WARNING: the anchored sealed row's bucket starts 996 s after the TSA genTime: the device clock read at least 996 s ahead when it sealed that row (BEYOND one bucket (600 s))
+```
+
+After the anchors, a record whose anchor is gone, and the step check between
+consecutive **evaluated** records (prompt, or negative offset — the same rule
+as the band above; a delayed import's positive offset is not a clock reading
+and is skipped) whose offsets differ by more than one bucket:
+
+```
+clock provenance: FAIL record #1 names anchor #1, which is not in the anchors table (deleted, or the table was rebuilt)
+clock provenance: note: device clock offset stepped -930 s between records #2 and #3; no ClockSkew failure record is retained between their buckets (retention prunes failure records)
+clock provenance: note: device clock offset stepped -930 s between records #2 and #3; a ClockSkew failure record is retained between their buckets (bucket <bucket start>)
+```
+
+The ClockSkew notes say **retained**: retention prunes failure records, so
+"none retained" never means "none happened". Without `--policy` a beyond
+reading is a printed `WARNING` and no exit code; with `--policy` each one
+counts as a breach of `max_clock_offset_s` (default 600):
+`anchor policy …: NOT SATISFIED (0 subject(s) uncovered, 2 clock-offset
+breach(es) of max_clock_offset_s 30)`. The run fails, in this order, with
+`{n} anchor(s) failed verification`, `clock provenance ledger failed
+verification`, `{n} clock-provenance record(s) name anchors that were deleted
+or replaced`, then the policy's `NOT SATISFIED`.
+
+**`log_verify`** walks the ledger as part of the verdict (a broken chain or
+signature fails it as the `clock_provenance` ledger) and reports
+`clock_provenance_verified` in `--json` once a record exists. A record whose
+anchor was deleted or replaced, or a prompt-or-negative offset beyond one
+bucket, is a warning under `=== Anchor Audit ===`; a missing record never is
+([`log_verify.md`](log_verify.md)). **`court_export`** packages the record of
+every packaged token beside it ([`court_export.md`](court_export.md)).
+
+**Invariant III.** Every field is a 10-minute bucket, a whole-second clamped
+difference, a whole-second clamped duration, a row id, a hash or a version
+string. The only precise instant derivable, `genTime + observed_offset_s`,
+is the time of an anchoring act the TSA already fixed to the second in a
+token the database already stores. Nothing about events changes: an event's
+bucket under a device offset is the same width shifted — a bias correction
+adds no precision. Records are 1:1 with anchor rows and `anchor-all` is
+constant-count, so record timing tracks the anchoring schedule. `witnessd`
+opens no connection. The ledger is local and reaches a third party only
+inside a court kit, for the tokens that kit packages.
 
 ## Honest limits
 
@@ -327,6 +705,51 @@ command as the next step.
 - `list`, `verify`, `query`, and `anchor-all --offline-dir` open the
   database read-only and create nothing; a database with no anchors table
   reads as `no anchors stored`.
+- A clock-provenance record says what the device's clock read when it first
+  saw a token, to the second, bounded by the measured poll gap and an
+  unmeasured issuance-to-storage delay. It says nothing about when any event
+  happened, and it cannot correct a bucket: a shifted bucket is the same
+  width. A binding-only record measures nothing; an anchor stored while no
+  `witnessd` ran, or before the upgrade, has no record at all.
+- The record is the device's own statement, signed by the device key. Its
+  value against a challenge to the device clock rests on the next
+  `clock_provenance_head` anchor fixing it in time, and on the key not being
+  in an adversary's hands before that anchor.
+- **The OpenTimestamps leg, stated so nobody weakens it later.** A calendar
+  learns the requester's source address, the cadence, and the per-run count —
+  `|subjects| × |calendars|`, a configuration constant, plus a bounded number
+  of upgrade GETs. A calendar can decline to confirm (404 forever): that is
+  availability, not forgery; the row stays pending, `verify` says so, and two
+  declared calendars make one stall survivable. The Bitcoin chain publicly
+  holds the calendar's merkle root, not ours, so the chain reveals nothing
+  about this device. A run that fails on the network changes that run's
+  count, the residual the TSA leg already accepts. A court kit discloses its
+  packaged proofs — their nonces, calendar hostnames and block height, which
+  is the anchoring time to roughly a block interval — kit-scoped and selected
+  by hash, as for TSA tokens. An explorer lookup during a manual check tells
+  that explorer which block the verifier cares about; use your own node if
+  that matters.
+- Calendars are unaccountable public relays with no identity or
+  accreditation. Once a Bitcoin path exists the calendar needs no trust: it
+  only relayed the commitment.
+- Bitcoin time is block-granular, and block times are set by miners within
+  consensus bounds, not read from a reference clock. A confirmed proof shows
+  that the bytes existed before block N was mined — existence, not identity,
+  and nothing about who made them. A pending proof shows nothing about time.
+- The header source is the verifier's trust root; the proof-of-work check is
+  a sanity check, not evidence of the real chain. The kernel never checks
+  Bitcoin: `run_full_verify` and `log_verify` check OpenTimestamps rows
+  structurally only.
+- The codec in `src/ots.rs` is structural and hand-written; the second
+  implementation is the Python `ots` client (`ots info`, `ots verify -d`).
+  `ots verify` on a pending proof contacts the calendars it names. Proofs
+  using SHA-1, RIPEMD-160 or Keccak operations are refused at parse with a
+  message that names the operation.
+- **Invariant II residual.** A sequence of offsets is a fingerprint of one
+  device's clock skew. It is bounded by the 1 s quantization, the anchor
+  cadence (not the event cadence), the ±3600 s clamp, local storage and
+  kit-scoped disclosure. Do not lower the quantization, raise the cadence or
+  publish the ledger without revisiting this.
 
 ### Compatibility across versions
 
@@ -339,4 +762,16 @@ command as the next step.
 | new binaries on an older DB / legacy eight-column anchors table | read-only verbs probe the columns and never migrate; write verbs (`request`, `import`, online `anchor-all`, `relabel`) add the columns on open |
 | **older `witnessd` keeps writing while new `log_anchor`/`court_export` anchor into its DB** | anchored chain heads are still lost at every retention pass — only this release's `witnessd` writes the preserving checkpoints. `verify` then reports `anchored hash is not in chain history`; `relabel` is the remediation. **Upgrade `witnessd` before anchoring chain heads with these tools** |
 | conformance fixture (no `tsa_anchors`) | retention and packaging take the no-table branch |
+| this release's binaries on an older DB (no clock-provenance records) | the report field is omitted; `log_verify` prints `no clock-provenance records`, `log_anchor verify` `clock provenance: no records`, a court kit `absent`; anchors stored before the upgrade are never recorded |
+| `anchor-all` across the upgrade | five subjects per TSA per run instead of four (the count stays constant run to run); `clock_provenance_head` anchors its sentinel until the ledger has a row |
+| `verify --policy` between the first and second post-upgrade `anchor-all` | a policy listing `clock_provenance_head` — including any policy without a `subjects` key — reads `policy: clock_provenance_head: NOT covered` and `NOT SATISFIED (1 subject(s) uncovered)`: the first run anchored the empty-ledger sentinel, then `witnessd` sealed that run's records. Run `anchor-all` twice at upgrade, the second about 5 s after the first |
+| older `log_anchor` on a DB with `clock_provenance_head` rows | the literal falls through to `digest anchor, chain membership not applicable` |
+| older `log_anchor` reading a policy with `max_clock_offset_s` | refused at load (unknown key) — add the key only after every policy reader is upgraded |
+| older `log_anchor` reading a policy whose `subjects` lists `clock_provenance_head` | refused at load (`not a ledger head`) — list the subject only after every policy reader is upgraded, or omit `subjects` (new readers anchor five heads, older ones four) |
 | offline `.tsq` whose `.tsr` is imported after the head was pruned | no row existed when retention ran, so nothing preserved the head; stored as `digest` with the stderr note; no membership, no policy credit — complete the round trip inside the retention window |
+| pre-OpenTimestamps `log_anchor` / `log_verify` / `court_export` / `witnessd` on a DB with `ots_anchors` | never read the table; nothing changes for them. **A pre-OpenTimestamps `witnessd` still prunes OTS-only-anchored chain heads without a checkpoint** — upgrade `witnessd` before stamping chain heads; `relabel --ots` repairs an affected row |
+| pre-OpenTimestamps `log_anchor` given a policy with `ots` | refused at load (``unknown field `ots` ``) — add the key only after every policy reader (operator hosts, the ceremony observer's binary) is upgraded |
+| this release's binaries on a DB without `ots_anchors` | `list` / `verify` output unchanged (`no anchors stored`); `ots_anchors_checked` omitted (report byte-identical); the kit carries `ots_anchor_count: 0`, `ots_*_attestation: "none"`, `ots_anchors: []` |
+| `anchor-all` with a policy without `ots` | identical to before, byte for byte, in requests and output; the table is never created |
+| a build with `tsa` but not `ots`, policy with `ots` | `anchor-all` / `request --policy` refuse before any request; the offline flow, `import --ots-dir`, `verify`, `list` and the kit all work |
+| `verify` without `--bitcoin-headers` | OpenTimestamps rows are at most `UNVERIFIED`; `--policy` with `ots.required` refuses up front |

@@ -623,6 +623,19 @@ static void drain_detect_cfg_commands() {
   // number entity optimistically shows what the user typed until the
   // retained state corrects it.
   if (any_cmd) canary::net::publish_detect_cfg_retained(TOPICS);
+
+  // HA's "Broadcast detection" switch: the owner's opt-in to put the live
+  // detection in the cleartext fleet beacon (canary/detect_config.h). Its own
+  // retained ON/OFF row, republished on every command for the same reason.
+  const int beacon = canary::net::take_pending_beacon_detect();
+  if (beacon >= 0) {
+    if (canary::cfg::detect_set_beacon_detect(beacon == 1)) {
+      canary::log_line("CFG", beacon == 1
+          ? "Broadcast detection ON: the cleartext fleet beacon now carries the live detection."
+          : "Broadcast detection off: the fleet beacon carries no detection.");
+    }
+    canary::net::publish_beacon_detect_retained(TOPICS);
+  }
 }
 
 
@@ -928,9 +941,9 @@ void setup() {
   // numbers instead of zeros.
   canary::diag::loop(canary::ms_now());
 
-  // Confirm (or roll back) a freshly installed image now — before anything
-  // that can block on external services. See ota_mgr.h.
-  canary::net::ota_boot_validate();
+  // The OTA boot probe of a freshly installed image no longer runs here:
+  // it runs from loop() at its healthy gate (ota_boot_validate), so one
+  // missed association on the new image's first boot is not its verdict.
 
   canary::net::mqtt_init(TOPICS);
   canary::vision::init();
@@ -1078,9 +1091,9 @@ void setup() {
     }
   }
 
-  // Signed pull-OTA: arm the engine (validation already ran right after
-  // WiFi). Daily jittered checks; HA's Install button and auto-update
-  // switch are drained in loop().
+  // Signed pull-OTA: arm the engine (the boot probe runs at loop()'s healthy
+  // gate, after this). Daily jittered checks; HA's Install button and
+  // auto-update switch are drained in loop().
   canary::net::ota_init(TOPICS);
 
   set_last_event("boot");
@@ -1166,9 +1179,11 @@ static bool vision_tick(uint32_t now_ms) {
   // watch profile (person for room_presence, animal for litter_box) — always
   // within the ObjectClass vocabulary, never past it.
   //
-  // Ungated on purpose: this sets what the beacon SAYS, and every carrier
-  // reads it. Gating it on any one band would mean turning off BLE for flash
-  // budget also silenced the detection on the LAN.
+  // Not gated on any one band: this sets what the beacon SAYS, and every
+  // carrier reads it, so turning off BLE for flash budget does not silence
+  // the detection on the LAN. The one gate is the owner's opt-in, applied
+  // inside fleet_beacon_note_detection (detect_config.h beacon_detect,
+  // default off): opted out, every band carries no detection at all.
   {
     const auto snap = fsm.snapshot(now_ms, last_event_name);
     const uint32_t gen_before = canary::net::fleet_beacon_payload_generation();
@@ -1303,6 +1318,12 @@ void loop() {
   // broker is unreachable, so an empty log never reads as a quiet one.
   canary::doorbell_hw::set_hub_ok(canary::net::mqtt_connected());
   canary::doorbell_hw::poll(canary::ms_now(), on_doorbell_event);
+
+  // The boot probe of a freshly installed image, at its healthy gate: the
+  // first pass with the link up, or 90 s after the first pass at the latest
+  // (ota_mgr.cpp). Called on every pass, ahead of the health tick and the
+  // broker gate; it does its work once.
+  canary::net::ota_boot_validate();
 
   // Confirm a new image only after a healthy minute — before the broker/WiFi
   // early-returns below, so it runs on EVERY pass. Behind them, a new image

@@ -257,6 +257,10 @@ static bool api_auth_presented_token(httpd_req_t* req, char* auth_buf, char* tok
 // (Disconnect and Forget in every mode, Connect and AP-only after setup
 // through wifi_change_authorize(); F334, F345) and the two reboot routes
 // (F361). SECURITY_MODEL.md keeps the list.
+// So do the firmware install and the update settings (POST /api/ota/install,
+// which restarts the unit as a reboot does, and POST /api/ota/config, which
+// chooses the server later updates are fetched from and whether the unit
+// installs by itself).
 
 static bool api_auth_check_bearer(httpd_req_t* req, const char* expected_token) {
   // ── Check this source's lockout ──

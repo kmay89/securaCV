@@ -1,0 +1,10 @@
+POST /sensors/garage/acoustic?source=curl HTTP/1.1
+Host: 127.0.0.1:8800
+Authorization: Bearer webhook-shared-token
+X-Timestamp: 1760140200
+X-Nonce: 7f3a9c1e
+X-Signature: sha256=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+Content-Type: application/json
+Content-Length: 18
+
+{"confidence":0.8}

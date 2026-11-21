@@ -1064,5 +1064,49 @@
       "bridge_prefix": "witness",
       "canary_prefix": "securacv"
     }
+  },
+  "compliance_map_status": {
+    "$comment": "The closed status set of the docs/compliance maps. Read by scripts/lint_compliance_map.py and scripts/gen_compliance_tables.py; no other copy exists. A status describes a SecuraCV mechanism, never a deployment's standing under a regime. Crosswalk: CEREMONY_RUNBOOK CODE -> structural; PROC -> procedural; GAP -> procedural with a tracker evidence entry when the deployment does something instead, designed when a design record exists, not-pursued when declined. CPS shipped -> structural; procedural -> procedural; not provided -> the same three as GAP.",
+    "items": [
+      {
+        "id": "structural",
+        "definition": "A SecuraCV mechanism in code produces this property, and a named test in this tree fails if it regresses.",
+        "requires": [
+          "test",
+          "code"
+        ]
+      },
+      {
+        "id": "procedural",
+        "definition": "A person must do this. SecuraCV supplies the procedure, template or record to do it with; where the software provides nothing, the row names the tracker item and what the deployment does instead.",
+        "requires": [
+          "procedure",
+          "operator_action"
+        ]
+      },
+      {
+        "id": "designed",
+        "definition": "Specified in a design record; not built. The named PR builds it.",
+        "requires": [
+          "design",
+          "depends_on"
+        ]
+      },
+      {
+        "id": "not-applicable",
+        "definition": "The requirement addresses a kind of system SecuraCV is not, or an act no software performs.",
+        "requires": [
+          "reason"
+        ]
+      },
+      {
+        "id": "not-pursued",
+        "definition": "SecuraCV deliberately does not provide this; the decision is recorded where the row points.",
+        "requires": [
+          "reason",
+          "decision"
+        ]
+      }
+    ]
   }
 }

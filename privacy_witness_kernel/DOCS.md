@@ -19,9 +19,9 @@ your click, or comes from HACS — your choice, see below.
 finds Mosquitto and Frigate, reads Frigate's cameras from its own config, and
 has nothing for you to type. Its done screen offers *Install the integration
 and restart Home Assistant* (one click). After the restart, Settings → Devices
-& Services shows a *SecuraCV discovered* card: press Configure, nothing to
-type. Walk past a camera: the first *Sealed ✓* event appears within a minute;
-*Verified ✓* follows the next chain check.
+& Services shows the *SecuraCV app* card under Discovered: press Add,
+nothing to type. Walk past a camera: the first *Sealed ✓* event appears
+within a minute; *Verified ✓* follows the next chain check.
 
 **HACS first.** Already have the integration from HACS? Install this app the
 same way; the wizard sees the integration is installed and skips the install
@@ -41,7 +41,11 @@ product is the same from there on.
   `https://github.com/blakeblackshear/frigate-hass-addons`) with MQTT
   enabled. Also linked from the wizard if it is missing. No Frigate yet? The
   wizard asks for your cameras' RTSP URLs and writes Frigate's camera config
-  for you.
+  for you — detection-only: recording is off and snapshots are not turned
+  on until you enable them in Frigate. Each camera's MQTT images are off
+  too (`mqtt: enabled: false` under the camera): Frigate otherwise
+  publishes a cropped JPEG of every object it tracks to the broker as a
+  retained message, whatever its snapshot setting says.
 - Home Assistant 2026.5.0 or newer.
 
 ## What the wizard does, step by step
@@ -55,11 +59,17 @@ product is the same from there on.
 2. **Cameras.** With Frigate: a confirmation ("Frigate is running with 3
    cameras — front_door, driveway, backyard — and Mosquitto is connected.
    Nothing to type."). Without Frigate: name + RTSP URL per camera. Name
-   cameras by place, not by person.
+   cameras by place, not by person. The config the wizard writes is
+   detection-only — recording off, snapshots not turned on; enable either
+   in Frigate if you want footage. It also turns each camera's MQTT images
+   off. Where Frigate keeps its own config, the wizard writes nothing to it
+   and names, on its last screen, any camera that leaves those images on.
 3. **Settings.** How long to keep sealed events (7 days, 30 days, 1 year —
    exports are self-contained, nothing is lost by exporting first). What to
-   seal: every tracked object (default), or only Frigate alerts. The daily
-   digest and its time.
+   seal: every tracked object (default), or only Frigate alerts — which
+   needs recording on in Frigate (it creates alerts only for cameras that
+   record), so it is not offered when the wizard writes Frigate's config.
+   The daily digest and its time.
 4. **Confirm.** The device signing key: generated once, shown once, kept in
    the app's own data (`/data/device_key` inside the app — not under
    `/config`, so the File editor, Samba and SSH apps cannot read it and a
@@ -119,7 +129,8 @@ day to day:
 - `mode`: `frigate` (recommended; the wizard sets it) or `standalone` (the
   kernel reads one RTSP camera itself).
 - `frigate.cameras`: camera slugs to seal (empty = every camera Frigate
-  reports); `frigate.enable_reviews`: seal only Frigate alerts.
+  reports); `frigate.enable_reviews`: seal only Frigate alerts (needs
+  recording on in Frigate; with it off, no event is sealed).
 - `retention_days`: how long sealed events stay.
 - `verify_interval_hours`: how often the kernel re-walks its own chain
   (hourly by default; the integration verifies independently).

@@ -28,6 +28,7 @@ from conftest import (
     PAIRED_TOKEN_ID,
     KernelMock,
     SigningKernel,
+    bucket_start,
     make_kernel_entry,
     make_mqtt_only_entry,
 )
@@ -40,6 +41,7 @@ from custom_components.securacv.const import (
     CONF_ENABLE_MQTT,
     CONF_EVIDENCE_KEEP,
     CONF_KERNEL_DEVICE_ID,
+    CONF_KERNEL_LAST_ANNOUNCE_BUCKET_START,
     CONF_KERNEL_PREVIOUS_KEYS,
     CONF_KERNEL_TOKEN_ID,
     CONF_KERNEL_VERIFYING_KEY,
@@ -336,7 +338,9 @@ async def test_hassio_discovery_creates_the_both_entry(
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "hassio_confirm"
-    assert result["description_placeholders"] == {"name": "SecuraCV", "url": ADDON_URL}
+    # The screen names the address the token file's contents go to; the
+    # app's own hostname is not another host, so no plaintext warning.
+    assert result["description_placeholders"] == {"name": "SecuraCV", "url": ADDON_URL, "plaintext_warning": ""}
     # Confirm-only: no fields.
     assert result["data_schema"] is None or not result["data_schema"].schema
 
@@ -527,6 +531,8 @@ async def test_announce_confirm_and_pair_create_the_paired_entry(
     assert entry.data[CONF_KERNEL_VERIFYING_KEY] == kernel.verifying_key
     assert entry.data[CONF_MQTT_TOPIC_PREFIX] == "witness"
     assert entry.data[CONF_ENABLE_MQTT] is True and entry.data[CONF_SETUP_MODE] == SETUP_MODE_BOTH
+    # The announce it was paired from: a later one must be newer to move it.
+    assert entry.data[CONF_KERNEL_LAST_ANNOUNCE_BUCKET_START] == announce["announced_bucket_start"]
     assert entry.state is ConfigEntryState.LOADED
     # The pair request carried the code and the label, nothing else.
     body = kernel.calls("/api/pair", "POST")[-1][2]
@@ -622,6 +628,142 @@ async def test_announce_signature_is_checked_against_the_pin(
     assert reload.call_count == 1
 
 
+def _resigned(kernel: SigningKernel, payload: dict) -> dict:
+    """`payload` signed by `kernel` as it stands (for a shape `announce()` cannot build)."""
+    payload = {key: value for key, value in payload.items() if key != "sig"}
+    body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    payload["sig"] = kernel.private.sign(b"securacv-announce|v1|" + body).hex()
+    return payload
+
+
+async def test_a_first_contact_announce_must_be_signed_by_the_key_it_names(
+    hass: HomeAssistant, kernel: KernelMock, mqtt_mock: MqttMockHAClient
+) -> None:
+    """No entry, no pin: the only check there is. An announce anyone on the
+    broker can publish carried the genuine kernel's key (so the discovered
+    card showed the fingerprint `pair` prints) over the publisher's own
+    host, and the code typed next went to that host. Unsigned, signed by
+    another key, or altered after signing: no card."""
+    impostor = SigningKernel()
+    hostile_api = {"scheme": "http", "bind": "all", "port": 8799, "host": "10.0.0.66"}
+    unsigned = kernel.kernel.announce(api=hostile_api)
+    del unsigned["sig"]
+    forged = impostor.announce(verifying_key=kernel.verifying_key, api=hostile_api)
+    altered = kernel.kernel.announce()
+    altered["api"] = hostile_api
+    for hostile in (unsigned, forged, altered):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_MQTT},
+            data=mqtt_info(f"witness/{KERNEL_DEVICE_ID}/announce", hostile),
+        )
+        assert result["type"] is FlowResultType.ABORT
+        assert result["reason"] == "announce_signature_invalid"
+    assert hass.config_entries.flow.async_progress_by_handler(DOMAIN) == [], "no discovered card"
+    assert hass.config_entries.async_entries(DOMAIN) == []
+    assert kernel.calls("/api/pair", "POST") == []
+
+    # The kernel's own announce is still offered, with its own fingerprint.
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": config_entries.SOURCE_MQTT},
+        data=mqtt_info(f"witness/{KERNEL_DEVICE_ID}/announce", kernel.kernel.announce()),
+    )
+    assert result["type"] is FlowResultType.FORM and result["step_id"] == "announce_confirm"
+    assert result["description_placeholders"]["fingerprint"] == kernel.kernel.fingerprint
+
+
+async def test_automatic_ignores_a_sidecar_announce_that_is_not_signed(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker, mqtt_mock: MqttMockHAClient, kernel: KernelMock
+) -> None:
+    """Automatic's listener is first contact too: an unsigned retained
+    announce is neither a discovered card nor what Automatic offers, and
+    the flow ends as it does with no kernel on the broker."""
+    from pytest_homeassistant_custom_component.common import async_fire_mqtt_message
+
+    aioclient_mock.get(f"{DEFAULT_KERNEL_URL}/api/identity", exc=aiohttp.ClientConnectionError("no app"))
+    unsigned = kernel.kernel.announce(api={"scheme": "http", "bind": "all", "port": 8799, "host": "10.0.0.66"})
+    del unsigned["sig"]
+    with patch("custom_components.securacv.config_flow.ANNOUNCE_LISTEN_SECONDS", 1.0):
+        task = hass.async_create_task(start_user_flow(hass, SETUP_MODE_AUTO))
+        await asyncio.sleep(0.3)
+        async_fire_mqtt_message(
+            hass, f"witness/{KERNEL_DEVICE_ID}/announce", json.dumps(unsigned), qos=1, retain=True
+        )
+        result = await task
+        await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["description"] == "no_kernel_found"
+    assert result["result"].unique_id == "mqtt_securacv"
+    assert hass.config_entries.flow.async_progress_by_handler(DOMAIN) == []
+
+
+async def test_a_replayed_announce_older_than_the_last_accepted_moves_nothing(
+    hass: HomeAssistant, kernel: KernelMock, mqtt_mock: MqttMockHAClient, setup_kernel_entry
+) -> None:
+    """A retained announce is signed by the pin for good, and any broker
+    client could have kept one: replayed by whatever answers at the host it
+    names now, it took the entry (and the paired token sent on the next
+    backstop) back there. An announce moves the entry only when its
+    `announced_bucket_start` is later than the last one accepted; the same
+    bucket is the kernel's own re-publish and may change nothing."""
+    last = bucket_start()
+    entry = await setup_kernel_entry(
+        auth_mode=AUTH_MODE_PAIRED, enable_mqtt=True, **{CONF_KERNEL_LAST_ANNOUNCE_BUCKET_START: last}
+    )
+    before = dict(entry.data)
+    topic = f"witness/{KERNEL_DEVICE_ID}/announce"
+    old_host = {"scheme": "http", "bind": "all", "port": 8799, "host": "192.168.1.66"}
+    unstamped = kernel.kernel.announce(api=old_host)
+    del unstamped["announced_bucket_start"]
+    replays = (
+        kernel.kernel.announce(api=old_host, announced_bucket_start=last - 600),
+        kernel.kernel.announce(mqtt_topic_prefix="old", announced_bucket_start=last - 600),
+        _resigned(kernel.kernel, unstamped),
+        # The same bucket with other contents is not the re-publish.
+        kernel.kernel.announce(api=old_host, announced_bucket_start=last),
+    )
+    with patch.object(hass.config_entries, "async_schedule_reload", wraps=hass.config_entries.async_schedule_reload) as reload:
+        for replay in replays:
+            result = await hass.config_entries.flow.async_init(
+                DOMAIN, context={"source": config_entries.SOURCE_MQTT}, data=mqtt_info(topic, replay)
+            )
+            await hass.async_block_till_done()
+            assert result["type"] is FlowResultType.ABORT and result["reason"] == "announce_stale", replay
+            assert dict(entry.data) == before, replay
+
+        # The kernel's own re-publish (every reconnect): accepted, nothing to do.
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_MQTT},
+            data=mqtt_info(topic, kernel.kernel.announce(announced_bucket_start=last)),
+        )
+        await hass.async_block_till_done()
+        assert result["type"] is FlowResultType.ABORT and result["reason"] == "already_configured"
+        assert dict(entry.data) == before
+        assert reload.call_count == 0
+
+        # A newer announce is the kernel saying where it is now.
+        KernelMock(kernel.mock, kernel.kernel, url="http://192.168.1.21:8799")
+        newer = kernel.kernel.announce(
+            api={"scheme": "http", "bind": "all", "port": 8799, "host": "192.168.1.21"},
+            announced_bucket_start=last + 600,
+        )
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN, context={"source": config_entries.SOURCE_MQTT}, data=mqtt_info(topic, newer)
+        )
+        await hass.async_block_till_done()
+        assert result["type"] is FlowResultType.ABORT and result["reason"] == "already_configured"
+        assert entry.data[CONF_URL] == "http://192.168.1.21:8799"
+        assert entry.data[CONF_KERNEL_LAST_ANNOUNCE_BUCKET_START] == last + 600
+        assert reload.call_count == 1
+
+    from homeassistant.helpers.translation import async_get_translations
+
+    translations = await async_get_translations(hass, "en", "config", {DOMAIN})
+    assert "not newer" in translations[f"component.{DOMAIN}.config.abort.announce_stale"]
+
+
 async def test_announce_with_a_cleared_or_malformed_payload_aborts(hass: HomeAssistant) -> None:
     """The empty retained clear of a sidecar that shut down is nothing to offer."""
     result = await hass.config_entries.flow.async_init(
@@ -697,7 +839,7 @@ async def test_reauth_of_a_paired_entry_takes_a_new_code(
     assert result["description_placeholders"]["fingerprint"] == kernel.kernel.fingerprint
     assert result["description_placeholders"]["device_id"] == KERNEL_DEVICE_ID
     fields = {str(key) for key in result["data_schema"].schema}
-    assert fields == {CONF_URL, CONF_PAIRING_CODE}
+    assert fields == {CONF_URL, CONF_PAIRING_CODE, CONF_MQTT_TOPIC_PREFIX}
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {CONF_URL: KERNEL_URL, CONF_PAIRING_CODE: "483921"}
@@ -763,6 +905,32 @@ async def test_reconfigure_moves_the_url_of_the_same_kernel(
     assert entry.data[CONF_KERNEL_VERIFYING_KEY] == kernel.verifying_key
     assert entry.state is ConfigEntryState.LOADED
     assert moved.calls("/api/identity")
+
+
+async def test_reconfigure_of_a_paired_entry_moves_the_url_and_the_prefix(
+    hass: HomeAssistant, kernel: KernelMock, mqtt_mock: MqttMockHAClient, setup_kernel_entry
+) -> None:
+    """The paired sidecar's Reconfigure offered the URL and the code only,
+    though its text said the prefix could be changed: the re-pairing form
+    carries the witness prefix, defaulting to the entry's."""
+    entry = await setup_kernel_entry(auth_mode=AUTH_MODE_PAIRED, enable_mqtt=True)
+    moved = KernelMock(kernel.mock, kernel.kernel, url="http://192.168.1.30:8799", verifying_key=kernel.verifying_key)
+    result = await entry.start_reconfigure_flow(hass)
+    assert result["type"] is FlowResultType.FORM and result["step_id"] == "reconfigure"
+    fields = {str(key) for key in result["data_schema"].schema}
+    assert fields == {CONF_URL, CONF_PAIRING_CODE, CONF_MQTT_TOPIC_PREFIX}
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_URL: moved.url, CONF_PAIRING_CODE: "483921", CONF_MQTT_TOPIC_PREFIX: "witness2"}
+    )
+    await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.ABORT and result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_URL] == moved.url
+    assert entry.data[CONF_MQTT_TOPIC_PREFIX] == "witness2"
+    assert entry.data[CONF_AUTH_MODE] == AUTH_MODE_PAIRED
+    assert entry.data[CONF_KERNEL_VERIFYING_KEY] == kernel.verifying_key, "a re-pair never moves the pin"
+    assert entry.state is ConfigEntryState.LOADED
+    # The code was redeemed at the URL the form was given.
+    assert str(kernel.calls("/api/pair", "POST")[-1][1]) == f"{moved.url}/api/pair"
 
 
 # ── options ──────────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 /*
- * SecuraCV Canary — the body of GET /api/diagnostics (sweep F179)
+ * SecuraCV Canary — the body of GET /api/diagnostics (sweep F179), and of
+ * GET /api/selftest, which spells its rows the same way (selftest_rows())
  *
  * The route (securacv_network.cpp handle_diagnostics, token-gated,
  * FEATURE_DIAGNOSTICS builds) answers the diagnostics snapshot
@@ -12,13 +13,18 @@
  *    "sd":{"mounted":true,"usage_pct":N,"total_writes":N,"write_errors":N,
  *          "space_warning":false,"space_critical":false},
  *    "selftest":{"has_run":true,"health_score":N,"passed":N,"total":N,
- *                "tests":[{"name":"nvs_rw","passed":true,"ms":N},...]},
+ *                "tests":[{"name":"nvs_rw","passed":true,"ms":N},...,
+ *                         {"name":"watchdog","probe":false},...]},
  *    "system":{"uptime_sec":N,"boot_count":N,"reset_reason":N,
  *              "firmware":"2.4.15"},
  *    "csi_event_egress":{...}}
  *
  * Every key before `csi_event_egress` is the route's as it stood before
- * sweep F179, byte for byte. `csi_event_egress` is the object
+ * sweep F179, byte for byte, but for a self-test row the suite lists and
+ * does not check (selftest_result_t.not_a_probe, the watchdog's): it says
+ * `"probe":false` in place of `passed` and `ms`, and `total` counts the
+ * probes, so `passed` of `total` is the score's own fraction (a row that
+ * checks nothing used to read as a pass). `csi_event_egress` is the object
  * csi_event_egress_diagnostics_json() (include/csi_event_egress_diagnostics.h)
  * writes: the counters the loop task's last egress pump published, in the
  * names the MQTT health uses, or `null` before the first pump and on a
@@ -103,6 +109,48 @@ class Writer {
   bool   ok_;
 };
 
+/* The self-test rows, as both routes spell them (the `tests` array's
+ * members): a probe is {"name","passed","ms"}, a row the suite lists and
+ * does not check is {"name","probe":false}, a row with no name is
+ * "unknown", and no row past SELFTEST_COUNT is read. */
+inline void selftest_rows(Writer& w, const selftest_report_t& st) {
+  for (uint8_t i = 0; i < st.total_count && i < SELFTEST_COUNT; i++) {
+    const char* name = st.tests[i].name != nullptr ? st.tests[i].name : "unknown";
+    if (st.tests[i].not_a_probe) {
+      w.add("%s{\"name\":\"%s\",\"probe\":false}", i > 0 ? "," : "", name);
+      continue;
+    }
+    w.add("%s{\"name\":\"%s\",\"passed\":%s,\"ms\":%u}", i > 0 ? "," : "",
+          name, st.tests[i].passed ? "true" : "false", (unsigned)st.tests[i].duration_ms);
+  }
+}
+
+/* GET /api/selftest's buffer (securacv_network.cpp handle_selftest, behind
+ * the bearer, FEATURE_DIAGNOSTICS builds). The widest body (every number at
+ * its widest, all SELFTEST_COUNT rows under the longest self-test name) is
+ * 544 bytes and the NUL; the host test holds it. */
+constexpr size_t kSelftestJsonMax = 1024;
+
+/* GET /api/selftest's body, for the report the run it answers just filled:
+ *
+ *   {"ok":true,"health_score":N,"passed":N,"total":N,"tests":[...]}
+ *
+ * with the rows selftest_rows() spells, and `total` the probes
+ * (selftest_probe_count), so `passed` of `total` is the score's own
+ * fraction. The route used to append it with `pos += snprintf(...)` and
+ * gave every row `passed`, so the watchdog row, which checks nothing, read
+ * as a failed probe and the totals as 9 of 10. Returns its length, or 0
+ * (and `out` holds no partial body) when it does not fit `cap`. */
+inline size_t selftest(const selftest_report_t& st, char* out, size_t cap) {
+  Writer w(out, cap);
+  w.add("{\"ok\":true,\"health_score\":%u,\"passed\":%u,\"total\":%u,\"tests\":[",
+        (unsigned)st.health_score, (unsigned)st.passed_count,
+        (unsigned)selftest_probe_count(&st));
+  selftest_rows(w, st);
+  w.add("]}");
+  return w.finish();
+}
+
 /* The body into `out`. `firmware` is FIRMWARE_VERSION; `egress` is the
  * object csi_event_egress_diagnostics_json() wrote, inserted as it is
  * (nullptr or "" spells `null`). Returns its length, or 0 (and `out` holds
@@ -132,12 +180,8 @@ inline size_t build(const diag_snapshot_t& snap, const char* firmware, const cha
   w.add("\"selftest\":{\"has_run\":%s,\"health_score\":%u,"
         "\"passed\":%u,\"total\":%u,\"tests\":[",
         st.has_run ? "true" : "false", (unsigned)st.health_score,
-        (unsigned)st.passed_count, (unsigned)st.total_count);
-  for (uint8_t i = 0; i < st.total_count && i < SELFTEST_COUNT; i++) {
-    w.add("%s{\"name\":\"%s\",\"passed\":%s,\"ms\":%u}", i > 0 ? "," : "",
-          st.tests[i].name != nullptr ? st.tests[i].name : "unknown",
-          st.tests[i].passed ? "true" : "false", (unsigned)st.tests[i].duration_ms);
-  }
+        (unsigned)st.passed_count, (unsigned)selftest_probe_count(&st));
+  selftest_rows(w, st);
   w.add("]},");
 
   w.add("\"system\":{\"uptime_sec\":%lu,\"boot_count\":%lu,"

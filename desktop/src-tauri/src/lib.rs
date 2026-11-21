@@ -611,7 +611,8 @@ async fn flash_local_file(
     let args = rescue::write_bin_args(&port, &staged_path.to_string_lossy(), baud);
     // The engine's write: the same tracked spawn, `flash:log` streaming and
     // kept tail (the frontend classifies a failure by espflash's last words)
-    // as the release path.
+    // as the release path — marked as a board write for the quit guard.
+    let _writing = flash_engine::flash::BOARD_WRITES.begin();
     let (code, tail) =
         flash_engine::host::run_streaming_with_tail(&TauriHost(app.clone()), args, "flash:log")
             .await?;
@@ -638,6 +639,25 @@ async fn flash_local_file(
     } else {
         Err(flash_engine::flash::write_failure(code, &tail))
     }
+}
+
+/// The most a Vision model manifest may declare, and the most this app will
+/// hold of one. The manifest's `size` used to go straight into
+/// `Vec::with_capacity` and the download loop read whatever the server sent,
+/// both before the size and SHA-256 were checked — so a manifest naming a
+/// huge size (or an asset far larger than it said) could take the app down
+/// or fill its memory. A cap, not a measurement of the module's flash.
+const VISION_MODEL_MAX_BYTES: u64 = 16 * 1024 * 1024;
+
+/// The Vision model's declared size, refused when it is past
+/// [`VISION_MODEL_MAX_BYTES`]. Pure, so the bound is tested.
+fn vision_model_size_ok(size: u64) -> Result<u64, String> {
+    if size > VISION_MODEL_MAX_BYTES {
+        return Err(format!(
+            "Vision model manifest declares an implausible size ({size} bytes; the limit is {VISION_MODEL_MAX_BYTES})"
+        ));
+    }
+    Ok(size)
 }
 
 /// Download the pinned WE2 model, verify the manifest hash, burn it to the
@@ -702,6 +722,7 @@ async fn flash_vision_module(
         .and_then(Value::as_u64)
         .filter(|size| *size > 0)
         .ok_or_else(|| "Vision model manifest has an invalid size".to_string())?;
+    let expected_size = vision_model_size_ok(expected_size)?;
     let expected_sha = model
         .get("sha256")
         .and_then(Value::as_str)
@@ -742,6 +763,14 @@ async fn flash_vision_module(
         .map_err(|e| format!("Vision model download failed: {e}"))?
     {
         bytes.extend_from_slice(&chunk);
+        // Never hold more than the manifest declared (itself capped above):
+        // a body that runs past its own size is not the model, and reading
+        // on would only fill memory before the size check refused it.
+        if bytes.len() as u64 > expected_size {
+            return Err(format!(
+                "Vision model download exceeded the declared size ({expected_size} bytes)"
+            ));
+        }
         if last_tick.elapsed().as_millis() >= 500 {
             last_tick = std::time::Instant::now();
             emit_log(format!(
@@ -900,46 +929,120 @@ async fn run_sidecar_streaming(
 }
 
 /// Where the automatic pre-flash safety copy lands: a per-app backups folder,
-/// named by the board's MAC + moment, created on demand. The frontend can't
-/// know the app-data dir, and the browser flasher's equivalent (an unasked
-/// download before every write) is the parity bar this path exists to meet —
-/// the reflash-with-no-undo gap was desktop-only. The name is the engine's
-/// `rescue::backup_filename` — the browser's `canary-…-backup.bin` scheme,
-/// with the moment in it because every safety copy shares this one folder.
-#[tauri::command]
-fn auto_backup_path(app: AppHandle, mac: String) -> Result<String, String> {
+/// created on demand, named by the local date and a counter — never by
+/// anything of the board's (the MAC's tail used to name it, and the base MAC
+/// is the station address in every Wi-Fi frame). The frontend can't know the
+/// app-data dir, and the browser flasher's equivalent (an unasked download
+/// before every write) is the parity bar this path exists to meet — the
+/// reflash-with-no-undo gap was desktop-only. `day` is the frontend's local
+/// `YYYY-MM-DD` (Rust std has no local zone); the name is the engine's
+/// `rescue::next_backup_filename` — the browser's `canary-…-backup.bin`
+/// scheme, with the next free counter because every copy shares this folder.
+///
+/// Not a command: this used to answer the webview, which handed the string
+/// straight back to `backup_flash` as its write target — so the "automatic"
+/// destination was whatever a script in the webview said it was.
+/// `backup_flash` now calls this itself (`dest: "auto"`), and `day` only ever
+/// reaches a file NAME, which the engine's helper refuses unless it is a date.
+fn auto_backup_path(app: &AppHandle, day: &str) -> Result<std::path::PathBuf, String> {
     let dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("no app data dir: {e}"))?
         .join("backups");
     std::fs::create_dir_all(&dir).map_err(|e| format!("couldn't create backups dir: {e}"))?;
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    Ok(dir
-        .join(rescue::backup_filename(&mac, &stamp.to_string()))
-        .to_string_lossy()
-        .to_string())
+    let taken: Vec<String> = std::fs::read_dir(&dir)
+        .map_err(|e| format!("couldn't read the backups dir: {e}"))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    let name = rescue::next_backup_filename(day, &taken)
+        .ok_or_else(|| format!("not a date the backup can be named by: {day:?}"))?;
+    Ok(dir.join(name))
 }
 
-/// Back up the whole chip to `out_path` — a full-flash read the operator keeps
-/// and can restore later. The safety copy the one-shot flow never had.
+/// Raise the OS save panel from HERE and answer the path it gave, validated
+/// by `validate` (`validated_backup_path` / `validated_save_path`) — or
+/// `None` when the user canceled. The save twin of `pick_local_file`: the two
+/// commands that write a file for the user (`backup_flash`,
+/// `save_text_file`) used to take the destination from the webview, and a
+/// script injected there has the same `invoke` the app's own code has. Now
+/// neither takes a path at all; the only destination is one a person just
+/// chose in a panel this process raised.
+async fn ask_save_path(
+    app: &AppHandle,
+    title: &'static str,
+    file_name: String,
+    filter: &'static str,
+    ext: &'static str,
+    validate: fn(&std::path::Path) -> Result<std::path::PathBuf, String>,
+) -> Result<Option<std::path::PathBuf>, String> {
+    let picker = app.clone();
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        picker
+            .dialog()
+            .file()
+            .set_title(title)
+            .set_file_name(file_name)
+            .add_filter(filter, &[ext])
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|e| format!("couldn't open the save panel: {e}"))?;
+    let Some(picked) = picked else {
+        return Ok(None);
+    };
+    let path = picked
+        .into_path()
+        .map_err(|e| format!("the panel answered something that isn't a file path: {e}"))?;
+    validate(&path).map(Some)
+}
+
+/// Back up the whole chip — a full-flash read the operator keeps and can
+/// restore later. The safety copy the one-shot flow never had.
+///
+/// There is no path argument. `dest` names one of two destinations this
+/// process works out for itself: `"ask"` raises the OS save panel (the rescue
+/// bench's Back up button) and `"auto"` is the app's own backups folder (the
+/// safety copy before an install; `auto_backup_path`). `day` is the page's
+/// local date, which names the automatic copy; `name` is the file name the
+/// panel opens on (`suggested_file_name` holds it to one plain `.bin` name).
+/// Neither is a path. Answers the path written, for display and for the
+/// change map, or `None` when the user canceled the panel — nothing is read
+/// off the board in that case.
 #[tauri::command]
 async fn backup_flash(
     app: AppHandle,
     port: String,
-    out_path: String,
     flash_size: u64,
     baud: u32,
-) -> Result<(), String> {
+    day: String,
+    name: String,
+    dest: String,
+) -> Result<Option<String>, String> {
     if flash_size == 0 {
         return Err("couldn't read this chip's flash size — reconnect and try again".into());
     }
-    let out_path = validated_backup_path(&out_path)?
-        .to_string_lossy()
-        .into_owned();
+    let out = match dest.as_str() {
+        "auto" => validated_backup_path(&auto_backup_path(&app, &day)?)?,
+        "ask" => {
+            let asked = ask_save_path(
+                &app,
+                "Save the flash backup",
+                suggested_file_name(&name, "bin")?,
+                "Flash backup",
+                "bin",
+                validated_backup_path,
+            )
+            .await?;
+            match asked {
+                Some(path) => path,
+                None => return Ok(None),
+            }
+        }
+        _ => return Err(format!("unknown backup destination {dest:?}")),
+    };
+    let out_path = out.to_string_lossy().into_owned();
     let _ = app.emit(
         "rescue:log",
         format!(
@@ -958,7 +1061,7 @@ async fn backup_flash(
             "rescue:log",
             "✓ backup saved — keep it safe; restore it any time.".to_string(),
         );
-        Ok(())
+        Ok(Some(out_path))
     } else {
         Err(format!(
             "espflash exited with code {code} while reading the chip. Nothing on the board changed — try again."
@@ -977,6 +1080,14 @@ async fn backup_flash(
 /// passes; only an app-only file is turned away. The flash-size fit is then
 /// checked against THIS chip, mirroring the browser's restore validation.
 /// `handle` names a file the OS panel answered (pick_local_file), never a path.
+///
+/// `chip` is the chip the frontend read. Every other write at 0x0 — the
+/// catalog install and the Advanced local file — refuses an image whose
+/// bootloader is not where that chip's ROM loads it
+/// (`check_bootloader_offset`); the restore was the one path that skipped it,
+/// so a backup taken from a classic ESP32 (bootloader at 0x1000) went onto an
+/// S3 as "a smaller file" and the S3 did not start. Same guard, same words,
+/// and the browser's restore (flash.js onRestoreFile) runs its twin.
 #[tauri::command]
 async fn write_local_image(
     app: AppHandle,
@@ -985,6 +1096,7 @@ async fn write_local_image(
     handle: String,
     flash_size: Option<u64>,
     baud: u32,
+    chip: String,
 ) -> Result<(), String> {
     let path = chosen_path(&files, &handle)?;
     let path = path.to_string_lossy().to_string();
@@ -996,6 +1108,9 @@ async fn write_local_image(
     // Canary's flash, or an app-only build with no partition table at 0x8000 are
     // all refused here, before espflash runs.
     check_local_image(&bytes)?;
+    // …and so is an image built for another chip family, or one whose
+    // bootloader is not where this chip's ROM loads it.
+    check_bootloader_offset(&bytes, &chip)?;
     // Fit against the detected chip (the shape gate doesn't look at flash size):
     // bigger than this board can't be its image; smaller writes from 0x0 and
     // leaves the tail. Mirrors the browser's validateBackupFile.
@@ -1017,6 +1132,7 @@ async fn write_local_image(
     let staged = stage_firmware(&bytes, "rescue-restore")?;
     let staged_path = staged.path().to_string_lossy().to_string();
     let _ = app.emit("rescue:log", format!("→ writing {path} to the board…"));
+    let _writing = flash_engine::flash::BOARD_WRITES.begin();
     let code = run_sidecar_streaming(
         &app,
         rescue::write_bin_args(&port, &staged_path, baud),
@@ -1039,6 +1155,7 @@ async fn write_local_image(
 /// Erase the whole chip — a truly clean slate before a fresh install.
 #[tauri::command]
 async fn erase_chip(app: AppHandle, port: String) -> Result<(), String> {
+    let _writing = flash_engine::flash::BOARD_WRITES.begin();
     let _ = app.emit("rescue:log", "→ erasing the whole chip…".to_string());
     let code = run_sidecar_streaming(&app, rescue::erase_flash_args(&port), "rescue:log").await?;
     if code == 0 {
@@ -1082,10 +1199,7 @@ async fn read_region(
     )
     .await?;
     if code != 0 {
-        return Err(format!(
-            "espflash exited with code {code} reading 0x{offset:x}: {}",
-            log.trim()
-        ));
+        return Err(rescue::read_failure(code, offset, &log));
     }
     let data = std::fs::read(tmp.path())
         .map_err(|e| format!("couldn't read back region 0x{offset:x}: {e}"))?;
@@ -1098,25 +1212,22 @@ async fn read_region(
     Ok(data)
 }
 
-/// The checks a save path must pass before this app writes to it. The comment
-/// on `save_text_file` used to be the only guard ("the save dialog already
-/// blessed it") — but a comment binds nobody, and this command is reachable
-/// straight from the webview, so an injected script could hand it any path at
-/// all. Enforce the shape a save-dialog answer actually has: an absolute
-/// path, into a directory that already exists (canonicalized, so `..` can't
-/// dress one directory up as another), ending in the one extension the
-/// export feature offers (`.json` — the health report). Returns the resolved
-/// path to write.
-/// A path the webview says came from the OS save panel: absolute, in a folder
-/// that exists (canonicalized, so `..` never survives), with a file name and
-/// the one extension this export writes. Validated, not trusted — a script
-/// injected into the webview can hand a command any path at all.
+/// The checks a save destination passes before this app writes to it, even
+/// though the path now comes from a panel this process raised (`ask_save_path`)
+/// or from its own backups folder — never from the webview. It has the shape
+/// a save-panel answer actually has: absolute, in a folder that exists
+/// (canonicalized, so `..` never survives and a linked folder is judged by
+/// where it leads), with a file name and the one extension this export
+/// writes. And if something already sits at that name it must be a regular
+/// file: a symlink there is refused rather than written through (the write
+/// would land wherever it points), and so is a folder, a FIFO or a device.
+/// `symlink_metadata` on purpose — it judges the name itself, not its target.
+/// Returns the resolved path to write.
 fn validated_chosen_path(
-    path: &str,
+    p: &std::path::Path,
     ext: &str,
     wrong_ext: &str,
 ) -> Result<std::path::PathBuf, String> {
-    let p = std::path::Path::new(path);
     if !p.is_absolute() {
         return Err("save path must be absolute — pick it in the save dialog".into());
     }
@@ -1135,28 +1246,73 @@ fn validated_chosen_path(
         .ok_or_else(|| "save path has no parent directory".to_string())?
         .canonicalize()
         .map_err(|e| format!("save folder doesn't exist: {e}"))?;
-    Ok(dir.join(name))
+    let out = dir.join(name);
+    match std::fs::symlink_metadata(&out) {
+        Ok(meta) if !meta.file_type().is_file() => Err(
+            "something that isn't a regular file already has that name (a link, a folder or \
+             a device) — choose another name"
+                .into(),
+        ),
+        _ => Ok(out),
+    }
 }
 
-fn validated_save_path(path: &str) -> Result<std::path::PathBuf, String> {
+fn validated_save_path(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
     validated_chosen_path(path, "json", "this app only saves .json exports")
 }
 
 /// The full-flash backup is the identity key and the Wi-Fi secrets in
-/// cleartext, written wherever the webview says — so it gets the same rule as
-/// the JSON export, `.bin` only.
-fn validated_backup_path(path: &str) -> Result<std::path::PathBuf, String> {
+/// cleartext — so its destination gets the same rule as the JSON export,
+/// `.bin` only.
+fn validated_backup_path(path: &std::path::Path) -> Result<std::path::PathBuf, String> {
     validated_chosen_path(path, "bin", "a flash backup is saved as a .bin file")
 }
 
-/// Write UTF-8 text to a path the user just chose in the OS save panel — the
-/// health report's JSON export. No FS plugin, no ambient access — and the
-/// path is validated (`validated_save_path`), not merely trusted to have come
-/// from the dialog.
+/// The file name a save panel opens on. The page suggests it (the browser
+/// flasher's own neutral names: the local date and a counter, never the
+/// board's address), and a suggestion is all it is: a person sees it in the
+/// panel and answers. Held to one plain file name with the expected ending,
+/// so nothing the page sends can carry a directory or a parent step into the
+/// panel's starting point.
+fn suggested_file_name(name: &str, ext: &str) -> Result<String, String> {
+    let ending = format!(".{ext}");
+    let plain = name.len() <= 80
+        && !name.starts_with('.')
+        && !name.contains("..")
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'));
+    if plain && name.len() > ending.len() && name.ends_with(&ending) {
+        Ok(name.to_string())
+    } else {
+        Err(format!("not a file name this app suggests: {name:?}"))
+    }
+}
+
+/// Save UTF-8 text — the health report's JSON export — to a file the user
+/// chooses in the OS save panel, which is raised from HERE (`ask_save_path`).
+/// No path argument, no FS plugin, no ambient access: a script in the webview
+/// can ask for the panel and suggest a name (`suggested_file_name`), and only
+/// a person can answer it. `.json` is a
+/// config format other tools execute (editor settings, package manifests), so
+/// "any .json path the webview names" was a write primitive worth closing.
+/// `true` when the file was written, `false` when the user canceled.
 #[tauri::command]
-async fn save_text_file(path: String, contents: String) -> Result<(), String> {
-    let out = validated_save_path(&path)?;
-    std::fs::write(&out, contents).map_err(|e| format!("couldn't save {path}: {e}"))
+async fn save_text_file(app: AppHandle, name: String, contents: String) -> Result<bool, String> {
+    let asked = ask_save_path(
+        &app,
+        "Save the health report",
+        suggested_file_name(&name, "json")?,
+        "Health report",
+        "json",
+        validated_save_path,
+    )
+    .await?;
+    let Some(out) = asked else {
+        return Ok(false);
+    };
+    std::fs::write(&out, contents).map_err(|e| format!("couldn't save {}: {e}", out.display()))?;
+    Ok(true)
 }
 
 fn verdict_json(v: &health::Verdict) -> Value {
@@ -1172,12 +1328,14 @@ fn verdict_json(v: &health::Verdict) -> Value {
 /// Read the connected board's health: partition map, the firmware in each slot,
 /// update history, crash dump, and the witness chain — read-only. Returns the
 /// same report shape the browser renders, plus a self-heal verdict.
+///
+/// The report carries no hardware address: the frontend shows the board's
+/// behind a reveal on screen and saves none of it (app.js onSaveHealthReport).
 #[tauri::command]
 async fn health_check(
     app: AppHandle,
     port: String,
     chip: String,
-    mac: Option<String>,
     flash_bytes: Option<u64>,
     baud: u32,
 ) -> Result<Value, String> {
@@ -1195,7 +1353,7 @@ async fn health_check(
         });
         emit("✓ read complete — the chip looks blank.");
         return Ok(json!({
-            "chip": chip, "mac": mac, "flashBytes": flash_bytes,
+            "chip": chip, "flashBytes": flash_bytes,
             "blank": true, "partitions": [], "verdict": verdict_json(&verdict),
         }));
     }
@@ -1356,7 +1514,7 @@ async fn health_check(
 
     emit("✓ health check complete.");
     Ok(json!({
-        "chip": chip, "mac": mac, "flashBytes": flash_bytes,
+        "chip": chip, "flashBytes": flash_bytes,
         "partitions": partitions,
         "slots": slots.into_iter().map(Value::Object).collect::<Vec<_>>(),
         "ota": ota_json, "coredump": coredump_json,
@@ -1381,8 +1539,18 @@ async fn health_check(
 /// layout with no coredump region, or a flaky cable degrades a field to null
 /// rather than failing the connect. A passport that cannot be read must never
 /// be reported as a blank board — missing evidence is its own answer.
+///
+/// `chip` (detect_chip's canonical name) places the bootloader's image
+/// header for the About-this-board rows: 32 bytes at 0x0, or 0x1000 on the
+/// classic ESP32. `bootloader` is null when no image is there and `false`
+/// when the read itself failed — two answers the rows keep apart.
 #[tauri::command]
-async fn board_passport(app: AppHandle, port: String, baud: u32) -> Result<Value, String> {
+async fn board_passport(
+    app: AppHandle,
+    port: String,
+    chip: Option<String>,
+    baud: u32,
+) -> Result<Value, String> {
     // Each region is its own espflash spawn (bootloader re-sync included), so
     // the whole read runs 8–25 s — long enough that a silent label reads as a
     // hang. `passport:log` narrates each step; the frontend shows the line in
@@ -1390,12 +1558,33 @@ async fn board_passport(app: AppHandle, port: String, baud: u32) -> Result<Value
     let narrate = |line: &str| {
         let _ = app.emit("passport:log", line.to_string());
     };
+    narrate("reading the bootloader's image header…");
+    let chip_name = chip.unwrap_or_default();
+    let bootloader = match read_region(
+        &app,
+        &port,
+        health::bootloader_offset(&chip_name),
+        0x20,
+        baud,
+    )
+    .await
+    {
+        Ok(hb) => match health::parse_bootloader_header(&hb, &chip_name) {
+            Some(h) => json!({
+                "flashMode": h.flash_mode, "flashMhz": h.flash_mhz,
+                "flashMhzEither": h.flash_mhz_either, "flashBytes": h.flash_bytes,
+                "codes": { "mode": h.mode_code, "size": h.size_code, "freq": h.freq_code },
+            }),
+            None => Value::Null,
+        },
+        Err(_) => json!(false),
+    };
     narrate("reading the partition table…");
     let pt = read_region(&app, &port, 0x8000, 0xc00, baud).await?;
     let entries = health::parse_partition_table(&pt);
     if entries.is_empty() {
         // Read fine, found no table: a genuinely blank (or fully erased) chip.
-        return Ok(json!({ "blank": true, "resident": Value::Null }));
+        return Ok(json!({ "blank": true, "resident": Value::Null, "bootloader": bootloader }));
     }
 
     let apps = health::app_partitions(&entries);
@@ -1440,6 +1629,8 @@ async fn board_passport(app: AppHandle, port: String, baud: u32) -> Result<Value
                     "version": d.version,
                     "projectName": d.project_name,
                     "idf": d.idf_ver,
+                    "secureVersion": d.secure_version,
+                    "elfSha256Prefix": d.elf_sha256_prefix,
                     "slot": booted.label,
                 });
             }
@@ -1476,6 +1667,7 @@ async fn board_passport(app: AppHandle, port: String, baud: u32) -> Result<Value
     Ok(json!({
         "blank": false,
         "resident": resident,
+        "bootloader": bootloader,
         "ota": ota_json,
         "coredump": coredump_json,
         "witness": witness_json,
@@ -1586,6 +1778,39 @@ pub fn run() {
                                 w.app_handle().exit(0);
                             }
                         });
+                    return;
+                }
+                // The same courtesy for a board: espflash is erasing or
+                // writing one right now. Two facts, both needed — a live
+                // espflash ticket alone also means a read (the chip probe, a
+                // backup, the health check), and the engine's write marker
+                // says which it is (flash_engine::flash::BOARD_WRITES).
+                // Advisory, with Quit: an interrupted write is re-done from
+                // the ROM bootloader, never a brick. The Lab asks the same
+                // question in the same words.
+                let writing = flash_engine::flash::BOARD_WRITES.any()
+                    && window
+                        .try_state::<Arc<launch_guard::LaunchGuard>>()
+                        .map(|g| g.any_live(flash_engine::sidecar::ESPFLASH))
+                        .unwrap_or(false);
+                if writing {
+                    api.prevent_close();
+                    let w = window.clone();
+                    w.dialog()
+                        .message(
+                            "A flash is still writing to the board. Quitting now leaves it \
+                             unfinished — safe, you would flash it again. Quit anyway?",
+                        )
+                        .title("Quit while flashing?")
+                        .buttons(MessageDialogButtons::OkCancelCustom(
+                            "Quit".into(),
+                            "Keep flashing".into(),
+                        ))
+                        .show(move |quit| {
+                            if quit {
+                                w.app_handle().exit(0);
+                            }
+                        });
                 }
             }
         })
@@ -1637,7 +1862,6 @@ pub fn run() {
             secret_store::secret_set,
             secret_store::secret_get,
             secret_store::secret_delete,
-            auto_backup_path,
             backup_flash,
             write_local_image,
             erase_chip,
@@ -1732,7 +1956,11 @@ mod catalog_derivation_tests {
 
 #[cfg(test)]
 mod webview_boundary_tests {
-    use super::{chosen_file_ok, validated_backup_path, validated_save_path};
+    use super::{
+        chosen_file_ok, suggested_file_name, validated_backup_path, validated_save_path,
+        vision_model_size_ok, VISION_MODEL_MAX_BYTES,
+    };
+    use std::path::Path;
 
     #[test]
     fn a_picked_file_is_a_regular_file_outside_the_apps_own_folder() {
@@ -1796,26 +2024,29 @@ mod webview_boundary_tests {
 
     #[test]
     fn backup_paths_are_validated_not_trusted() {
-        // The backup is the identity key and Wi-Fi secrets in cleartext, so a
-        // webview-supplied destination gets exactly the JSON export's rules.
+        // The backup is the identity key and Wi-Fi secrets in cleartext. Its
+        // destination is the save panel's answer (or the app's own backups
+        // folder) and still gets exactly the JSON export's rules.
         let dir = tempfile::tempdir().expect("tempdir");
         let good = dir.path().join("canary-backup.bin");
-        let resolved = validated_backup_path(good.to_str().unwrap()).expect("a dialog-shaped path");
+        let resolved = validated_backup_path(&good).expect("a dialog-shaped path");
         assert_eq!(resolved.file_name().unwrap(), "canary-backup.bin");
 
-        assert!(validated_backup_path("backup.bin").is_err(), "relative");
         assert!(
-            validated_backup_path(dir.path().join("backup.json").to_str().unwrap()).is_err(),
+            validated_backup_path(Path::new("backup.bin")).is_err(),
+            "relative"
+        );
+        assert!(
+            validated_backup_path(&dir.path().join("backup.json")).is_err(),
             "only .bin"
         );
         assert!(
-            validated_backup_path(dir.path().join("no-such-dir/backup.bin").to_str().unwrap())
-                .is_err(),
+            validated_backup_path(&dir.path().join("no-such-dir/backup.bin")).is_err(),
             "missing folder"
         );
         std::fs::create_dir(dir.path().join("sub")).unwrap();
         let sneaky = dir.path().join("sub/../canary-backup.bin");
-        let resolved = validated_backup_path(sneaky.to_str().unwrap()).unwrap();
+        let resolved = validated_backup_path(&sneaky).unwrap();
         assert!(!resolved.to_string_lossy().contains(".."));
         assert_eq!(
             resolved.parent().unwrap(),
@@ -1827,21 +2058,18 @@ mod webview_boundary_tests {
     fn save_paths_are_validated_not_trusted() {
         let dir = tempfile::tempdir().expect("tempdir");
         let good = dir.path().join("canary-report.json");
-        let resolved = validated_save_path(good.to_str().unwrap()).expect("a dialog-shaped path");
+        let resolved = validated_save_path(&good).expect("a dialog-shaped path");
         assert_eq!(resolved.file_name().unwrap(), "canary-report.json");
 
         // Relative paths, non-.json targets, and missing folders are refused.
-        assert!(validated_save_path("report.json").is_err());
-        assert!(validated_save_path(dir.path().join("evil.sh").to_str().unwrap()).is_err());
-        assert!(
-            validated_save_path(dir.path().join("no-such-dir/report.json").to_str().unwrap())
-                .is_err()
-        );
+        assert!(validated_save_path(Path::new("report.json")).is_err());
+        assert!(validated_save_path(&dir.path().join("evil.sh")).is_err());
+        assert!(validated_save_path(&dir.path().join("no-such-dir/report.json")).is_err());
 
         // `..` segments are resolved away, never written through blindly.
         std::fs::create_dir(dir.path().join("sub")).unwrap();
         let sneaky = dir.path().join("sub/../canary-report.json");
-        let resolved = validated_save_path(sneaky.to_str().unwrap()).expect("canonicalized");
+        let resolved = validated_save_path(&sneaky).expect("canonicalized");
         assert_eq!(
             resolved,
             dir.path()
@@ -1849,5 +2077,87 @@ mod webview_boundary_tests {
                 .unwrap()
                 .join("canary-report.json")
         );
+    }
+
+    #[test]
+    fn a_save_never_writes_through_a_name_that_is_not_a_regular_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Replacing a file of the user's own is what a save panel's "Replace"
+        // means: allowed.
+        let existing = dir.path().join("old-report.json");
+        std::fs::write(&existing, b"{}").unwrap();
+        assert!(
+            validated_save_path(&existing).is_ok(),
+            "an existing regular file"
+        );
+
+        // A folder wearing the extension is not a file to write.
+        let folder = dir.path().join("folder.json");
+        std::fs::create_dir(&folder).unwrap();
+        assert!(validated_save_path(&folder).is_err(), "a directory");
+        let folder_bin = dir.path().join("folder.bin");
+        std::fs::create_dir(&folder_bin).unwrap();
+        assert!(validated_backup_path(&folder_bin).is_err(), "a directory");
+
+        // A link at the name is refused, never followed: the write would land
+        // on whatever it points at (somebody's settings.json, a device).
+        #[cfg(unix)]
+        {
+            let victim = dir.path().join("settings.json");
+            std::fs::write(&victim, b"{\"keep\":true}").unwrap();
+            let link = dir.path().join("report.json");
+            std::os::unix::fs::symlink(&victim, &link).unwrap();
+            assert!(validated_save_path(&link).is_err(), "a link to a file");
+            let dangling = dir.path().join("dangling.bin");
+            std::os::unix::fs::symlink(dir.path().join("nowhere"), &dangling).unwrap();
+            assert!(validated_backup_path(&dangling).is_err(), "a dangling link");
+            assert_eq!(std::fs::read(&victim).unwrap(), b"{\"keep\":true}");
+        }
+    }
+
+    #[test]
+    fn a_suggested_name_is_one_plain_file_name_with_the_expected_ending() {
+        // The browser's own names, which the page suggests.
+        assert_eq!(
+            suggested_file_name("canary-2026-10-22-1-backup.bin", "bin").unwrap(),
+            "canary-2026-10-22-1-backup.bin"
+        );
+        assert_eq!(
+            suggested_file_name("canary-2026-10-22-2-report.json", "json").unwrap(),
+            "canary-2026-10-22-2-report.json"
+        );
+        // The name is the one value the webview supplies: a directory, a
+        // parent step, a hidden file, another ending or nothing is refused.
+        for hostile in [
+            "../../etc/passwd.json",
+            "/abs/olute.json",
+            "a\\b.json",
+            "..json",
+            "x/../y.json",
+            ".bashrc.json",
+            "report.json.sh",
+            "report",
+            ".json",
+            "",
+            "with space.json",
+        ] {
+            assert!(suggested_file_name(hostile, "json").is_err(), "{hostile}");
+        }
+        assert!(suggested_file_name("canary-2026-10-22-1-backup.bin", "json").is_err());
+        assert!(suggested_file_name(&format!("{}.json", "a".repeat(90)), "json").is_err());
+    }
+
+    #[test]
+    fn a_vision_model_size_past_the_cap_is_refused_by_name() {
+        assert_eq!(vision_model_size_ok(1), Ok(1));
+        assert_eq!(
+            vision_model_size_ok(VISION_MODEL_MAX_BYTES),
+            Ok(VISION_MODEL_MAX_BYTES)
+        );
+        for huge in [VISION_MODEL_MAX_BYTES + 1, 1 << 40, u64::MAX] {
+            let err = vision_model_size_ok(huge).unwrap_err();
+            assert!(err.contains("implausible size"), "{err}");
+            assert!(err.contains(&VISION_MODEL_MAX_BYTES.to_string()), "{err}");
+        }
     }
 }

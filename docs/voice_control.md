@@ -208,17 +208,22 @@ reassuring, including the part most assistants would leave out:
 > wake word, I'm listening for that one phrase and nothing else; and if
 > something false-wakes me, a television say, the few seconds after it are
 > read here on this hub and thrown away. Either way, I don't record you,
-> and nothing I hear is stored or sent anywhere — once I've answered, it's
-> gone. As for the Canaries around the house: they report what happened,
-> never who — no faces, no plate numbers, no footage leaving home. That
-> isn't a setting I have. It's code that was never written."*
+> and nothing I hear is stored or sent anywhere — the one thing I keep is
+> the name you give a watch, until that watch ends; the rest is gone once
+> I've answered. As for the Canaries around the house: they report what
+> happened, never who — no faces, no plate numbers, no footage leaving
+> home. That isn't a setting I have. It's code that was never written."*
 
-Two deliberate choices in that wording. It **never asserts which mode is
+Three deliberate choices in that wording. It **never asserts which mode is
 active** — push-to-talk is the blessed default and doesn't listen for a
 name at all, so a flat "I only wake to my name" would be a false
-guarantee in exactly the setup this page recommends. And it's composed
-from the contract, not from runtime state, so no configuration change can
-make it say something kinder than the truth.
+guarantee in exactly the setup this page recommends. It **names the one
+thing it keeps**: "keep an eye on the litter box" starts a watch, and the
+words you called it by are that watch's label, stored on the hub until
+the watch ends or is ended — an unqualified "nothing I hear is stored"
+would be false for exactly those words. And it's composed from the
+contract, not from runtime state, so no configuration change can make it
+say something kinder than the truth.
 
 The weather line at the end of "what's up" covers Home Assistant's whole
 condition vocabulary with a warm phrase for every season — optimistic on

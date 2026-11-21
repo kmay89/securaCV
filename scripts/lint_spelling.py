@@ -76,23 +76,38 @@ SKIP_DIRS = {".git", "node_modules", "target", "build", "dist", ".venv",
              # `CANCELLED` the way the stdlib does), so a local `mypy` run made
              # this gate red on files nobody wrote. CI never has them; the
              # person running both tools locally does.
-             ".mypy_cache", ".pytest_cache", ".ruff_cache",
-             # Vendored upstream sources, fetched into the tree by a build and
-             # not ours to respell. canary-local/emulator/build.sh clones LVGL,
-             # ArduinoJson and arduinolibs into third_party/ before the wasm
-             # build; ArduinoJson alone ships a bundled catch.hpp that trips
-             # this gate 240 times. CI never saw it — the lint job gets a
-             # fresh checkout and the wasm job is a different job — so the
-             # only person who ever met those 242 failures was whoever built
-             # the emulator locally and then ran the linter, which is exactly
-             # the person a gate should not be lying to.
-             #
-             # Note this is a DIRECTORY name, not a path: nothing tracked in
-             # git lives under a third_party/ anywhere, so skipping the name
-             # cannot narrow what the gate covers in a clean checkout. (The
-             # tracked vendor/ directories are deliberately NOT skipped —
-             # those files are committed here and do get linted.)
-             "third_party"}
+             ".mypy_cache", ".pytest_cache", ".ruff_cache"}
+# Vendored upstream sources, fetched into the tree by a build and not ours to
+# respell, are skipped by fetched_third_party() below rather than by
+# SKIP_DIRS. canary-local/emulator/build.sh clones LVGL, ArduinoJson and
+# arduinolibs into third_party/ before the wasm build (and glass_turn_lvgl9.sh
+# a second LVGL into emulator/test/third_party/); ArduinoJson alone ships a
+# bundled catch.hpp that trips this gate 240 times. CI never saw it — the lint
+# job gets a fresh checkout and the wasm job is a different job — so the only
+# person who ever met those 242 failures was whoever built the emulator
+# locally and then ran the linter, which is exactly the person a gate should
+# not be lying to.
+#
+# A third_party/ is skipped by its NAME, except firmware/third_party/: that one
+# is committed (the patched core-2 WebServer), and its READMEs and the patch's
+# own comments are first-party prose, so it is linted like the tracked vendor/
+# directories are. Its upstream files are pinned by sha256 in
+# scripts/tests/test_vendored_webserver_core2.py, so a spelling there can only
+# change by an edit that test also fails; all of it scanned clean when it was
+# committed.
+COMMITTED_THIRD_PARTY = ("firmware", "third_party")
+
+
+def fetched_third_party(f):
+    """True for a file under a third_party/ directory a build fetched (not
+    firmware/third_party/, which is committed and linted)."""
+    if "third_party" not in f.parts:
+        return False
+    parts = f.resolve().parts
+    return any(p == "third_party" and parts[i - 1:i + 1] != COMMITTED_THIRD_PARTY
+               for i, p in enumerate(parts) if i)
+
+
 # This file names the banned forms, so it cannot police itself.
 SKIP_FILES = {"lint_spelling.py"}
 
@@ -444,7 +459,8 @@ def walk(paths):
             if (f.is_file()
                     and (f.suffix in EXTS or f.name in EXTRA_NAMES)
                     and f.name not in SKIP_FILES
-                    and not any(d in f.parts for d in SKIP_DIRS)):
+                    and not any(d in f.parts for d in SKIP_DIRS)
+                    and not fetched_third_party(f)):
                 yield f
 
 

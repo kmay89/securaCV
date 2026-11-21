@@ -230,7 +230,12 @@ function closingBrace(s, open) {
 // the bodies must name what a member call can touch (an NVS key, a clear).
 // A call whose name the sketch defines only where the call cannot see it,
 // or defines in a shape the index does not read (a body after `name(...)`
-// anywhere in the code), is a failure, not a guess. Returns
+// anywhere in the code), is a failure, not a guess. A call written straight
+// after an open parenthesis, `if (f(...))`, is read too: the character before
+// a name is looked behind, not consumed, so the `(` that `if (` matched does
+// not hide the call (audit A2-18: the walk consumed it, and so missed the
+// hold's own `if (securacv_ota_set_manifest_url(nullptr) ...)` and log_health()'s
+// `if (log_level_requires_attention(...))`). Returns
 // { bodies: Map<'ns::name (file)', code>, external }.
 function sketchCallWalk(root) {
   const defs = new Map();
@@ -287,7 +292,7 @@ function sketchCallWalk(root) {
     bodies.set(key, d.body);
     const calls = d.body.slice(d.body.indexOf(d.name) + d.name.length)
       .replace(/"(?:[^"\\\n]|\\.)*"/g, '""').replace(/'(?:[^'\\\n]|\\.)*'/g, "''");
-    for (const m of calls.matchAll(/(?:^|[^\w.>:])((?:::)?(?:\w+::)*\w+)\s*\(/g)) {
+    for (const m of calls.matchAll(/(?<![\w.>:])((?:::)?(?:\w+::)*\w+)\s*\(/g)) {
       let parts = m[1].split('::').filter(Boolean);
       const name = parts.pop();
       if (KEYWORDS.has(name)) continue;
@@ -1025,6 +1030,74 @@ describe("the dashboard's BOOT-tap sign-in offers the kit (sweep F257)", () => {
       assert.doesNotMatch(calls, /\bbeacon_channel\s*::|\bbeacon_\w*(?:leave|clear|reset|forget|wipe|erase|unpair|revoke)\w*\s*\(/,
                           fn + ' calls into the Beacon channel');
     }
+  });
+
+  it("the 10 s hold removes the camera vault's unlock key, turns its triggers off and erases the update-manifest override (audit A2-18)", () => {
+    // The hold reached neither: the vault's recipient key ("vault_pub") and
+    // its trigger switches live in the main NVS namespace, and the next boot's
+    // vault_snapshot::init() adopted them again, so a unit handed to a new
+    // owner went on sealing camera frames to the previous owner's key on
+    // every armed trigger; and the manifest-URL override in "securacv_ota"
+    // kept the unit polling the previous owner's server. The hold now calls
+    // the vault's own clear (what DELETE /api/vault/key runs) on a camera
+    // build and erases the override, key by key, never a whole namespace
+    // (the Bluetooth row above holds every reached body to that).
+    const code = (f) => cppCode(read(path.join(__dirname, f)));
+    const fnBody = (src, sig, file) => {
+      const at = src.indexOf(sig);
+      assert.ok(at >= 0, sig + ' not found in ' + file);
+      return src.slice(at, src.indexOf('\n}\n', at));
+    };
+    const { bodies } = sketchCallWalk('factory_reset_by_hold');
+    for (const reached of ['vault_snapshot::clear_pubkey (vault_snapshot.cpp)',
+                           'vault_snapshot::persist_config (vault_snapshot.cpp)',
+                           'securacv_ota_set_manifest_url (securacv_ota.cpp)',
+                           'nvs_store_str (securacv_ota.cpp)']) {
+      assert.ok(bodies.has(reached), 'the walk reaches ' + reached + ': ' + [...bodies.keys()].join(', '));
+    }
+    // In the hold itself: the vault clear on every build that has a vault,
+    // and the override erase (a null URL) on every build.
+    const hold = fnBody(code('canary_wap.ino'), 'static void factory_reset_by_hold() {', 'canary_wap.ino');
+    assert.match(hold, /\n {2}#if FEATURE_VAULT_SNAPSHOT\n(?: {2}[^#\n]*\n)*? {2}vault_snapshot::clear_pubkey\(\);[^\n]*\n {2}#endif\n/);
+    assert.match(hold, /\n {2}if \(securacv_ota_set_manifest_url\(nullptr\) != ESP_OK\) \{/);
+    assert.match(code('canary_wap.ino'), /\n#if FEATURE_VAULT_SNAPSHOT\n#include "vault_logic\.h"\n#include "vault_snapshot\.h"\n/);
+    // The vault's clear removes the key and persists every trigger off, under
+    // the keys its boot load reads them from.
+    const vault = code('vault_snapshot.cpp');
+    const vaultKeys = new Map([...vault.matchAll(/static const char\* (NVS_KEY_\w+)\s*=\s*"([^"]*)";/g)]
+      .map((m) => [m[1], m[2]]));
+    for (const [name, key] of [['NVS_KEY_PUB', 'vault_pub'], ['NVS_KEY_T3', 'vault_t3'], ['NVS_KEY_T4', 'vault_t4'],
+                               ['NVS_KEY_GLASS', 'vault_glass'], ['NVS_KEY_MOT', 'vault_mot'],
+                               ['NVS_KEY_MESH', 'vault_mesh']]) {
+      assert.equal(vaultKeys.get(name), key, name);
+    }
+    const clear = bodies.get('vault_snapshot::clear_pubkey (vault_snapshot.cpp)');
+    assert.match(clear, /if \(nvs\.isOpen\(\)\) nvs->remove\(NVS_KEY_PUB\);/);
+    assert.match(clear, /g_has_pubkey = false;/);
+    for (const field of ['t3_enabled', 't4_enabled', 'glass_enabled', 'motion_enabled', 'mesh_enabled']) {
+      assert.match(clear, new RegExp('g_cfg\\.' + field + ' = [^;]*\\bfalse;'), field + ' is forced off');
+    }
+    assert.ok(clear.indexOf('persist_config();') > clear.indexOf('mesh_enabled = false;'), 'the triggers are persisted off');
+    const persist = bodies.get('vault_snapshot::persist_config (vault_snapshot.cpp)');
+    const load = fnBody(vault, 'static void load_config_from(NvsMainSession& nvs) {', 'vault_snapshot.cpp');
+    for (const [name, field] of [['NVS_KEY_T3', 't3_enabled'], ['NVS_KEY_T4', 't4_enabled'], ['NVS_KEY_GLASS', 'glass_enabled'],
+                                 ['NVS_KEY_MOT', 'motion_enabled'], ['NVS_KEY_MESH', 'mesh_enabled']]) {
+      assert.match(persist, new RegExp('nvs->putBool\\(' + name + ',\\s*g_cfg\\.' + field + '\\);'), name);
+      assert.match(load, new RegExp('g_cfg\\.' + field + '\\s*= nvs->getBool\\(' + name + ', false\\);'), name);
+    }
+    assert.match(load, /if \(nvs->getBytesLength\(NVS_KEY_PUB\) == vault_logic::PUBKEY_SIZE\) \{/);
+    // The override erase: a null URL skips the URL check and takes the
+    // erase branch, on the one key the getter reads first.
+    const ota = code('securacv_ota.cpp');
+    assert.match(ota, /#define NVS_NAMESPACE\s+"securacv_ota"/);
+    assert.match(ota, /#define NVS_KEY_MANIFEST_URL "manifest_url"/);
+    const setUrl = bodies.get('securacv_ota_set_manifest_url (securacv_ota.cpp)');
+    assert.match(setUrl, /if \(url != NULL && url\[0\] != '\\0' &&\s*!securacv_ota_url_allowed\(/);
+    assert.match(setUrl, /return nvs_store_str\(NVS_KEY_MANIFEST_URL, url\);/);
+    assert.match(bodies.get('nvs_store_str (securacv_ota.cpp)'),
+                 /if \(value == NULL \|\| value\[0\] == '\\0'\) \{\s*err = nvs_erase_key\(handle, key\);/);
+    assert.match(fnBody(ota, 'esp_err_t securacv_ota_get_manifest_url(char *buf, size_t buf_len)', 'securacv_ota.cpp'),
+                 /if \(nvs_load_str\(NVS_KEY_MANIFEST_URL, buf, buf_len\) == ESP_OK && buf\[0\] != '\\0'\) \{/);
   });
 
   it("the iPhone's set-it-up-again advice checks Bluetooth before it forgets the Wi-Fi (#1843)", () => {

@@ -22,6 +22,9 @@ kit — one server, many apps
   kit app add <name> [--image <ref>] [--port <n>]   a new app directory from the template (backoffice and backoffice-demo have their own)
   kit env <app>                           edit the app's .env (0640, group kit)
   kit deploy <app> [<tag>]                pull the tag (default: the one deployed, else latest), start, wait for healthy, else roll back
+  kit rollback <app> [<copy>]             backoffice: go back one build — if the build to go back to cannot open the database (a
+                                          newer one migrated it), restore the copy taken before the migration FIRST (the newest
+                                          pre-migrate copy, or the backup you name by its path in the container), then deploy it
   kit run <app> <cmd…>                    run a command in the app's container
   kit offline <app> <cmd…>                stop the app, run a command in a fresh container of it (same env, same data), start it again — for a restore
   kit refresh <app>                       staging: stop it, restore the latest off-site PRODUCTION copy into its data, start it (cron runs this nightly)
@@ -73,7 +76,7 @@ cmd_ps() {
   printf '%-18s %-10s %-14s %s\n' APP STATE TAG IMAGE
   for d in "$APPS"/*/; do [ -d "$d" ] || continue; local app; app="$(basename "$d")"
     printf '%-18s %-10s %-14s %s\n' "$app" "$(health_of "$app")" "$(cat "$d/.tag" 2>/dev/null || echo -)" "$(docker inspect -f '{{.Config.Image}}' "$app" 2>/dev/null || echo -)"
-    if [ -f "$d/.tag.previous" ]; then printf '%-18s %-10s %-14s %s\n' '' previous "$(cat "$d/.tag.previous")" "(kit deploy $app $(cat "$d/.tag.previous") rolls back)"; fi; done
+    if [ -f "$d/.tag.previous" ]; then printf '%-18s %-10s %-14s %s\n' '' previous "$(cat "$d/.tag.previous")" "(kit rollback $app goes back to it)"; fi; done
   printf '%-18s %-10s\n' edge "$(health_of edge)"
 }
 
@@ -125,9 +128,76 @@ cmd_deploy() {
     docker image prune -f >/dev/null 2>&1 || true; echo "$app is $h on $tag"
   else
     echo "$app is $h on $tag after two minutes" >&2; docker logs --tail 40 "$app" >&2 || true
-    if [ -n "$prev" ] && [ "$prev" != "$tag" ]; then echo "rolling back to $prev" >&2; TAG="$prev" compose "$app" up -d --remove-orphans; fi
+    if schema_refused "$app"; then
+      # The tag asked for is older than the database: a newer build migrated the file and this one refuses it.
+      # Starting it again cannot help; the build that was running still can, so that one comes back.
+      echo "$tag cannot open the database: a newer build migrated it (the schema guard, above)" >&2
+      if [ -n "$prev" ] && [ "$prev" != "$tag" ]; then echo "starting $prev again" >&2; TAG="$prev" compose "$app" up -d --remove-orphans; fi
+      if [ "$(cat "$APPS/$app/.tag.previous" 2>/dev/null || true)" = "$tag" ]; then echo "to go back to $tag, run: kit rollback $app   (it restores the copy taken before the migration, then deploys $tag)" >&2
+      else echo "kit rollback $app goes back one build (to $(cat "$APPS/$app/.tag.previous" 2>/dev/null || echo 'none on record')), restoring the copy taken before the migration first; $tag is not that build" >&2; fi
+    elif [ -n "$prev" ] && [ "$prev" != "$tag" ]; then
+      echo "rolling back to $prev" >&2; TAG="$prev" compose "$app" up -d --remove-orphans
+      # If $tag migrated the database before it failed, $prev refuses the file and would restart forever. Say so,
+      # and say the one command that goes back, instead of leaving a loop with no explanation.
+      local j=0; while [ $j -lt 6 ] && [ "$(health_of "$app")" != "healthy" ] && ! schema_refused "$app"; do sleep 5; j=$((j + 1)); done
+      if schema_refused "$app"; then echo "$prev cannot open the database: $tag migrated it before it failed. Run: kit rollback $app   (it restores the copy taken before the migration, then starts $prev)" >&2; fi
+    fi
     exit 1
   fi
+}
+
+# The backoffice refuses a database that carries migrations its build does not know ("database schema is ahead of
+# this build", backoffice/src/db.mjs). schema_refused reads that in the running container's log. probe_schema asks
+# a tag's build directly, in a throwaway container while the app is stopped: 0 = it refuses the database,
+# 1 = it opens it, 2 = the question could not be asked (the reason goes to stderr).
+schema_refused() { local out; out="$(docker logs --tail 60 "$1" 2>&1 || true)"; grep -q 'schema is ahead of this build' <<< "$out"; }
+probe_schema() {
+  local out rc=0; out="$(TAG="$2" compose "$1" run --rm --no-deps -T "$1" node bin/backoffice.mjs help 2>&1)" || rc=$?
+  if grep -q 'schema is ahead of this build' <<< "$out"; then return 0; fi
+  [ "$rc" = 0 ] && return 1
+  printf '%s\n' "$out" | tail -n 20 >&2; return 2
+}
+# A rollback that cannot go on leaves the app as it found it: started again on the tag it was running.
+rollback_abort() { local app="$1" cur="$2"; shift 2; echo "starting $app again on $cur" >&2; TAG="$cur" compose "$app" up -d || true; die "$@"; }
+
+# Going back from a release that migrated the database is the data first, then the code: the previous image
+# refuses the migrated file, so `kit deploy <app> <previous>` alone ends in a restart loop. The order that works:
+# stop the app; put the newest pre-migrate copy back (the backoffice writes backups/pre-migrate-<stamp>-<migration>.db
+# before the first pending migration); then deploy the tag to go back to. When no migration separates the two
+# builds, nothing is restored and this is a plain deploy of the previous tag.
+# Which tag: the previous one (.tag.previous) — or the deployed one itself, when a deploy that migrated the file
+# failed and left the deployed build refusing it. Which copy: the newest pre-migrate one, or the backup named as
+# the second word (its path inside the container), for when that copy is gone or an older one is wanted.
+cmd_rollback() {
+  need_app "${1:-}"; local app="$1"; local named="${2:-}"
+  [ -z "$named" ] || [[ "$named" =~ ^/[A-Za-z0-9._/-]+\.db$ ]] || die "the copy is a .db file by its path inside the container, e.g. /data/backups/pre-migrate-….db"
+  grep -q 'BACKOFFICE_ENV' "$APPS/$app/compose.yml" || die "$app is not a backoffice app — kit rollback restores the backoffice's pre-migrate copy; for anything else: kit deploy $app <previous tag>"
+  local cur prev target r copy
+  cur="$(cat "$APPS/$app/.tag" 2>/dev/null || true)"; prev="$(cat "$APPS/$app/.tag.previous" 2>/dev/null || true)"
+  [[ "$cur" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$ ]] || die "$app has no deployed tag yet — nothing to go back from"
+  [ -z "$prev" ] || [[ "$prev" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$ ]] || die "$APPS/$app/.tag.previous does not hold an image tag"
+  echo "stopping $app"; TAG="$cur" compose "$app" stop
+  r=0; probe_schema "$app" "$cur" || r=$?
+  case "$r" in
+    0) target="$cur"; echo "$cur is deployed and cannot open the database: a build that failed migrated it";;
+    1) if [ -z "$prev" ] || [ "$prev" = "$cur" ]; then rollback_abort "$app" "$cur" "$app has no previous tag on record ($APPS/$app/.tag.previous) — name one: kit deploy $app <tag>"; fi
+       target="$prev"
+       TAG="$target" compose "$app" pull -q || rollback_abort "$app" "$cur" "could not pull $target"
+       r=0; probe_schema "$app" "$target" || r=$?
+       case "$r" in
+         0) echo "$target cannot open the database: $cur migrated it";;
+         1) echo "$target opens the database as it is (no migration since) — nothing to restore"; cmd_deploy "$app" "$target"; return;;
+         *) rollback_abort "$app" "$cur" "could not ask $target whether it opens the database (above) — nothing was changed";;
+       esac;;
+    *) rollback_abort "$app" "$cur" "could not ask $cur whether it opens the database (above) — nothing was changed";;
+  esac
+  copy="$named"
+  [ -n "$copy" ] || copy="$(TAG="$cur" compose "$app" run --rm --no-deps -T --entrypoint sh "$app" -c 'ls -1 "${BACKOFFICE_DATA_DIR:-/data}"/backups/pre-migrate-*.db 2>/dev/null | sort | tail -n 1' 2>/dev/null | tr -d '\r' | tail -n 1 || true)"
+  [[ "$copy" =~ ^/[A-Za-z0-9._/-]+\.db$ ]] || rollback_abort "$app" "$cur" "no pre-migrate copy under the app's backups/ — name a backup taken before the migration, by its path inside the container: kit rollback $app /data/backups/<file>.db"
+  echo "restoring $copy — what was written after it (orders, tickets, mail) is not in it; the replaced file is kept beside the database"
+  # BACKOFFICE_ALLOW_NEWER_SCHEMA=1 lets the deployed build open the file it is about to replace, whichever side of the migration it is on.
+  TAG="$cur" compose "$app" run --rm --no-deps -T -e BACKOFFICE_ALLOW_NEWER_SCHEMA=1 "$app" node bin/backoffice.mjs restore "$copy" --force || rollback_abort "$app" "$cur" "the restore failed (above)"
+  cmd_deploy "$app" "$target"
 }
 
 cmd_logs() { need_app "${1:-}"; local app="$1"; shift; docker logs --tail 200 "$@" "$app"; }
@@ -191,6 +261,7 @@ case "${1:-help}" in
   app) shift; case "${1:-}" in add) shift; cmd_app_add "$@";; *) die "kit app add <name>";; esac;;
   env) shift; cmd_env "$@";;
   deploy) shift; cmd_deploy "$@";;
+  rollback) shift; cmd_rollback "$@";;
   run) shift; cmd_run "$@";;
   offline) shift; cmd_offline "$@";;
   refresh) shift; cmd_refresh "$@";;

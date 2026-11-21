@@ -22,7 +22,7 @@ struct TodayView: View {
                     if store.demoMode { DemoDataBanner() }
                     StatusHero(severity: store.worstSeverity,
                                headline: store.allQuiet ? "All quiet" : hotHeadline,
-                               watchers: store.witnesses.count)
+                               watchers: store.watchingCount)
                     // A brand-new Canary with its Bluetooth setup door open
                     // is in range: the card, before anything else.
                     NearbyCanaryCard()

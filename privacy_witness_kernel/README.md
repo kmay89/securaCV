@@ -27,8 +27,8 @@ developer's map of the directory.
    Frigate (links into your App Store for anything missing), reads Frigate's
    cameras from its config, asks what to seal and for how long, and offers
    **Install the integration and restart Home Assistant** on its done screen.
-   After the restart: Settings → Devices & Services → *SecuraCV discovered* →
-   Configure, nothing to type.
+   After the restart: Settings → Devices & Services → the *SecuraCV app* card
+   under Discovered → Add, nothing to type.
 
 ## What is in this directory
 

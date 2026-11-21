@@ -84,7 +84,11 @@ unless the line says otherwise.
   frame at most. `src/module_runtime/mod.rs` (`admit_candidates`).
 - **Still open, structural:** the child should never hold the key at all. The
   worker should be spawned before `Kernel::open` and fed views over a pipe.
-  Tracked here; the admission layer above bounds the damage until then.
+  Tracked here. Until then the admission layer narrows the child's say to
+  a few constrained values a candidate (sixteen a frame, roughly a hundred
+  and forty bits): it closes the free-text path that carried the key as a
+  readable string, not the leak itself, which a hostile child could still
+  walk out through confidences over a couple of frames.
 - **A hung or hostile module wedged ingest.** No reply deadline, no resource
   limit, `fork` allowed. The child now runs under `RLIMIT_CPU`, dies with the
   thread that forked it (`PR_SET_PDEATHSIG`), has its standard streams
@@ -409,15 +413,154 @@ same change.
 
 ## Still standing, across trees
 
-- The detector sandbox child still holds the signing key (admission bounds
-  the channel; a key-less worker is the fix).
-- `/api/fleet` in `full` mode still serves broker-forgeable wellbeing words;
-  signing the firmware's `state` publish would let `full` be served safely.
+- The detector sandbox child still holds the signing key (admission
+  narrows the channel to sixteen constrained values a frame, roughly 140
+  bits, which still carries the seed out in a couple of frames; a key-less
+  worker is the fix).
+- `/api/fleet` in `full` mode sets a peer's wellbeing words only from a
+  `state` publish whose signature verifies under the pinned device key and
+  whose freshness pair is past the last one verified; firmware that does
+  not sign its `state` yet shows no words.
 - The desktop challenge gate is not channel binding; a relay to a reachable
   genuine board still works.
-- The add-on's device seed lives in `/config`; moving it is a data migration.
+- The add-on's device seed moved to the app's own `/data/device_key`
+  (#1935), and the kernel's own copy under `/config` was removed (#1948), so
+  nothing under `/config` holds it.
 - The backoffice runs `scrypt` on the event loop; the IMAP client flags a
   message seen while fetching.
 - The site's inline styles keep `style-src 'unsafe-inline'`.
 - `reference_v1`'s witness pre-image is not injective; the break-glass token
   ledger is an unsigned table.
+
+## The 2026-11-15 audit (shipped in 2.4.20)
+
+A second pass, run across every app and journey rather than by tree: 122
+findings raised, 111 confirmed by independent verification, 8 already fixed
+on `main`, 2 refuted and 1 left unverified. What landed, by surface (the
+ids are the audit's; `CHANGELOG.md` `[2.4.20]` carries each fix and the test
+that pins it):
+
+- **Kernel 0.9.1:** power loss is sealed after retention pruned the `start`
+  record (G6-07); export and break-glass receipt appends run in one write
+  transaction (G6-08); the sealed-log document reads anchor and entries in
+  one snapshot (G6-09); the plaintext check reads 16 bytes (G6-11); the
+  SQLCipher migration survives an interrupted run and a second process
+  (G6-12); `ApiConfig::default()` serves `self` (G6-05); the boot verdict
+  reaches the Event API (G6-13); camera credentials stay out of the log
+  (G6-01) and the camera URL is a property, not pipeline text (G3-08);
+  non-ASCII zone names are sealed (G6-02); `busybar_surface` follows the
+  rotating token (G6-03); the sandbox denies the limit and scheduling
+  calls (G6-04); the two hand-written request readers have fuzz targets
+  (G6-25); `rusqlite` 0.41 to 0.43 builds the encrypted database on SQLite
+  3.54.1, and `cargo audit` no longer reports RUSTSEC-2026-0502
+  (SECURITY.md Group 5).
+- **Home Assistant integration and app 0.9.1:** diagnostics carry counts
+  (G5-01); first contact needs an announcement signed by the key it names
+  (G5-02) and a replay older than the last accepted moves nothing (G5-04);
+  the confirm screen names where the token goes (G5-05); the spoken privacy
+  answer, nesting limits, Reconfigure's prefix, the Repairs issue, bounded
+  attributes and the capped adapter-stats read (G5-06 to G5-12); a status
+  word is not a liveness verdict (G5-09); the wizard's Frigate config is
+  detection-only (G3-03), the base image is Alpine 3.22 (G3-07), a quote in
+  the camera URL no longer breaks the config file (G3-08), and every card
+  name matches what Home Assistant renders (G3-11).
+- **Firmware 2.4.20:** canary-wap's firmware install and update settings take
+  the bearer (G2-10), a scan no longer blinds a joined unit (G2-05), BLE OTA
+  needs a bonded link and stays with its link (G2-02), pair links name the
+  address used (G2-07), an unstored certificate is not served or pinned
+  (G2-08), one installer at a time (G2-15); on every product the release
+  summary is cut between characters (G2-14). Sense, Vision, Sentinel and the
+  displays: a phone-chosen zone is a zone (G1-13), a power cut is not a
+  first boot (G3-01), the OTA probe waits for a healthy gate (G3-02), a
+  refused manifest is reported as refused (G2-11), the door's boot line
+  names why (G2-04), and the NimBLE floor is pinned (G2-03).
+- **Flasher 0.12.6 and the browser flasher:** native save panels (G4-01),
+  an owner-only hub image (G4-02), a bounded manifest size (G4-03), the
+  Linux disk-permission check up front (G4-04), a seat-only udev rule
+  (G4-05), a settled hub self-setup (G4-06, G4-07, G4-08), the quit guard
+  (G4-10), the local-only Open link (G4-13), the settings-fit check
+  (G4-16), honest setup-door copy (G4-17), the restore chip guard (G4-18)
+  and the missing-safety-copy notice (G4-19).
+- **Lab 0.4.2 and the hub tools:** the busy-bench guard (G4-09), the quiet
+  status strip (G4-11), local-only hub and fleet addresses (G4-12, G4-13),
+  a narrowed webview capability (G4-15), MQTT through the Mosquitto app's
+  discovery (G3-05), an atomic Frigate config copy (G3-09), and the hub
+  image and setup docs as shipped (G3-10, G3-15).
+- **iOS 0.9.1:** first sight pins the receipt's key (G1-09), a synced
+  Canary says it is not paired here (G1-10), no client follows a redirect
+  (G1-11), fleet Wi-Fi never rides Bluetooth (G1-08), the broker login is
+  asked for before it crosses (G1-07), nearby setup says what happened
+  (G1-01 to G1-06), the hub walkthrough outlives its screen (G1-14, G1-16),
+  one prompt at a time (G1-15), a Bluetooth-only Canary is not a fleet
+  (G1-17), and `.svlt` size limits (G1-12).
+- **Witness Wall 0.3.2:** the roll-call switch is named (G1-18) and a
+  paired hub that serves no log is flagged (G1-19).
+- **Backoffice:** the status link is a write capability (G5-13), public
+  form errors stay on the form (G5-14), rollback restores before it rolls
+  back (G5-15), the allowlist reads IPv6 and fails closed on a bad rule
+  (G5-16), hardening headers on every route (G5-17), no line break in a
+  mail header (G5-18), secrets in the database stated and the push topic
+  masked (G5-19), and the waitlist names its product (G5-22).
+- **Website:** the displays waitlist (G5-22) and the iCloud time stamp in
+  the privacy policy (G5-24).
+- **Release tooling:** the forgotten-bump guard (G3-04), signing only from
+  `main` in one environment (G2-12), the stale Lab draft (G6-17), the
+  `workflow_run` origin check (G6-19), supported versions (G6-21), Docker
+  Dependabot (G6-22), the advisory ignore lists held equal (G6-24), the
+  third-party license notices (G6-26) and the mirror's security policy
+  (G6-27).
+- **Docs:** the fault model's retention and power-loss rules (G6-10,
+  G6-07, G3-01), the getting-started guide's microphone and sealed-event
+  list (G3-12, G3-13), the FAQ's Flasher version (G3-16), the README's
+  Bluetooth door (G3-17), the custody tracker (G6-23) and the sandbox
+  channel's width (G6-06).
+
+### Still standing after this audit
+
+- `cargo deny check advisories` still fails on four unmaintained direct
+  dependencies (`pqcrypto-mldsa`, `pqcrypto-mlkem`, `pqcrypto-traits`,
+  `rustls-pemfile`). *(Three closed 2026-11-21: the `pqcrypto-*` crates left
+  the tree when the kernel moved to `ml-dsa` and `ml-kem`. `rustls-pemfile`
+  stands, and is the one advisory the check still fails on.)*
+- The signing environment's required reviewers, the move of the key into
+  the `firmware-release` environment and a tag ruleset are repository
+  settings: until an owner sets them, the two code checks (dispatch only
+  from `main`, a tag only on a commit on `main`) are the gate (G2-12). The
+  checks run from the workflow file at the released commit, and a
+  flasher dev-channel or Vision model dispatch still signs another ref.
+- `docker-sidecar.yml` re-pushes `:<version>` and `:latest` from every
+  `main` push with no forgotten-bump guard (G3-04's sibling).
+- An add-on config the 0.9.0 wizard wrote still records motion video; the
+  update does not rewrite it (G3-03). On the path where Frigate keeps its
+  own config, the wizard does not read Frigate's record setting, so "Only
+  Frigate alerts" with recording off in Frigate seals nothing (G3-03
+  residual).
+- The hub tools still attempt a Home Assistant core call from the host run
+  that cannot be authorized; the self-setup outcome the owner sees is fixed
+  (G4-06 root cause).
+- The iPhone's hub hand-off gives a Sense or Vision the broker login the
+  fleet shares; a per-device login is not implemented (G1-07). A pairing
+  synced through iCloud carries no pinned key fingerprint, so a second
+  device still pins on first sight (G1-09 residual: the CloudKit schema
+  must be promoted before `CloudSync` can carry it).
+- Non-ASCII zone ids are lossy: names that differ only in replaced
+  characters share one id (G6-02). The ESP32 ingest's stats `source` still
+  carries the configured URL into a debug-level log line (G6-01's
+  neighbor). The break-glass server's request reader has no fuzz target
+  (G6-25).
+- Inside the Home Assistant app's AppArmor profile the legacy plaintext
+  migration is still not possible (no rule for `<db>.encrypted`).
+- The third-party license notices are a release asset, not a file inside
+  the installers (G6-26).
+- The sidecar's `pair` output still says "Configure" on the discovered
+  card; the docs quote it as printed (G3-11's last copy).
+- The audit's critic named ten areas no finder covered, for a second round:
+  Home Assistant service authorization (any signed-in user can call
+  `staged_update` and `export_evidence`); broker authorization (one shared
+  `canary` login and no ACL, while the threat model leans on access
+  control); the displays' own LAN web API (`glass_web.cpp`, LAN-open OTA
+  install); canary-vision's Node device API; the kernel's HomeKit bridge
+  and Meshtastic adapter; Beacon, Chirp and the mesh; device lifecycle
+  (decommission, resale, loss); firmware library advisories (nothing
+  watches PlatformIO `lib_deps` or the core pins); the household crate's
+  server; and health-adjacent telemetry in the privacy copy.

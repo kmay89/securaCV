@@ -2,7 +2,7 @@
 # debian:bookworm-slim runtime stage. The locked gstreamer/glib crates
 # declare rust-version 1.92, so keep this at or above that (pinned in
 # lockstep with docker/sidecar/Dockerfile).
-FROM rust:1.99-slim-bookworm@sha256:f2c004e3d2d8b547e8cf7ffbc29205385f4e71d23e53e4e383065db5e9f822cd AS build
+FROM rust:1.100-slim-bookworm@sha256:7c7d4eb4d05b7781187a327809466cfddf29753f6defdc3d19a0e291951b7a37 AS build
 
 # libssl-dev: the bundled SQLCipher (rusqlite bundled-sqlcipher) compiles
 # against OpenSSL headers and links libcrypto dynamically.
@@ -74,6 +74,7 @@ COPY --from=build /app/target/release/envelope_verify /usr/local/bin/envelope_ve
 COPY --from=build /app/target/release/break_glass /usr/local/bin/break_glass
 COPY --from=build /app/target/release/log_anchor /usr/local/bin/log_anchor
 COPY --from=build /app/target/release/court_export /usr/local/bin/court_export
+COPY --from=build /app/target/release/handoff_sidecar /usr/local/bin/handoff_sidecar
 COPY --from=build /app/target/release/witness_api /usr/local/bin/witness_api
 
 ENV WITNESS_API_ADDR=0.0.0.0:8799

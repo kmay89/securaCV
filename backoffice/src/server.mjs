@@ -20,10 +20,10 @@ import { build, recordBoot } from './version.mjs';
 import { listFlags, setFlag, clearFlag } from './flags.mjs';
 import { orderToken, deliveryLine, trackingUrl } from './modules/delivery.mjs';
 import { editItems } from './modules/orders.mjs';
-import { sessionFor, login, logout, apiTokenFor, hasOperator, carryLegacyOperator, can , requestSignInLink, signInLink, loginWithLink } from './auth.mjs';
+import { sessionFor, login, logout, apiTokenFor, hasOperator, carryLegacyOperator, can, writeCapability, requestSignInLink, signInLink, loginWithLink } from './auth.mjs';
 import { actorStore, nowIso } from './db.mjs';
 import { registerUsers } from './admin_users.mjs';
-import { loadCatalog, loadShipping } from './modules/catalog.mjs';
+import { loadCatalog, loadShipping, productName } from './modules/catalog.mjs';
 import { verifyStripeSignature, eventToOrder, fetchLineItems, resolveDiscountCode } from './modules/stripe.mjs';
 import { storefrontCatalog, estimateForZip, estimateForShipDate, createCheckout, sessionStatus, StoreError, oversoldLines } from './modules/storefront.mjs';
 import { recordOrder, refund, orderByNumber, transition, updateShipping, listOrders, timeline, addNote, addEvent, setTags, batches, statusCounts } from './modules/orders.mjs';
@@ -67,11 +67,14 @@ export function createApp({ db, cfg }) {
   // The environment: its label on every page, its rules enforced (a fatal one stops here, before the app
   // listens), its mutes applied, the database labeled; then the build is written down if it is new here.
   const { env } = applyEnv(cfg, db); setEnvironment(env, ENV_TEXT[env]);
+  // ADMIN_ALLOW_CIDRS is read here, before the boot is written down: a rule that does not parse throws, naming it,
+  // so `serve` stops before it listens instead of answering every admin path with a 404 (guard.mjs).
+  const allow = cidrMatcher(cfg.adminAllowCidrs);
   recordBoot(db, cfg);
   // In demo mode the catalog is the demo's own, never fetched from the live site.
   setTrustedProxies(cfg.trustedProxies);
   // The watch (guard.mjs): a scanner is blocked for ten minutes; ADMIN_ALLOW_CIDRS hides the admin from every other network.
-  const watch = new Watch({ db }); const allow = cidrMatcher(cfg.adminAllowCidrs); const pushedLock = new Map();
+  const watch = new Watch({ db }); const pushedLock = new Map();
   // What the server proves about itself before it listens (integrity.mjs): written down once per boot, read by the doctor.
   const pf = preflight(db, cfg); db.setSetting('boot:preflight', JSON.stringify(pf)); if (!pf.ok) db.audit('system', 'boot.preflight', 'build', null, { failing: pf.rows.filter(r => r.ok === false).map(r => r.key) });
   // app.catalog is the file (store.json, or the demo's) with the listing edited in the admin laid over it (listing.mjs).
@@ -137,6 +140,10 @@ export function createApp({ db, cfg }) {
     const page = (err) => html(c.res, orderStatusPage(cfg, orderByNumber(db, o.number), { flash: { kind: 'err', text: err } }), 400, { 'Cache-Control': 'private, no-store' });
     if (!['paid', 'packed'].includes(o.status) || o.label_url) return page('This order already has its label; the address on it is the address. Reply to any of our mails if it must change.');
     const b = c.body || {};
+    // The link shows the order; it does not prove who holds it (a forwarded mail, a shared screen, a browser history).
+    // Changing where the parcel goes also takes the email the order was placed with — which this page never prints.
+    const given = String(b.email || '').trim().toLowerCase(); const onFile = String(o.email || '').trim().toLowerCase();
+    if (!onFile || !given || !safeEqual(given, onFile)) return page('That is not the email this order was placed with, so the address was not changed. Reply to any of our mails instead.');
     try { updateShipping(db, o.id, { name: b.name, line1: b.line1, line2: b.line2, city: b.city, state: b.state, zip: b.zip }, { actor: 'customer' }); }
     catch (err) { return page(String(err.message || err)); }
     db.audit('customer', 'order.address', 'order', o.number, { by: 'the customer, on their page' });
@@ -200,7 +207,8 @@ export function createApp({ db, cfg }) {
     } else throw new HttpError(404, 'unknown form');
     const back = sameOriginUrl(String(b._redirect || ''), cfg.siteOrigin);
     if (back) return redirect(c.res, back);
-    if ((c.req.headers.accept || '').includes('text/html')) return html(c.res, plain(cfg, 'Thanks', out.ticket ? `Got it — ticket ${e(out.ticket)}. A person reads every one; keep an eye on ${e(email)}.` : out.newsletter ? `Check ${e(email)} for a confirmation link — nothing is sent without the click.` : `You're on the list for ${e(out.waitlist)}. One mail when it's in stock, nothing else.`));
+    // The thanks page names the product as the catalog does (the form posted an id); an id the catalog does not know is printed as posted.
+    if ((c.req.headers.accept || '').includes('text/html')) return html(c.res, plain(cfg, 'Thanks', out.ticket ? `Got it — ticket ${e(out.ticket)}. A person reads every one; keep an eye on ${e(email)}.` : out.newsletter ? `Check ${e(email)} for a confirmation link — nothing is sent without the click.` : `You're on the list for ${e(productName(await app.catalog().catch(() => null), out.waitlist))}. One mail when it's in stock, nothing else.`));
     json(c.res, out, 200, corsHeaders(cfg));
   }, { public: true });
   router.add('OPTIONS', '/forms/:kind', (c) => { c.res.writeHead(204, corsHeaders(cfg)); c.res.end(); }, { public: true });
@@ -366,7 +374,9 @@ export function createApp({ db, cfg }) {
       c = { req, res, url, params: route.params, query: url.searchParams, session, user: session ? { id: session.user_id, email: session.email, name: session.name, role: session.role } : null, csrf: session?.csrf, actor: tokenRow ? `token:${tokenRow.name}` : session ? session.email : 'public', app, db, cfg, body: {}, raw: null };
       if (req.method === 'POST' || req.method === 'PUT') { c.raw = await readBody(req); if (!route.opts.raw) c.body = parseBody(c.raw, req.headers['content-type'] || ''); }
       if (!route.opts.public && !url.pathname.startsWith('/login') && !['/healthz', '/status', '/status.json'].includes(url.pathname) && !url.pathname.startsWith('/confirm/') && !url.pathname.startsWith('/u/') && !url.pathname.startsWith('/i/') && !url.pathname.startsWith('/o/') && !url.pathname.startsWith('/invite/')) {
-        if (url.pathname.startsWith('/api')) { if (!tokenRow && !session) throw new HttpError(401, 'bearer token or session required'); if (tokenRow?.scope === 'ro' && !['GET', 'HEAD'].includes(req.method)) throw new HttpError(403, 'this token is read-only'); }
+        if (url.pathname.startsWith('/api')) { if (!tokenRow && !session) throw new HttpError(401, 'bearer token or session required'); if (tokenRow?.scope === 'ro' && !['GET', 'HEAD'].includes(req.method)) throw new HttpError(403, 'this token is read-only');
+          // The customer's signed status link changes an address (auth.mjs, WRITE_CAPABILITY): handing it out is a write.
+          if (tokenRow?.scope === 'ro' && writeCapability(url.pathname)) throw new HttpError(403, 'this token is read-only, and the customer\'s status link can change an address'); }
         else if (!session) return redirect(res, '/login');
         // A person's role decides, by path and method; an owner-made API token is not bound to a role.
         if (session && !tokenRow && !can(session.role, req.method, url.pathname)) throw new HttpError(403, `your role (${session.role}) cannot do this — an owner can`);
@@ -406,10 +416,12 @@ export function createApp({ db, cfg }) {
       if (status === 500) { console.error('[backoffice]', req.method, JSON.stringify(url.pathname), err); const where = `${req.method} ${url.pathname.replace(/\/\d+(?=\/|$)/g, '/:id')}`; raiseException(db, cfg, `bug:${where}`, `backoffice [bug]: ${where}`, `${String(err.stack || err).slice(0, 1500)}\n\nThe person saw a generic error; the request was refused, nothing half-written. Fix the code, then resolve this.`).catch(() => {}); }
       const message = status === 500 ? 'Something went wrong on our side; it has been logged.' : conflict ? `that would collide with a record that already exists (${String(err.message).replace(/^.*constraint failed:\s*/i, '')})` : String(err.message);
       if ((req.headers.accept || '').includes('text/html') && !url.pathname.startsWith('/api')) {
-        // Back to the admin page the form came from — only ever a local admin path.
-        const back = safeLocalPath(req.headers.referer);
-        if (status < 500 && req.method === 'POST' && back && !back.startsWith('/login')) return redirect(res, `${back}?err=${encodeURIComponent(message)}`);
         const who = (() => { try { return sessionFor(db, parseCookies(req).bo_session); } catch { return null; } })();
+        // Back to the admin page the form came from — only for a person with a session, and only when the Referer is a
+        // page of this server. A public form (the website's contact or waitlist form) is answered here, with the reason:
+        // its Referer is a path on the website, and that path is nothing on this host.
+        const back = who ? safeLocalPath(req.headers.referer, [String(req.headers.host || '').toLowerCase(), (() => { try { return new URL(cfg.baseUrl).host; } catch { return ''; } })()].filter(Boolean)) : null;
+        if (status < 500 && req.method === 'POST' && back && !back.startsWith('/login')) return redirect(res, `${back}?err=${encodeURIComponent(message)}`);
         if (who) return html(res, layout({ title: `${status}`, body: `<p>${escapeHtml(message)}</p><p><a href="/">← Home</a></p>`, path: url.pathname, company: cfg.company, csrf: who.csrf, user: { id: who.user_id, email: who.email, name: who.name, role: who.role }, demo: cfg.demo, demoResetMinutes: cfg.demoResetMinutes }), status);
         return html(res, plain(cfg, `${status}`, escapeHtml(message)), status);
       }
@@ -426,7 +438,11 @@ export function createApp({ db, cfg }) {
   return app;
 }
 
-export async function applyStripeEvent(app, m, event = null) {
+// `now` is the clock the "cadence of now" below reads. The HTTP handler leaves it at the real one; a
+// test passes its own, because a promise computed from the wall clock is right only until the calendar
+// moves (tests/away.test.mjs asserted a ship date that held from 21 Oct to 8 Nov 2026 and then went red
+// on every branch, with nothing changed).
+export async function applyStripeEvent(app, m, event = null, { now = new Date() } = {}) {
   const { db, cfg } = app;
   if (m.kind === 'order') {
     const catalog = await app.catalog().catch(() => null);
@@ -435,7 +451,7 @@ export async function applyStripeEvent(app, m, event = null) {
     // "We have it": the order, the batch it ships in and the arrival window — the same estimate the store showed before paying, written on the order as its promise.
     // A site checkout carries the ship date it showed (metadata.ships_on, createCheckout) and that date is kept, whatever the cadence or the away
     // date says by the time the webhook lands; a Payment Link or an import has none and is promised the cadence of now.
-    const est = estimateForShipDate(m.ships_on, m.ship?.zip || m.ship_zip, { cfg, state: m.ship?.state || m.ship_state }) || estimateForZip(m.ship?.zip || m.ship_zip, { cfg, db });
+    const est = estimateForShipDate(m.ships_on, m.ship?.zip || m.ship_zip, { cfg, state: m.ship?.state || m.ship_state }) || estimateForZip(m.ship?.zip || m.ship_zip, { now, cfg, db });
     const { order, created } = recordOrder(db, m, { catalog, actor: 'stripe', promise: { ship_on: est.ships.ships_on, arrive_by: est.delivers?.latest || null } });
     if (created && order.email && order.items.length) { const { enqueue, fill } = await import('./modules/mail.mjs'); const { orderStatusUrl } = await import('./modules/delivery.mjs');
       enqueue(db, { to: order.email, subject: `We have your ${cfg.product || 'SecuraCV'} order ${order.number}`, kind: 'transactional', ref: `order:${order.number}`, contactId: order.contact_id,
@@ -517,10 +533,12 @@ export function sameOriginUrl(candidate, origin) {
   if (u.origin !== origin || (u.protocol !== 'https:' && u.protocol !== 'http:')) return null;
   return u.href;
 }
-// A Referer is accepted only as a plain local path: one leading slash, path characters, nothing else.
-export function safeLocalPath(referer) {
+// A Referer is accepted only as a plain local path: one leading slash, path characters, nothing else — and, when the
+// caller names this server's own hosts, only from one of them (a page on the website is not a path here).
+export function safeLocalPath(referer, hosts = null) {
   if (!referer) return null;
   let u; try { u = new URL(referer); } catch { return null; }
+  if (hosts && !hosts.includes(u.host)) return null;
   return /^\/(?!\/)[A-Za-z0-9/._~-]*$/.test(u.pathname) ? u.pathname : null;
 }
 
@@ -532,7 +550,7 @@ const API_INDEX = ['GET /api/flags', 'POST /api/flags/:name {on: true|false, or 
   'GET /api/tickets?status=&kind=&q=', 'GET /api/tickets/:number', 'POST /api/tickets {email, subject, body}', 'POST /api/tickets/:number/reply {body, close}', 'POST /api/mail/ingest {from, subject, text, messageId, inReplyTo}',
   'GET /api/contacts?q=', 'GET /api/inventory', 'POST /api/inventory/move {sku, delta, reason, ref}', 'GET /api/devices?q=', 'POST /api/devices {serial, mac, board, product_sku, fw_version, fw_sha256, batch}',
   'GET /api/books/pnl?from=&to=', 'POST /api/books/expense {date, account, cents, memo}', 'GET /api/exceptions', 'POST /api/exceptions/:key/resolve', 'GET /api/jobs', 'POST /api/jobs/:name',
-  'GET /api/suggestions', 'GET /api/marketing?days=', 'POST /api/orders/:number/items {items: [{sku, qty}]}', 'GET /api/orders/:number/status-url', 'GET /api/purchasing?status=', 'POST /api/purchasing {supplier, supplier_url, expected_at, items: [{sku, qty, unit_cost_cents}]}', 'POST /api/purchasing/draft {skus}', 'POST /api/purchasing/:number/order|receive|cancel {expected_at | received: {sku: qty}}',
+  'GET /api/suggestions', 'GET /api/marketing?days=', 'POST /api/orders/:number/items {items: [{sku, qty}]}', 'GET /api/orders/:number/status-url (owner, ops or a read + write token: the link can change an address)', 'GET /api/purchasing?status=', 'POST /api/purchasing {supplier, supplier_url, expected_at, items: [{sku, qty, unit_cost_cents}]}', 'POST /api/purchasing/draft {skus}', 'POST /api/purchasing/:number/order|receive|cancel {expected_at | received: {sku: qty}}',
   'GET /api/recall?batch=&fw=&sku=', 'POST /api/recall {title, body, batch, fw, sku}', 'POST /api/recall/:number/send', 'POST /api/customers/:id/forget', 'GET /api/customers/:id/export', 'POST /api/invoices/:number/remind'];
 
 export const plain = (cfg, title, bodyHtml) => layout({ title, body: `<p>${bodyHtml}</p><p><a href="${e(cfg.siteOrigin)}">← back to ${e(cfg.product || 'the site')}</a></p>`, company: cfg.company, nav: false, demo: cfg.demo });
@@ -565,7 +583,7 @@ function orderStatusPage(cfg, o, { flash = null } = {}) {
 <div class="card" style="max-width:720px"><div class="k muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em">Where it is</div><p style="font-size:1.15rem;margin:.3rem 0 .2rem;color:${tone}"><b>${e(line.text)}</b></p>${line.detail ? `<p class="muted" style="margin:0">${e(line.detail)}</p>` : ''}${turl ? `<p style="margin:.6rem 0 0">${e(o.carrier || 'USPS')} <a href="${e(turl)}" rel="noopener">${e(o.tracking)}</a> <span class="muted">(opens the carrier's site)</span></p>` : ''}</div>
 <h2>In the box</h2><table style="max-width:720px"><thead><tr><th>Item</th><th class="num">Qty</th></tr></thead><tbody>${o.items.map(it => `<tr><td>${e(it.name)}</td><td class="num">${it.qty}</td></tr>`).join('')}</tbody></table>
 <h2>Shipping to</h2><p>${e(o.ship_name)}<br>${e(o.ship_line1)}${o.ship_line2 ? '<br>' + e(o.ship_line2) : ''}<br>${e(o.ship_city)}, ${e(o.ship_state)} ${e(o.ship_zip)}</p>
-${['paid', 'packed'].includes(o.status) && !o.label_url ? `<details class="fix" ${flash?.kind === 'err' ? 'open' : ''}><summary>Need to change the address?</summary><form method="post" action="/o/${encodeURIComponent(o.number)}/${encodeURIComponent(orderToken(cfg.secret, o.number))}/address" class="box" style="max-width:720px"><p class="muted" style="margin:0 0 .3rem">It has not shipped yet, so the label is not printed: change it here and it goes out to the new address. Once the label exists, reply to any of our mails instead.</p><div class="row">${fieldHtml('name', 'Name', o.ship_name)}${fieldHtml('line1', 'Address line 1', o.ship_line1)}</div><div class="row">${fieldHtml('line2', 'Line 2', o.ship_line2)}${fieldHtml('city', 'City', o.ship_city)}${fieldHtml('state', 'State', o.ship_state)}${fieldHtml('zip', 'ZIP', o.ship_zip)}</div><div style="margin-top:.8rem"><button>Save the new address</button></div></form></details>` : ''}
+${['paid', 'packed'].includes(o.status) && !o.label_url && o.email ? `<details class="fix" ${flash?.kind === 'err' ? 'open' : ''}><summary>Need to change the address?</summary><form method="post" action="/o/${encodeURIComponent(o.number)}/${encodeURIComponent(orderToken(cfg.secret, o.number))}/address" class="box" style="max-width:720px"><p class="muted" style="margin:0 0 .3rem">It has not shipped yet, so the label is not printed: change it here and it goes out to the new address. Once the label exists, reply to any of our mails instead.</p><div class="row">${fieldHtml('name', 'Name', o.ship_name)}${fieldHtml('line1', 'Address line 1', o.ship_line1)}</div><div class="row">${fieldHtml('line2', 'Line 2', o.ship_line2)}${fieldHtml('city', 'City', o.ship_city)}${fieldHtml('state', 'State', o.ship_state)}${fieldHtml('zip', 'ZIP', o.ship_zip)}</div><div><label for="a_email">The email you ordered with <span class="muted">(this link alone does not change an address)</span></label><input id="a_email" name="email" type="email" required autocomplete="email"></div><div style="margin-top:.8rem"><button>Save the new address</button></div></form></details>` : ''}
 <p class="muted">Anything wrong, missing or broken: reply to any email from us${cfg.supportAddr ? `, or write to <a href="mailto:${e(cfg.supportAddr)}?subject=${encodeURIComponent(`Order ${o.number}`)}">${e(cfg.supportAddr)}</a>` : ''} — a person reads every one, and we fix rather than ask you to send things back. Your Canary provisions itself at home: power it on and point your phone's camera at the QR card in the box.</p><p><a href="${e(cfg.siteOrigin)}">← ${e(cfg.product || 'the site')}</a></p>` });
 }
 

@@ -77,6 +77,18 @@ env:
 jobs:
   model-asset:
     name: Build + attach the pinned person-detection model
+    # A release that is not an fw-v* tag never enters the environment below
+    # (it would wait on a reviewer only to skip; the first step still refuses
+    # a dispatched tag of the wrong shape).
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, 'fw-v')
+    # Signs with OTA_SIGNING_KEY_PEM, which belongs to this environment
+    # (firmware-release.yml's header says why): once the owner has moved it
+    # there, a job outside it cannot read the key and would publish the model
+    # manifest unsigned. The environment's reviewers, when the owner sets
+    # them, approve this run too, including the one firmware-release.yml
+    # chain-dispatches and then waits 20 minutes for. Nothing here checks the
+    # ref: a dispatch runs the dispatch ref's copy of this file.
+    environment: firmware-release
     runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 30
     steps:

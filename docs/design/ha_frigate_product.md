@@ -25,8 +25,8 @@ parse time.
 **SecuraCV** → Start → the ingress wizard finds Mosquitto and Frigate, reads
 Frigate's cameras from its config (no RTSP screen), has nothing to type →
 done screen, primary button **Install the integration and restart Home
-Assistant** (option on by default; never automatic) → after the restart the
-**SecuraCV discovered** card → Configure (zero fields) → the one-time
+Assistant** (option on by default; never automatic) → after the restart
+the **SecuraCV app** card under Discovered → Add (zero fields) → the one-time
 notification *Add the dashboard: Settings → Dashboards → Add dashboard →
 SecuraCV* → the first Frigate event shows **Sealed ✓** within a minute of a
 detection; **Verified ✓** follows the integration's next chain check.
@@ -41,7 +41,7 @@ entry loads).
 **J3 — Home Assistant Container + the Docker sidecar.** `docker compose up -d`
 (the owner edits two lines: `FRIGATE_MQTT_HOST` and the broker credentials)
 → the sidecar announces itself on MQTT, signed → the **Add the SecuraCV
-sidecar** card → Configure shows the kernel URL (prefilled from
+sidecar** card under Discovered → Add shows the kernel URL (prefilled from
 `SECURACV_ANNOUNCE_HOST` when set, else the broker host of Home Assistant's
 MQTT entry, editable) and asks for the 6-digit code `docker exec securacv
 pair` prints beside the kernel's key fingerprint → the integration exchanges

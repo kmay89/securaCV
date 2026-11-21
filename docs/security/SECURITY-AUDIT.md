@@ -225,7 +225,7 @@ The following recommendations from the v2 audit have been addressed:
 | R-2 | **Firmware signature verification** in Node.js OTA route | Implemented Ed25519 signature verification of firmware binaries via `X-Firmware-Signature` header. Uses `SECURACV_FW_SIGNING_PUBKEY` env var or device public key. Returns HTTP 403 with structured JSON on failure (no byte-level leak). Tests cover valid/invalid/missing signatures and truncated payloads. |
 | R-3 | **Firmware anti-downgrade protection** | Defined firmware header format (magic `SCV\x01` + semver triple). Node.js: persistent version file, rejects version ≤ installed. ESP32: NVS-stored minimum version floor that only ratchets upward, checked against both compiled version and NVS floor. Downgrade attempts logged as security events. Tests cover upgrade/same-version/downgrade/corrupt-header scenarios. |
 | R-4 | **SBOM generation** in CI | Added `.github/workflows/sbom.yml` generating CycloneDX 1.5 JSON SBOMs for Rust (`cargo-cyclonedx`), Node.js (`@cyclonedx/cdxgen`), and firmware (manual listing of ESP-IDF vendored deps). All attached as build artifacts with 90-day retention. Documentation in `sbom/README.md`. |
-| R-5 | **Token expiration for SPA sessionStorage** | Client-side: `issued_at` timestamp stored alongside token, checked on every API request against configurable TTL (default 8h). 5-minute non-blocking warning, full session clear on expiry with user-friendly redirect. Server-side: auth middleware tracks per-token first-seen time, rejects expired tokens with HTTP 401 `token_expired` error code. |
+| R-5 | **Token expiration for SPA sessionStorage** | Client-side: `issued_at` timestamp stored alongside token, checked on every API request against configurable TTL (default 8h). 5-minute non-blocking warning, full session clear on expiry with user-friendly redirect. Server-side: the auth middleware tracks per-token first-seen time and answers HTTP 401 `token_expired` to the first request made more than the TTL after that token was first seen, which makes the SPA clear its sessionStorage copy and ask the user to re-authenticate. The device token itself does not expire: the middleware forgets the first-seen time when it answers that 401 (and its hourly cleanup forgets it for any token whose window has already run out, so a token not used again until after that cleanup never sees the 401 at all), so the next request with the same token starts a new window. A stolen or replayed token is not bounded by this check. |
 
 ## Remaining Recommendations (Not Blocking)
 
@@ -275,7 +275,7 @@ This audit was conducted at the stakes described: **public infrastructure for di
 | `src/storage.rs` | `open_with_key()` for encrypted DB connections |
 | `src/bin/log_verify.rs` | `--db-key` argument for encrypted DB verification |
 | `canary-vision/device-api/routes/update.js` | Ed25519 signature verification, firmware header parsing, anti-downgrade |
-| `canary-vision/device-api/middleware/auth.js` | Server-side token expiration enforcement |
+| `canary-vision/device-api/middleware/auth.js` | SPA session-window prompt (the device token does not expire) |
 | `canary-vision/spa/app.js` | Client-side session TTL, expiry warning, issued_at tracking |
 | `canary-vision/tests/helpers/test-client.js` | Buffer body support in test HTTP client |
 | `canary-vision/tests/api/update.test.js` | 9 tests for signature verification and anti-downgrade |

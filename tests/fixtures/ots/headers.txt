@@ -1,0 +1,4 @@
+# Bitcoin block headers for the OpenTimestamps tests: one per line,
+# "<height> <160 hex characters of the 80-byte header>".
+# Block 0 is the genesis header, a public constant (Bitcoin Core chainparams).
+0 0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c

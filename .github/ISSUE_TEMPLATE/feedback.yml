@@ -1,0 +1,70 @@
+name: "Feedback, a snag, or just hi"
+description: "Tell us what’s working, what tripped you up, or share an idea. For anyone — you don’t have to be a maker."
+title: "[Feedback] "
+labels:
+  - "feedback"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking a minute — this is genuinely how the project gets
+        better. 💛
+
+        There's no tracking and no backend here: this opens a normal GitHub
+        issue, in the open, and a maintainer reads every single one. Being
+        signed in is the whole spam-and-kindness filter — no anonymous floods,
+        no throwaway accounts, nothing gross to wade through.
+
+        Only one box is required: the one that says what's on your mind.
+        Everything else is optional — fill in as much or as little as you like.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of note is this?
+      options:
+        - "💛 A love note / general feedback"
+        - "💡 An idea or request"
+        - "🐛 I hit a snag (something broke or confused me)"
+        - "🧭 I couldn’t find something / a question"
+        - "✍️ Something else"
+    validations:
+      required: true
+  - type: input
+    id: summary
+    attributes:
+      label: In one line
+      description: The headline — what's this about?
+      placeholder: "e.g., The Lab is lovely on my phone  ·  or: Builder STL wouldn’t download"
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Tell us more (optional)
+      description: What happened, what you expected, what would make it better. Screenshots help — drag them straight in and GitHub hosts them.
+      placeholder: "As much or as little as you like. There are no wrong answers."
+    validations:
+      required: false
+  - type: input
+    id: where
+    attributes:
+      label: Where on the site? (optional)
+      description: The page or link, if it's about one spot.
+      placeholder: "e.g., securacv.com/builder"
+    validations:
+      required: false
+  - type: input
+    id: reach
+    attributes:
+      label: Want a reply? (optional)
+      description: An email or @handle. Leave it blank to stay anonymous — we'll still read it and act on it.
+      placeholder: "e.g., @yourhandle"
+    validations:
+      required: false
+  - type: checkboxes
+    id: norms
+    attributes:
+      label: One small thing
+      options:
+        - label: "This is on-topic and safe-for-work — no spam, no explicit or offensive content. (Off-topic issues just get closed, so please don't.)"
+          required: true

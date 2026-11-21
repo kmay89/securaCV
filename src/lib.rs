@@ -34,8 +34,8 @@ use zeroize::Zeroizing;
 use crate::crypto::signatures::{
     sign_rotation_attestation, sign_rotation_authorization, verify_rotation_attestation,
     verify_rotation_authorization, PqPublicKey, SignatureKeys, SignatureMode, SignatureSet,
-    DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_EXPORT_RECEIPT, DOMAIN_POLICY_CHANGE_RECORD,
-    DOMAIN_SEALED_LOG_ENTRY,
+    DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_CLOCK_PROVENANCE, DOMAIN_EXPORT_RECEIPT,
+    DOMAIN_POLICY_CHANGE_RECORD, DOMAIN_SEALED_LOG_ENTRY,
 };
 use crate::storage::ensure_columns;
 
@@ -43,8 +43,6 @@ use crate::storage::ensure_columns;
 use crate::crypto::signatures::PqKeypair;
 #[cfg(feature = "pqc-signatures")]
 use crate::crypto::signatures::PqSecretKey;
-#[cfg(feature = "pqc-signatures")]
-use pqcrypto_traits::sign::PublicKey as PqPublicKeyTrait;
 
 pub mod adapter;
 pub mod anchor_policy;
@@ -54,6 +52,7 @@ pub mod bridge;
 #[cfg(feature = "c2pa-export")]
 pub mod c2pa_export;
 pub mod canonical_json;
+pub mod clock_provenance;
 pub mod config;
 pub mod crypto;
 pub mod detect;
@@ -61,10 +60,12 @@ pub mod envelope;
 pub mod eval;
 pub mod fleet_peers;
 pub mod frame;
+pub mod handoff;
 pub mod ingest;
 pub mod inspect;
 pub mod log;
 pub mod module_runtime;
+pub mod ots;
 #[cfg(feature = "alert-relay")]
 pub mod relay;
 pub mod storage;
@@ -255,21 +256,103 @@ fn apply_sqlcipher_key(conn: &Connection, hex_key: &str) -> Result<()> {
 
 /// Check if a database file is unencrypted (plaintext SQLite header).
 fn is_unencrypted_db(db_path: &str) -> bool {
-    let path = std::path::Path::new(db_path);
-    if !path.exists() {
-        return false;
-    }
+    use std::io::Read;
     // SQLite databases start with "SQLite format 3\0" (16 bytes).
     // Encrypted databases have random-looking bytes at offset 0.
-    match std::fs::read(path) {
-        Ok(data) if data.len() >= 16 => data.starts_with(b"SQLite format 3\0"),
-        _ => false,
-    }
+    // Only those 16 bytes are read: this runs on every connection open and
+    // the file is the whole sealed log. A missing file, a file shorter than
+    // the header, or any I/O error is "not unencrypted".
+    let mut header = [0u8; 16];
+    std::fs::File::open(db_path)
+        .and_then(|mut file| file.read_exact(&mut header))
+        .map(|()| header == *b"SQLite format 3\0")
+        .unwrap_or(false)
 }
+
+/// Suffix of the migration lock file beside the database. It starts with `-`
+/// like SQLite's own sidecars (`-wal`, `-shm`, `-journal`), so a file policy
+/// written for those — the Home Assistant app's AppArmor profile allows
+/// `<db>-*`, with locking — already covers it.
+const DB_MIGRATION_LOCK_SUFFIX: &str = "-migrate-lock";
 
 /// Migrate an unencrypted SQLite database to SQLCipher encryption in-place.
 /// Uses ATTACH + sqlcipher_export() to re-encrypt all data.
+///
+/// More than one process opens the same database at start-up (the daemon or
+/// the API, and a bridge), and on a legacy plaintext file each of them gets
+/// here. The whole migration therefore runs under an exclusive cross-process
+/// lock (an `flock` on the sibling `<db>-migrate-lock`): without it the
+/// stale-target removal below deletes another process's in-progress export,
+/// that process's cleanup deletes this one's, and both opens fail with the
+/// database still plaintext.
 fn migrate_unencrypted_to_encrypted(db_path: &str, hex_key: &str) -> Result<()> {
+    let lock_path = format!("{}{}", db_path, DB_MIGRATION_LOCK_SUFFIX);
+    with_db_migration_lock(&lock_path, || {
+        // The caller saw a plaintext header before this open held the lock.
+        // Look again now that it does: an open that held the lock first has
+        // finished the migration, and there is nothing left to do.
+        if !is_unencrypted_db(db_path) {
+            eprintln!(
+                "[SECURITY] database '{}' no longer has a plaintext header after \
+                 waiting for the migration lock; not migrating it again",
+                db_path
+            );
+            return Ok(());
+        }
+        migrate_unencrypted_to_encrypted_locked(db_path, hex_key)
+    })
+}
+
+/// Run `f` while holding an exclusive advisory lock (`flock`) on `lock_path`,
+/// waiting for it as long as another open holds it. The shape is the
+/// high-water-mark lock's (`log::high_water_mark`). Closing the handle
+/// releases the lock, so a process killed mid-migration does not strand it.
+/// The empty lock file stays in place: removing a lock file another process
+/// may be waiting on would let a third create a new one and run beside it.
+#[cfg(unix)]
+fn with_db_migration_lock<T>(lock_path: &str, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::io::AsRawFd;
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(lock_path)
+        .map_err(|e| anyhow!("opening database migration lock {}: {}", lock_path, e))?;
+    // SAFETY: `file` owns the fd for the duration of the call; `flock` on a
+    // valid fd has no memory-safety hazard. LOCK_EX blocks until the lock is
+    // granted; a signal that interrupts the wait is not a failure.
+    while unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        let err = std::io::Error::last_os_error();
+        if err.kind() != std::io::ErrorKind::Interrupted {
+            return Err(anyhow!(
+                "libc::flock(LOCK_EX) on database migration lock {}: {}",
+                lock_path,
+                err
+            ));
+        }
+    }
+    let result = f();
+    // Best-effort explicit unlock; dropping `file` below also releases it.
+    // SAFETY: as above.
+    unsafe {
+        libc::flock(file.as_raw_fd(), libc::LOCK_UN);
+    }
+    result
+}
+
+/// A build without `flock` has no cross-process lock: the migration runs
+/// unserialized, and two processes that migrate one database at the same
+/// moment can fail each other's migration.
+#[cfg(not(unix))]
+fn with_db_migration_lock<T>(_lock_path: &str, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    f()
+}
+
+/// The migration itself. The caller holds the migration lock and has seen
+/// the plaintext header while holding it.
+fn migrate_unencrypted_to_encrypted_locked(db_path: &str, hex_key: &str) -> Result<()> {
     eprintln!(
         "[SECURITY] Migrating unencrypted database '{}' to SQLCipher encryption",
         db_path
@@ -277,6 +360,49 @@ fn migrate_unencrypted_to_encrypted(db_path: &str, hex_key: &str) -> Result<()> 
 
     let encrypted_path = format!("{}.encrypted", db_path);
 
+    // A migration interrupted before the rename below (power cut, kill,
+    // full disk) leaves its target behind. The plaintext original is still
+    // whole — the header check under the lock just said so — and no other
+    // open is exporting (it would hold the lock), so the leftover holds
+    // nothing the original does not: remove it and export afresh, instead
+    // of failing this open and every later one on it.
+    match std::fs::remove_file(&encrypted_path) {
+        Ok(()) => eprintln!(
+            "[SECURITY] removed stale partial migration file '{}'",
+            encrypted_path
+        ),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
+
+    if let Err(e) = export_plaintext_into_encrypted(db_path, &encrypted_path, hex_key) {
+        // Never leave a partial target for the next open to trip over. Best
+        // effort: the caller must see the export's own failure.
+        let _ = std::fs::remove_file(&encrypted_path);
+        return Err(e);
+    }
+
+    // Replace the original file with the encrypted one
+    std::fs::rename(&encrypted_path, db_path)?;
+    enforce_db_file_permissions(db_path);
+
+    eprintln!(
+        "[SECURITY] Database migration to SQLCipher complete: '{}'",
+        db_path
+    );
+
+    Ok(())
+}
+
+/// The export step of [`migrate_unencrypted_to_encrypted`]: copy every table
+/// of the plaintext database at `db_path` into a new SQLCipher database at
+/// `encrypted_path`. The connection is closed before this returns, on
+/// success and on error, so the caller may remove a partial target.
+fn export_plaintext_into_encrypted(
+    db_path: &str,
+    encrypted_path: &str,
+    hex_key: &str,
+) -> Result<()> {
     // Open the unencrypted database (no key)
     ensure_sqlcipher_ready()?;
     let plain_conn = Connection::open(db_path)?;
@@ -292,17 +418,6 @@ fn migrate_unencrypted_to_encrypted(db_path: &str, hex_key: &str) -> Result<()> 
 
     // Detach and close
     plain_conn.execute_batch("DETACH DATABASE encrypted;")?;
-    drop(plain_conn);
-
-    // Replace the original file with the encrypted one
-    std::fs::rename(&encrypted_path, db_path)?;
-    enforce_db_file_permissions(db_path);
-
-    eprintln!(
-        "[SECURITY] Database migration to SQLCipher complete: '{}'",
-        db_path
-    );
-
     Ok(())
 }
 
@@ -1073,6 +1188,43 @@ pub fn parse_duration_s(s: &str) -> Result<u64> {
         .ok_or_else(|| anyhow!("duration '{}' overflows", s))
 }
 
+/// Who exported and to whom (`spec/quorum_unseal_v2.md` §3.6, §5).
+/// `operator` is set only by a self-export: the device-key holder's own
+/// declaration. A quorum export's operator is its grant's and is named by
+/// [`ExportReceipt::authorizing_receipt`], never restated here.
+/// `recipient_commitment` is [`handoff::recipient_commitment`]; the
+/// recipient's name is never stored.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExportContext {
+    /// The exporting operator, as declared (self-export only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator: Option<break_glass::OperatorContext>,
+    /// Salted commitment to a declared recipient (the opening lives only in
+    /// the handoff sidecar).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipient_commitment: Option<[u8; 32]>,
+}
+
+impl ExportContext {
+    /// `None` when both members are `None` (the kernel never writes
+    /// `"context":{}`); validates the operator.
+    pub fn new(
+        operator: Option<break_glass::OperatorContext>,
+        recipient_commitment: Option<[u8; 32]>,
+    ) -> Result<Option<Self>> {
+        if let Some(op) = &operator {
+            op.validate()?;
+        }
+        if operator.is_none() && recipient_commitment.is_none() {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            operator,
+            recipient_commitment,
+        }))
+    }
+}
+
 // New receipt fields must be `Option` + `default` + `skip_serializing_if` and
 // stay LAST: the envelope verifiers (Rust `envelope.rs` and JS
 // `viewer/verify_core.js`) re-serialize this struct byte-for-byte to recompute
@@ -1094,6 +1246,22 @@ pub struct ExportReceipt {
     /// bearer exported cannot be edited after the fact.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_id: Option<String>,
+    /// §3.6/§5: declared at export (a self-export's operator; a salted
+    /// recipient commitment). Never trustee-consented.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<ExportContext>,
+    /// `auth_mode: break_glass` only: the entry hash of the `Granted`
+    /// break-glass receipt whose token this export redeemed. LAST.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorizing_receipt: Option<[u8; 32]>,
+}
+
+/// What a receipt says about its disclosure beyond the export itself:
+/// the declared context and, for a quorum export, the authorizing grant.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ReceiptDisclosure {
+    pub context: Option<ExportContext>,
+    pub authorizing_receipt: Option<[u8; 32]>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1111,6 +1279,71 @@ pub struct ExportBundle {
     pub device_public_key: [u8; 32],
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pq_public_key: Option<Vec<u8>>,
+}
+
+/// Schema discriminator of a [`ClockProvenanceRecord`] (precedent:
+/// [`KEY_ROTATION_SCHEMA_V1`]).
+pub const CLOCK_PROVENANCE_SCHEMA_V1: &str = "securacv/clock_provenance/v1";
+
+/// The bound on a recorded clock offset, in whole seconds either way. A
+/// reading past it is stored as the bound itself (`>= +3600 s` /
+/// `<= -3600 s`): the record says "at least this far", never how far.
+pub const CLOCK_PROVENANCE_CLAMP_S: i64 = 3600;
+
+/// One sealed clock-provenance record: the device's own clock measured
+/// against one RFC 3161 token's `genTime`, at the moment `witnessd` first saw
+/// the anchor row (`docs/design/clock_provenance.md`).
+///
+/// The wire shape is byte-pinned (`serde_json::to_string`, declared order,
+/// both `Option`s serialized as explicit `null`): the stored `payload_json`
+/// literal is what is hashed and signed, and a verifier never re-serializes
+/// it. New fields go LAST and are `Option` + `default`.
+///
+/// Every field is a 10-minute bucket, a whole-second clamped difference, a
+/// whole-second clamped duration, a row id, a hash or a version string —
+/// no precise absolute instant of the kernel's own (Invariant III). The only
+/// precise instant derivable, `genTime + observed_offset_s`, is the time of
+/// an anchoring act the TSA already fixed to the second.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClockProvenanceRecord {
+    /// [`CLOCK_PROVENANCE_SCHEMA_V1`].
+    pub schema: String,
+    /// The device clock at observation, at kernel granularity (10 minutes).
+    pub time_bucket: TimeBucket,
+    /// The `tsa_anchors` row observed — a locator; the binding is the hash.
+    pub anchor_id: i64,
+    /// SHA-256 (64 lowercase hex) over the row's `token_der`: binds the
+    /// imprint, the `genTime` and the TSA identity, `sha256sum`-checkable.
+    pub token_sha256: String,
+    /// `clamp(device wall clock − genTime, ±3600)` in whole seconds; positive
+    /// means the device read ahead of the TSA. `None` is a binding-only
+    /// record (the row was already there at the first poll of this process).
+    pub observed_offset_s: Option<i32>,
+    /// Whole seconds since the previous completed poll (1..=3600): the row
+    /// was at most this old when first seen. `None` with `observed_offset_s`.
+    pub poll_gap_s: Option<u32>,
+    /// The `witnessd` build that measured.
+    pub kernel_version: String,
+}
+
+/// What one poll of the anchors table observed, as the daemon hands it to
+/// [`Kernel::observe_anchors_for_clock_provenance`]: the wall clock read ONCE
+/// for every row of the poll, and the measured gap since the previous
+/// completed poll (`None` on the first poll of a process ⇒ binding-only
+/// records).
+#[derive(Clone, Copy, Debug)]
+pub struct ClockObservation<'a> {
+    pub observed_wall_s: u64,
+    pub poll_gap_s: Option<u32>,
+    pub kernel_version: &'a str,
+}
+
+/// One record a poll sealed, as returned to the daemon for its log line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SealedClockProvenance {
+    pub id: i64,
+    pub anchor_id: i64,
+    pub record: ClockProvenanceRecord,
 }
 
 /// One sealed-log row as `GET /api/sealed-log` serves it to a read-only
@@ -1535,6 +1768,12 @@ pub struct Kernel {
     #[cfg(feature = "pqc-signatures")]
     device_pq_key: Option<PqKeypair>,
     break_glass_policy: Option<crate::break_glass::QuorumPolicy>,
+    /// The error recorded when the stored policy could not be parsed or
+    /// validated at open. `Some` means `break_glass_policy` is `None` because
+    /// the policy is UNREADABLE, never because it is absent: every
+    /// break-glass entry point refuses through
+    /// [`Kernel::break_glass_policy_checked`].
+    break_glass_policy_error: Option<String>,
     zone_policy: ZonePolicy,
 }
 
@@ -1598,13 +1837,14 @@ impl Kernel {
             #[cfg(feature = "pqc-signatures")]
             device_pq_key: None,
             break_glass_policy: None,
+            break_glass_policy_error: None,
             zone_policy,
         };
         k.ensure_schema()?;
         k.ensure_device_public_key()?;
         #[cfg(feature = "pqc-signatures")]
         k.ensure_device_pq_keys()?;
-        k.load_break_glass_policy()?;
+        k.load_break_glass_policy_at_open();
         Ok(k)
     }
 
@@ -1633,13 +1873,14 @@ impl Kernel {
             #[cfg(feature = "pqc-signatures")]
             device_pq_key: None,
             break_glass_policy: None,
+            break_glass_policy_error: None,
             zone_policy,
         };
         k.ensure_schema()?;
         k.ensure_device_public_key()?;
         #[cfg(feature = "pqc-signatures")]
         k.ensure_device_pq_keys()?;
-        k.load_break_glass_policy()?;
+        k.load_break_glass_policy_at_open();
         Ok(k)
     }
 
@@ -1703,6 +1944,9 @@ impl Kernel {
               entry_hash BLOB NOT NULL,
               signature BLOB NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS clock_provenance (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL, payload_json TEXT NOT NULL, prev_hash BLOB NOT NULL, entry_hash BLOB NOT NULL, signature BLOB NOT NULL, pq_signature BLOB, pq_scheme TEXT);
+            CREATE TABLE IF NOT EXISTS clock_provenance_cursor (id INTEGER PRIMARY KEY CHECK (id = 1), last_anchor_id INTEGER NOT NULL);
 
             CREATE TABLE IF NOT EXISTS device_metadata (
               id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -1990,7 +2234,10 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         {
             SignatureKeyMaterial {
                 device_key: self.device_key.clone(),
-                pq_secret_key: self.device_pq_key.as_ref().map(|key| key.secret_key),
+                pq_secret_key: self
+                    .device_pq_key
+                    .as_ref()
+                    .map(|key| key.secret_key.clone()),
             }
         }
         #[cfg(not(feature = "pqc-signatures"))]
@@ -2253,6 +2500,43 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         }
     }
 
+    /// Whether the previous witnessing run ended without sealing a clean
+    /// shutdown — the boot-time question behind the `PowerLoss` record.
+    ///
+    /// `true` when the newest lifecycle record is `start`, and also when no
+    /// lifecycle record is live but the log holds a checkpoint. The second
+    /// arm is what retention requires. A daemon that runs past its
+    /// retention window prunes its own `start` row, and the prune writes
+    /// its checkpoint in the same transaction — retention is the only
+    /// thing that deletes a sealed row — so "a checkpoint and no lifecycle
+    /// record" is exactly "this log's last `start` was pruned and nothing
+    /// was sealed after it". Only the running daemon prunes, so a clean
+    /// stop always leaves its `shutdown_clean` row live at the next boot.
+    /// [`Self::last_lifecycle_phase`] alone answers `None` there, and the
+    /// outage went unwitnessed on every hub that had been up longer than
+    /// retention (seven days by default).
+    ///
+    /// Residuals, stated rather than hidden: a log with no checkpoint and no
+    /// lifecycle record — empty, or holding only rows some tool sealed
+    /// before a daemon ever started on it — cannot distinguish a first boot
+    /// from a loss and answers `false`; a database a tool both seeded and
+    /// pruned (a checkpoint, never a lifecycle record) yields one
+    /// `PowerLoss` on the daemon's first boot over it.
+    pub fn previous_run_ended_uncleanly(&self) -> Result<bool> {
+        match self.last_lifecycle_phase()? {
+            Some(LifecyclePhase::Start) => Ok(true),
+            Some(LifecyclePhase::ShutdownClean) => Ok(false),
+            None => {
+                let pruned: bool =
+                    self.conn
+                        .query_row("SELECT EXISTS(SELECT 1 FROM checkpoints)", [], |row| {
+                            row.get(0)
+                        })?;
+                Ok(pruned)
+            }
+        }
+    }
+
     /// Attempts to record a failure event with graceful degradation.
     ///
     /// When the primary storage fails, this method:
@@ -2463,107 +2747,292 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         }
     }
 
+    /// Run `f` with the database write lock held on this handle's
+    /// connection: `BEGIN IMMEDIATE` when the connection is in autocommit,
+    /// a savepoint named `name` when a caller's transaction is already open
+    /// (the [`Self::set_break_glass_policy_gated`] pattern). COMMIT /
+    /// RELEASE on `Ok`, ROLLBACK on `Err`. A receipt chain's head read and
+    /// the insert that extends it must share this lock: two writers that
+    /// read the same head — an operator's `court_export` beside the API's
+    /// hourly bundle — otherwise fork the chain, and every later verify
+    /// (and witnessd's boot check) fails closed on the fork.
+    fn in_immediate_write_tx<T>(
+        &mut self,
+        name: &str,
+        f: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        let own_tx = self.conn.is_autocommit();
+        if own_tx {
+            self.conn.execute_batch("BEGIN IMMEDIATE;")?;
+        } else {
+            self.conn.execute_batch(&format!("SAVEPOINT {name};"))?;
+        }
+        let applied = f(self).and_then(|value| {
+            if own_tx {
+                self.conn.execute_batch("COMMIT;")?;
+            } else {
+                self.conn.execute_batch(&format!("RELEASE {name};"))?;
+            }
+            Ok(value)
+        });
+        if applied.is_err() {
+            // Best-effort: the caller must see the original failure.
+            let _ = if own_tx {
+                self.conn.execute_batch("ROLLBACK;")
+            } else {
+                self.conn
+                    .execute_batch(&format!("ROLLBACK TO {name}; RELEASE {name};"))
+            };
+        }
+        applied
+    }
+
+    /// Append a break-glass receipt to its hash chain. The head read, the
+    /// signing and the insert run under one write lock (`BEGIN IMMEDIATE`,
+    /// or a savepoint inside a caller's transaction), so a second writer
+    /// extends this row instead of forking from the head it read.
+    ///
+    /// The row stores the approvals the receipt records —
+    /// [`crate::break_glass::recorded_approvals`]: those over the receipt's
+    /// own request hash, in presentation order — the same set
+    /// [`crate::break_glass::BreakGlass::authorize`] commits. An approval over
+    /// another hash (a stale file handed in beside the right ones) never
+    /// counted toward the quorum and is not stored, so a caller may pass
+    /// everything it was handed. Redemption and unseal rows pass `&[]`.
     pub fn append_break_glass_receipt(
         &mut self,
         receipt: &crate::break_glass::BreakGlassReceipt,
         approvals: &[crate::break_glass::Approval],
     ) -> Result<[u8; 32]> {
-        let created_at = now_s()? as i64;
-        let prev_hash = self.last_break_glass_hash_or_zero()?;
-        let payload_json = serde_json::to_string(receipt)?;
-        let approvals_json = serde_json::to_string(approvals)?;
-
-        let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
-        let key_material = self.signature_key_material();
-        let signature_set = sign_entry(
-            &key_material.signature_keys(),
-            &entry_hash,
-            DOMAIN_BREAK_GLASS_RECEIPT,
-        )?;
-        let pq_signature = signature_set
-            .pq_signature
-            .as_ref()
-            .map(|sig| sig.signature.clone());
-        let pq_scheme = signature_set
-            .pq_signature
-            .as_ref()
-            .map(|sig| sig.scheme_id.clone());
-
-        self.conn.execute(
-            r#"
-            INSERT INTO break_glass_receipts(
-                created_at,
-                payload_json,
-                approvals_json,
-                prev_hash,
-                entry_hash,
-                signature,
-                pq_signature,
-                pq_scheme
-            )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-            "#,
-            params![
-                created_at,
-                payload_json,
-                approvals_json,
-                prev_hash.to_vec(),
-                entry_hash.to_vec(),
-                signature_set.ed25519_signature,
-                pq_signature,
-                pq_scheme,
-            ],
-        )?;
-
-        Ok(entry_hash)
+        let recorded = crate::break_glass::recorded_approvals(&receipt.request_hash, approvals);
+        self.append_break_glass_receipt_row(receipt, &recorded)
     }
 
+    /// The row writer behind [`Kernel::append_break_glass_receipt`]: stores
+    /// `stored_approvals` exactly as given. Every production path goes through
+    /// `append_break_glass_receipt`, which passes the recorded set; the tests
+    /// call this directly to reproduce the row an earlier writer stored
+    /// (every presented approval, a stale one included).
+    fn append_break_glass_receipt_row(
+        &mut self,
+        receipt: &crate::break_glass::BreakGlassReceipt,
+        stored_approvals: &[crate::break_glass::Approval],
+    ) -> Result<[u8; 32]> {
+        self.in_immediate_write_tx("break_glass_receipt", |kernel| {
+            let created_at = now_s()? as i64;
+            let prev_hash = kernel.last_break_glass_hash_or_zero()?;
+            let payload_json = serde_json::to_string(receipt)?;
+            let approvals_json = serde_json::to_string(stored_approvals)?;
+
+            let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
+            let key_material = kernel.signature_key_material();
+            let signature_set = sign_entry(
+                &key_material.signature_keys(),
+                &entry_hash,
+                DOMAIN_BREAK_GLASS_RECEIPT,
+            )?;
+            let pq_signature = signature_set
+                .pq_signature
+                .as_ref()
+                .map(|sig| sig.signature.clone());
+            let pq_scheme = signature_set
+                .pq_signature
+                .as_ref()
+                .map(|sig| sig.scheme_id.clone());
+
+            kernel.conn.execute(
+                r#"
+                INSERT INTO break_glass_receipts(
+                    created_at,
+                    payload_json,
+                    approvals_json,
+                    prev_hash,
+                    entry_hash,
+                    signature,
+                    pq_signature,
+                    pq_scheme
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                "#,
+                params![
+                    created_at,
+                    payload_json,
+                    approvals_json,
+                    prev_hash.to_vec(),
+                    entry_hash.to_vec(),
+                    signature_set.ed25519_signature,
+                    pq_signature,
+                    pq_scheme,
+                ],
+            )?;
+
+            Ok(entry_hash)
+        })
+    }
+
+    /// Append an export receipt to its hash chain and return its entry
+    /// hash. The head read, the signing and the insert run under one write
+    /// lock, so a second writer extends this row instead of forking from
+    /// the head it read.
     pub fn append_export_receipt(&mut self, receipt: &ExportReceipt) -> Result<[u8; 32]> {
-        let created_at = now_s()? as i64;
-        let prev_hash = self.last_export_receipt_hash_or_zero()?;
-        let payload_json = serde_json::to_string(receipt)?;
+        Ok(self.append_export_receipt_entry(receipt)?.entry_hash)
+    }
 
-        let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
-        let key_material = self.signature_key_material();
-        let signature_set = sign_entry(
-            &key_material.signature_keys(),
-            &entry_hash,
-            DOMAIN_EXPORT_RECEIPT,
-        )?;
-        let pq_signature = signature_set
-            .pq_signature
-            .as_ref()
-            .map(|sig| sig.signature.clone());
-        let pq_scheme = signature_set
-            .pq_signature
-            .as_ref()
-            .map(|sig| sig.scheme_id.clone());
+    /// Append an export receipt and hand back the row written. The head
+    /// read, the signing and the insert run under one write lock
+    /// ([`Self::in_immediate_write_tx`]), so a second writer extends this
+    /// row instead of forking from the head it read; and the bundle
+    /// builders carry THIS entry, not whichever receipt happened to be the
+    /// newest when they read the ledger back.
+    fn append_export_receipt_entry(
+        &mut self,
+        receipt: &ExportReceipt,
+    ) -> Result<ExportReceiptEntry> {
+        self.in_immediate_write_tx("export_receipt", |kernel| {
+            let created_at = now_s()? as i64;
+            let prev_hash = kernel.last_export_receipt_hash_or_zero()?;
+            let payload_json = serde_json::to_string(receipt)?;
 
-        self.conn.execute(
-            r#"
-            INSERT INTO export_receipts(
-                created_at,
-                payload_json,
+            let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
+            let key_material = kernel.signature_key_material();
+            let signature_set = sign_entry(
+                &key_material.signature_keys(),
+                &entry_hash,
+                DOMAIN_EXPORT_RECEIPT,
+            )?;
+            let pq_signature = signature_set
+                .pq_signature
+                .as_ref()
+                .map(|sig| sig.signature.clone());
+            let pq_scheme = signature_set
+                .pq_signature
+                .as_ref()
+                .map(|sig| sig.scheme_id.clone());
+
+            kernel.conn.execute(
+                r#"
+                INSERT INTO export_receipts(
+                    created_at,
+                    payload_json,
+                    prev_hash,
+                    entry_hash,
+                    signature,
+                    pq_signature,
+                    pq_scheme
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                "#,
+                params![
+                    created_at,
+                    payload_json,
+                    prev_hash.to_vec(),
+                    entry_hash.to_vec(),
+                    signature_set.ed25519_signature.clone(),
+                    pq_signature,
+                    pq_scheme,
+                ],
+            )?;
+
+            Ok(ExportReceiptEntry {
+                receipt: receipt.clone(),
                 prev_hash,
                 entry_hash,
-                signature,
-                pq_signature,
-                pq_scheme
-            )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-            "#,
-            params![
-                created_at,
-                payload_json,
-                prev_hash.to_vec(),
-                entry_hash.to_vec(),
-                signature_set.ed25519_signature,
-                pq_signature,
-                pq_scheme,
-            ],
-        )?;
+                signatures: signature_set,
+            })
+        })
+    }
 
-        Ok(entry_hash)
+    /// Seal one clock-provenance record into the never-pruned
+    /// `clock_provenance` ledger in its own `BEGIN IMMEDIATE` transaction.
+    /// The daemon path is [`Self::observe_anchors_for_clock_provenance`],
+    /// which seals and advances the cursor together; this is the primitive
+    /// under it.
+    pub fn append_clock_provenance(
+        &mut self,
+        record: &ClockProvenanceRecord,
+    ) -> Result<clock_provenance::ClockProvenanceRow> {
+        let key_material = self.signature_key_material();
+        self.conn.execute_batch("BEGIN IMMEDIATE;")?;
+        match append_clock_provenance_locked(&self.conn, &key_material, record).and_then(|row| {
+            self.conn.execute_batch("COMMIT;")?;
+            Ok(row)
+        }) {
+            Ok(row) => Ok(row),
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK;");
+                Err(e)
+            }
+        }
+    }
+
+    /// One poll of the local `tsa_anchors` table (a read of this database,
+    /// no network): for every anchor row past the persistent cursor, seal one
+    /// clock-provenance record and advance the cursor, all in ONE
+    /// `BEGIN IMMEDIATE` transaction, so a crash can neither duplicate a
+    /// record nor skip a row.
+    ///
+    /// - No cursor row yet (first poll on an upgraded database): the cursor is
+    ///   set to `MAX(tsa_anchors.id)` (0 without the table) and nothing is
+    ///   sealed — pre-upgrade anchors are never backfilled.
+    /// - `obs.poll_gap_s == None` (the first poll of this process) or a gap
+    ///   over 3600 s: every row gets a binding-only record
+    ///   (`observed_offset_s` and `poll_gap_s` both `null`) — the row may have
+    ///   been there for any length of time, and a clamped gap would state a
+    ///   false bound.
+    /// - A row whose `token_der` is not readable as bytes gets no record; the
+    ///   cursor still moves past it.
+    /// - A token that does not parse, or whose `genTime` does not, gets a
+    ///   binding-only record: the hash binding holds, the measurement cannot.
+    ///
+    /// Returns the records sealed, in anchor-id order.
+    pub fn observe_anchors_for_clock_provenance(
+        &mut self,
+        obs: &ClockObservation<'_>,
+    ) -> Result<Vec<SealedClockProvenance>> {
+        let (wall, gap) = (obs.observed_wall_s, obs.poll_gap_s);
+        self.observe_anchors_for_clock_provenance_with(obs.kernel_version, || Some((wall, gap)))
+            .map(Option::unwrap_or_default)
+    }
+
+    /// [`Self::observe_anchors_for_clock_provenance`] with the clock readings
+    /// taken by `read_clocks`, called exactly ONCE, after `BEGIN IMMEDIATE`
+    /// has the write lock and before the anchors table is read: the wall
+    /// clock `W` (whole seconds) and the gap since the previous completed
+    /// poll. Read under the lock, `W` cannot predate a row that committed
+    /// while this poll waited for the lock (up to the 5 s busy timeout), so
+    /// a row's genTime is never measured against an earlier reading.
+    ///
+    /// `read_clocks` returning `None` (a wall clock that cannot be read)
+    /// rolls back with nothing written and returns `Ok(None)`.
+    pub fn observe_anchors_for_clock_provenance_with<F>(
+        &mut self,
+        kernel_version: &str,
+        read_clocks: F,
+    ) -> Result<Option<Vec<SealedClockProvenance>>>
+    where
+        F: FnOnce() -> Option<(u64, Option<u32>)>,
+    {
+        let key_material = self.signature_key_material();
+        self.conn.execute_batch("BEGIN IMMEDIATE;")?;
+        let Some((observed_wall_s, poll_gap_s)) = read_clocks() else {
+            let _ = self.conn.execute_batch("ROLLBACK;");
+            return Ok(None);
+        };
+        let obs = ClockObservation {
+            observed_wall_s,
+            poll_gap_s,
+            kernel_version,
+        };
+        match observe_anchors_locked(&self.conn, &key_material, &obs).and_then(|sealed| {
+            self.conn.execute_batch("COMMIT;")?;
+            Ok(sealed)
+        }) {
+            Ok(sealed) => Ok(Some(sealed)),
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK;");
+                Err(e)
+            }
+        }
     }
 
     pub fn log_break_glass_receipt(
@@ -2633,11 +3102,35 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             params![json],
         )?;
         self.break_glass_policy = Some(policy.clone());
+        self.break_glass_policy_error = None;
         Ok(())
     }
 
+    /// The quorum policy loaded into this handle, `None` when none is
+    /// stored — or when the stored one could not be loaded. Every
+    /// break-glass path reads [`Kernel::break_glass_policy_checked`] instead,
+    /// which tells the two apart; this plain accessor is for tests and for a
+    /// caller that has already gone through the checked one.
     pub fn break_glass_policy(&self) -> Option<&crate::break_glass::QuorumPolicy> {
         self.break_glass_policy.as_ref()
+    }
+
+    /// `Err` with the recorded load error when the stored policy could not be parsed or validated.
+    ///
+    /// `Ok(None)` means no policy is stored; `Ok(Some(_))` is the loaded
+    /// policy. An unreadable policy (a corrupt row, or a field a newer
+    /// release wrote that this build refuses) is never reported as absent:
+    /// absent means "bootstrap", and an unreadable live policy must never be
+    /// bootstrapped over without its quorum.
+    pub fn break_glass_policy_checked(&self) -> Result<Option<&crate::break_glass::QuorumPolicy>> {
+        if let Some(e) = &self.break_glass_policy_error {
+            return Err(anyhow!(
+                "break-glass policy could not be loaded: {e} — this build refuses every \
+                 break-glass action on this database (run log_verify; upgrade if the policy was \
+                 written by a newer release)"
+            ));
+        }
+        Ok(self.break_glass_policy.as_ref())
     }
 
     /// Replace the stored quorum policy through the QUORUM-GATED path
@@ -2718,8 +3211,16 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         now_bucket: TimeBucket,
     ) -> Result<PolicyChangeOutcome> {
         // The committed policy, read under the lock — not the copy loaded
-        // when this handle was opened.
-        self.load_break_glass_policy()?;
+        // when this handle was opened. An unreadable stored policy REFUSES
+        // the change: treating it as absent would make this a bootstrap and
+        // let anyone replace a live policy without its quorum.
+        self.load_break_glass_policy().map_err(|e| {
+            anyhow!(
+                "refusing to change the break-glass policy: the stored policy could not be \
+                 loaded ({e:#}) — a quorum change needs the stored policy; it is never treated \
+                 as absent"
+            )
+        })?;
         let current = self.break_glass_policy.clone();
 
         let (prev_commitment, bootstrap) = match &current {
@@ -2856,6 +3357,27 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         read_policy_change_history(&self.conn)
     }
 
+    /// The open-time policy load. A stored policy that cannot be parsed or
+    /// validated does NOT fail the open: the error is recorded, the policy
+    /// stays `None`, and every break-glass entry point refuses with it
+    /// ([`Kernel::break_glass_policy_checked`]). The verifier still refuses
+    /// the database (`verify::load_break_glass_policy` errors), so witnessd's
+    /// boot check lands in safe mode — serving the read and verify API —
+    /// instead of exiting before any safe-mode logic runs.
+    fn load_break_glass_policy_at_open(&mut self) {
+        if let Err(e) = self.load_break_glass_policy() {
+            self.break_glass_policy = None;
+            self.break_glass_policy_error = Some(format!("{e:#}"));
+            ::log::error!(
+                "break-glass policy could not be loaded: {e:#} — every break-glass action on this \
+                 database is refused; run log_verify"
+            );
+        }
+    }
+
+    /// Read the stored policy into this handle. Propagates a parse or
+    /// validation error and leaves the handle unchanged on one; on success it
+    /// clears any recorded load error.
     fn load_break_glass_policy(&mut self) -> Result<()> {
         let mut stmt = self
             .conn
@@ -2869,6 +3391,7 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         } else {
             self.break_glass_policy = None;
         }
+        self.break_glass_policy_error = None;
         Ok(())
     }
 
@@ -2963,14 +3486,53 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         Ok(())
     }
 
-    /// Export events sequentially with break-glass authorization.
+    /// Export events sequentially with break-glass authorization. The
+    /// receipt names the `Granted` receipt the token was minted from
+    /// (`authorizing_receipt`); see [`Self::export_events_authorized_with`].
     pub fn export_events_authorized(
         &mut self,
         expected_ruleset_hash: [u8; 32],
         options: ExportOptions,
         token: &mut break_glass::BreakGlassToken,
     ) -> Result<ExportArtifact> {
+        self.export_events_authorized_with(expected_ruleset_hash, options, token, None)
+    }
+
+    /// [`Self::export_events_authorized`] with an optional salted recipient
+    /// commitment. Sets `authorizing_receipt` to the token's grant hash and
+    /// takes no operator: a quorum export's operator is its grant's, named
+    /// by reference (rule R6 refuses one restated beside it).
+    pub fn export_events_authorized_with(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        token: &mut break_glass::BreakGlassToken,
+        recipient_commitment: Option<[u8; 32]>,
+    ) -> Result<ExportArtifact> {
+        Ok(self
+            .export_events_authorized_receipted(
+                expected_ruleset_hash,
+                options,
+                token,
+                recipient_commitment,
+            )?
+            .0)
+    }
+
+    /// [`Self::export_events_authorized_with`] handing back the receipt row
+    /// it sealed beside the artifact, for the bundle builder.
+    fn export_events_authorized_receipted(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        token: &mut break_glass::BreakGlassToken,
+        recipient_commitment: Option<[u8; 32]>,
+    ) -> Result<(ExportArtifact, ExportReceiptEntry)> {
         Self::validate_export_options(&options)?;
+        let disclosure = ReceiptDisclosure {
+            context: ExportContext::new(None, recipient_commitment)?,
+            authorizing_receipt: Some(token.receipt_entry_hash()),
+        };
         let now_bucket = TimeBucket::now(600)?;
         break_glass::BreakGlass::assert_token_valid(
             token,
@@ -2992,13 +3554,14 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         // The same call appends the signed redemption row, so a deleted
         // burn row does not reopen the token either.
         self.redeem_token_durably(token)?;
-        let artifact = self.export_events_sequential_unchecked(
+        let receipted = self.export_events_sequential_unchecked(
             expected_ruleset_hash,
             options,
             ExportAuthMode::BreakGlass,
+            disclosure,
         )?;
         token.consume()?;
-        Ok(artifact)
+        Ok(receipted)
     }
 
     /// Export events sequentially for local-only API access (no break-glass).
@@ -3021,20 +3584,34 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         options: ExportOptions,
         credential: ApiCredential,
     ) -> Result<ExportArtifact> {
+        Ok(self
+            .export_events_for_api_receipted(expected_ruleset_hash, options, credential)?
+            .0)
+    }
+
+    /// [`Self::export_events_for_api_with`] handing back the receipt row it
+    /// sealed beside the artifact, for the bundle and envelope builders.
+    fn export_events_for_api_receipted(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        credential: ApiCredential,
+    ) -> Result<(ExportArtifact, ExportReceiptEntry)> {
         Self::validate_export_options(&options)?;
         let (auth_mode, token_id) = match credential {
             ApiCredential::Capability => (ExportAuthMode::Api, None),
             ApiCredential::Paired { token_id } => (ExportAuthMode::Paired, Some(token_id)),
         };
         let artifact = self.build_export_artifact(expected_ruleset_hash, options, None, false)?;
-        self.receipt_export(
+        let receipt_entry = self.receipt_export(
             expected_ruleset_hash,
             &options,
             &artifact,
             auth_mode,
             token_id,
+            ReceiptDisclosure::default(),
         )?;
-        Ok(artifact)
+        Ok((artifact, receipt_entry))
     }
 
     /// A receipt-less READ of the privacy-filtered event view — the same
@@ -3077,11 +3654,50 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         expected_ruleset_hash: [u8; 32],
         options: ExportOptions,
     ) -> Result<ExportArtifact> {
+        self.export_events_self_with(expected_ruleset_hash, options, None)
+    }
+
+    /// [`Self::export_events_self`] with a declared [`ExportContext`] (the
+    /// exporting operator and/or a salted recipient commitment), signed
+    /// into the receipt. `None` writes a receipt byte-identical to
+    /// [`Self::export_events_self`]'s.
+    pub fn export_events_self_with(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        context: Option<ExportContext>,
+    ) -> Result<ExportArtifact> {
+        Ok(self
+            .export_events_self_receipted(expected_ruleset_hash, options, context)?
+            .0)
+    }
+
+    /// [`Self::export_events_self_with`] handing back the receipt row it
+    /// sealed beside the artifact, for the bundle builder.
+    fn export_events_self_receipted(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        context: Option<ExportContext>,
+    ) -> Result<(ExportArtifact, ExportReceiptEntry)> {
         Self::validate_export_options(&options)?;
+        // Normalize at the kernel boundary: `ExportContext`'s fields are
+        // public, so a caller can build an empty one by hand. `new`
+        // validates the operator and collapses an empty context to `None`,
+        // so the kernel never signs `"context":{}` and an empty context
+        // writes a receipt byte-identical to a plain self-export.
+        let context = match context {
+            Some(c) => ExportContext::new(c.operator, c.recipient_commitment)?,
+            None => None,
+        };
         self.export_events_sequential_unchecked(
             expected_ruleset_hash,
             options,
             ExportAuthMode::SelfExport,
+            ReceiptDisclosure {
+                context,
+                authorizing_receipt: None,
+            },
         )
     }
 
@@ -3091,8 +3707,24 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         options: ExportOptions,
         token: &mut break_glass::BreakGlassToken,
     ) -> Result<ExportBundle> {
-        let artifact = self.export_events_authorized(expected_ruleset_hash, options, token)?;
-        self.bundle_from_artifact(artifact)
+        self.export_events_bundle_authorized_with(expected_ruleset_hash, options, token, None)
+    }
+
+    /// Bundle form of [`Self::export_events_authorized_with`].
+    pub fn export_events_bundle_authorized_with(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        token: &mut break_glass::BreakGlassToken,
+        recipient_commitment: Option<[u8; 32]>,
+    ) -> Result<ExportBundle> {
+        let (artifact, receipt_entry) = self.export_events_authorized_receipted(
+            expected_ruleset_hash,
+            options,
+            token,
+            recipient_commitment,
+        )?;
+        self.bundle_from_artifact(artifact, receipt_entry)
     }
 
     /// Owner self-export bundle (artifact + signed receipt + verifying keys).
@@ -3103,8 +3735,19 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         expected_ruleset_hash: [u8; 32],
         options: ExportOptions,
     ) -> Result<ExportBundle> {
-        let artifact = self.export_events_self(expected_ruleset_hash, options)?;
-        self.bundle_from_artifact(artifact)
+        self.export_events_bundle_self_with(expected_ruleset_hash, options, None)
+    }
+
+    /// Bundle form of [`Self::export_events_self_with`].
+    pub fn export_events_bundle_self_with(
+        &mut self,
+        expected_ruleset_hash: [u8; 32],
+        options: ExportOptions,
+        context: Option<ExportContext>,
+    ) -> Result<ExportBundle> {
+        let (artifact, receipt_entry) =
+            self.export_events_self_receipted(expected_ruleset_hash, options, context)?;
+        self.bundle_from_artifact(artifact, receipt_entry)
     }
 
     /// Bundle for local-only API access (no break-glass): same shape as the
@@ -3130,13 +3773,19 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         options: ExportOptions,
         credential: ApiCredential,
     ) -> Result<ExportBundle> {
-        let artifact =
-            self.export_events_for_api_with(expected_ruleset_hash, options, credential)?;
-        self.bundle_from_artifact(artifact)
+        let (artifact, receipt_entry) =
+            self.export_events_for_api_receipted(expected_ruleset_hash, options, credential)?;
+        self.bundle_from_artifact(artifact, receipt_entry)
     }
 
-    fn bundle_from_artifact(&self, artifact: ExportArtifact) -> Result<ExportBundle> {
-        let receipt_entry = self.latest_export_receipt_entry()?;
+    /// The bundle for `artifact` and the receipt row sealed for it — the
+    /// row the export itself wrote, never re-read from the ledger, where a
+    /// concurrent export's receipt could have landed in between.
+    fn bundle_from_artifact(
+        &self,
+        artifact: ExportArtifact,
+        receipt_entry: ExportReceiptEntry,
+    ) -> Result<ExportBundle> {
         let artifact_bytes = serde_json::to_vec(&artifact)?;
         let artifact_hash: [u8; 32] = Sha256::digest(&artifact_bytes).into();
         if artifact_hash != receipt_entry.receipt.artifact_hash {
@@ -3233,6 +3882,23 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
     /// names the whole log's newest row, so "nothing new" and "rolled
     /// back" are both visible against the cursor.
     pub fn sealed_log_document_from(&self, from_seq: Option<u64>) -> Result<SealedLogDocument> {
+        // One read transaction across the head, the checkpoint and the
+        // entries. The retention writer (`enforce_retention_with_checkpoint`,
+        // which witnessd runs every few minutes on its own connection)
+        // commits a new checkpoint and the prune behind it as one unit; as
+        // three autocommit statements, a commit landing after the checkpoint
+        // read served the OLD anchor over the NEW tail — an anchor the first
+        // entry does not link to, which a walker reports as a broken chain.
+        // Inside one transaction every read sees the same snapshot, so the
+        // first entry's `prev_hash` is the anchor served with it. The
+        // function takes `&self`, hence `unchecked_transaction`; it ends
+        // (read-only, nothing to roll back) when the guard drops on any
+        // return path. A caller already inside a transaction keeps its own.
+        let _snapshot = if self.conn.is_autocommit() {
+            Some(self.conn.unchecked_transaction()?)
+        } else {
+            None
+        };
         let head = self.sealed_log_head()?;
         let checkpoint = crate::verify::latest_checkpoint(&self.conn)?;
         let (checkpoint_head, cutoff_event_id) =
@@ -3240,6 +3906,13 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
                 (Some(head), Some(cutoff)) => (Some(head), cutoff),
                 _ => (None, 0),
             };
+
+        #[cfg(test)]
+        SEALED_LOG_DOCUMENT_BETWEEN_READS.with(|hook| {
+            if let Some(run) = hook.borrow_mut().as_mut() {
+                run();
+            }
+        });
 
         let mut stmt = self.conn.prepare(
             "SELECT id, payload_json, prev_hash, entry_hash, signature \
@@ -3382,8 +4055,11 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         ruleset_id: &str,
         kernel_version: &str,
     ) -> Result<EvidenceEnvelope> {
-        let artifact = self.export_events_for_api(expected_ruleset_hash, options)?;
-        let receipt_entry = self.latest_export_receipt_entry()?;
+        let (artifact, receipt_entry) = self.export_events_for_api_receipted(
+            expected_ruleset_hash,
+            options,
+            ApiCredential::Capability,
+        )?;
         let bundle = ExportBundle {
             artifact,
             receipt_entry,
@@ -3424,11 +4100,19 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         expected_ruleset_hash: [u8; 32],
         options: ExportOptions,
         auth_mode: ExportAuthMode,
-    ) -> Result<ExportArtifact> {
+        disclosure: ReceiptDisclosure,
+    ) -> Result<(ExportArtifact, ExportReceiptEntry)> {
         Self::validate_export_options(&options)?;
         let artifact = self.build_export_artifact(expected_ruleset_hash, options, None, false)?;
-        self.receipt_export(expected_ruleset_hash, &options, &artifact, auth_mode, None)?;
-        Ok(artifact)
+        let receipt_entry = self.receipt_export(
+            expected_ruleset_hash,
+            &options,
+            &artifact,
+            auth_mode,
+            None,
+            disclosure,
+        )?;
+        Ok((artifact, receipt_entry))
     }
 
     /// Append the signed, hash-chained export receipt for `artifact`
@@ -3441,7 +4125,8 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         artifact: &ExportArtifact,
         auth_mode: ExportAuthMode,
         token_id: Option<String>,
-    ) -> Result<()> {
+        disclosure: ReceiptDisclosure,
+    ) -> Result<ExportReceiptEntry> {
         let artifact_bytes = serde_json::to_vec(artifact)?;
         let artifact_hash: [u8; 32] = Sha256::digest(&artifact_bytes).into();
         let receipt = ExportReceipt {
@@ -3452,9 +4137,10 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
             auth_mode: Some(auth_mode),
             window: options.window,
             token_id,
+            context: disclosure.context,
+            authorizing_receipt: disclosure.authorizing_receipt,
         };
-        self.log_export_receipt(&receipt)?;
-        Ok(())
+        self.append_export_receipt_entry(&receipt)
     }
 
     /// The pure projection every export and state view is built from:
@@ -3732,21 +4418,99 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         // it) rather than spendable.
         consume_break_glass_token_durably(&self.conn, token)?;
         let granted_entry_hash = token.receipt_entry_hash();
-        let payload: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT payload_json FROM break_glass_receipts WHERE entry_hash = ?1 LIMIT 1",
-                params![granted_entry_hash.to_vec()],
-                |row| row.get(0),
-            )
-            .optional()?;
-        let Some(payload) = payload else {
+        let Some(row) = break_glass_row_by_entry_hash(&self.conn, &granted_entry_hash)? else {
             return Err(anyhow!("break-glass receipt not found for token"));
         };
-        let granted: break_glass::BreakGlassReceipt = serde_json::from_str(&payload)?;
+        let granted: break_glass::BreakGlassReceipt = serde_json::from_str(&row.payload_json)?;
         let redemption =
             break_glass::BreakGlassReceipt::redemption_of(&granted, granted_entry_hash, token)?;
         self.append_break_glass_receipt(&redemption, &[])
+    }
+
+    /// Append the device-signed `Unsealed` row completing the redemption
+    /// `redemption_entry_hash`: the device decrypted that redemption's
+    /// envelope to the plaintext `plaintext_commitment` fixes (salted; the
+    /// salt lives only in the handoff sidecar). One transaction (BEGIN
+    /// IMMEDIATE, or SAVEPOINT `unseal_record` inside a caller's
+    /// transaction). Called after a successful decrypt and before any byte
+    /// is written; a record that cannot be appended means nothing is
+    /// released. Returns the row's entry hash.
+    pub fn record_unsealed(
+        &mut self,
+        redemption_entry_hash: [u8; 32],
+        plaintext_commitment: [u8; 32],
+        recipient_commitment: Option<[u8; 32]>,
+    ) -> Result<[u8; 32]> {
+        let own_tx = self.conn.is_autocommit();
+        self.conn.execute_batch(if own_tx {
+            "BEGIN IMMEDIATE;"
+        } else {
+            "SAVEPOINT unseal_record;"
+        })?;
+        let recorded = self
+            .record_unsealed_locked(
+                redemption_entry_hash,
+                plaintext_commitment,
+                recipient_commitment,
+            )
+            .and_then(|entry_hash| {
+                self.conn.execute_batch(if own_tx {
+                    "COMMIT;"
+                } else {
+                    "RELEASE unseal_record;"
+                })?;
+                Ok(entry_hash)
+            });
+        if recorded.is_err() {
+            let _ = self.conn.execute_batch(if own_tx {
+                "ROLLBACK;"
+            } else {
+                "ROLLBACK TO unseal_record; RELEASE unseal_record;"
+            });
+        }
+        recorded
+    }
+
+    fn record_unsealed_locked(
+        &mut self,
+        redemption_entry_hash: [u8; 32],
+        plaintext_commitment: [u8; 32],
+        recipient_commitment: Option<[u8; 32]>,
+    ) -> Result<[u8; 32]> {
+        let h = hex::encode(redemption_entry_hash);
+        let Some(row) = break_glass_row_by_entry_hash(&self.conn, &redemption_entry_hash)? else {
+            return Err(anyhow!(
+                "unseal record refused: receipt {} is not in the receipt chain",
+                h
+            ));
+        };
+        let redemption: break_glass::BreakGlassReceipt = serde_json::from_str(&row.payload_json)?;
+        if redemption.redeemed_token().is_none() {
+            return Err(anyhow!(
+                "unseal record refused: receipt {} is not a token redemption row",
+                h
+            ));
+        }
+        if redemption.vault_envelope_id == EXPORT_EVENTS_ENVELOPE_ID {
+            return Err(anyhow!(
+                "unseal record refused: redemption {} spent an export:events token — exports \
+                 are receipted in the export chain",
+                h
+            ));
+        }
+        if break_glass_unsealed_for_redemption(&self.conn, &redemption_entry_hash)?.is_some() {
+            return Err(anyhow!(
+                "unseal record refused: redemption {} already has an unseal record",
+                h
+            ));
+        }
+        let unsealed = break_glass::BreakGlassReceipt::unsealed_of(
+            &redemption,
+            redemption_entry_hash,
+            plaintext_commitment,
+            recipient_commitment,
+        )?;
+        self.append_break_glass_receipt(&unsealed, &[])
     }
 
     pub fn break_glass_receipt_outcome(
@@ -4353,6 +5117,143 @@ pub fn device_pq_public_key_from_db(conn: &Connection) -> Result<PqPublicKey> {
     pq_public_key_from_bytes(&bytes)
 }
 
+/// One stored receipt row, read by its chain hash only. Never carries the
+/// row id or `created_at` (both receipt tables stamp a precise time).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct StoredReceiptRow {
+    pub ledger: &'static str,
+    pub payload_json: String,
+    pub approvals_json: Option<String>,
+    pub prev_hash: [u8; 32],
+    pub entry_hash: [u8; 32],
+    pub signature: Vec<u8>,
+    pub pq_signature: Option<Vec<u8>>,
+    pub pq_scheme: Option<String>,
+}
+
+/// The `break_glass_receipts` row whose `entry_hash` is `h`.
+pub(crate) fn break_glass_row_by_entry_hash(
+    conn: &Connection,
+    h: &[u8; 32],
+) -> Result<Option<StoredReceiptRow>> {
+    conn.query_row(
+        "SELECT payload_json, approvals_json, prev_hash, entry_hash, signature, pq_signature, \
+         pq_scheme FROM break_glass_receipts WHERE entry_hash = ?1 LIMIT 1",
+        params![h.to_vec()],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+                row.get::<_, Vec<u8>>(3)?,
+                row.get::<_, Vec<u8>>(4)?,
+                row.get::<_, Option<Vec<u8>>>(5)?,
+                row.get::<_, Option<String>>(6)?,
+            ))
+        },
+    )
+    .optional()?
+    .map(
+        |(payload_json, approvals_json, prev, entry, signature, pq_signature, pq_scheme)| {
+            Ok(StoredReceiptRow {
+                ledger: "break_glass_receipts",
+                payload_json,
+                approvals_json,
+                prev_hash: blob32(prev, "break_glass_receipts.prev_hash")?,
+                entry_hash: blob32(entry, "break_glass_receipts.entry_hash")?,
+                signature,
+                pq_signature,
+                pq_scheme,
+            })
+        },
+    )
+    .transpose()
+}
+
+/// The `export_receipts` row whose `entry_hash` is `h`.
+pub(crate) fn export_row_by_entry_hash(
+    conn: &Connection,
+    h: &[u8; 32],
+) -> Result<Option<StoredReceiptRow>> {
+    conn.query_row(
+        "SELECT payload_json, prev_hash, entry_hash, signature, pq_signature, pq_scheme \
+         FROM export_receipts WHERE entry_hash = ?1 LIMIT 1",
+        params![h.to_vec()],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, Vec<u8>>(2)?,
+                row.get::<_, Vec<u8>>(3)?,
+                row.get::<_, Option<Vec<u8>>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+            ))
+        },
+    )
+    .optional()?
+    .map(
+        |(payload_json, prev, entry, signature, pq_signature, pq_scheme)| {
+            Ok(StoredReceiptRow {
+                ledger: "export_receipts",
+                payload_json,
+                approvals_json: None,
+                prev_hash: blob32(prev, "export_receipts.prev_hash")?,
+                entry_hash: blob32(entry, "export_receipts.entry_hash")?,
+                signature,
+                pq_signature,
+                pq_scheme,
+            })
+        },
+    )
+    .transpose()
+}
+
+/// Scan the break-glass chain (payloads only, in chain order) for the first
+/// row matching `pick`, returning its entry hash. Selects by hash only.
+fn break_glass_find_entry(
+    conn: &Connection,
+    mut pick: impl FnMut(&break_glass::BreakGlassReceipt) -> bool,
+) -> Result<Option<[u8; 32]>> {
+    let mut stmt =
+        conn.prepare("SELECT payload_json, entry_hash FROM break_glass_receipts ORDER BY id ASC")?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let payload: String = row.get(0)?;
+        let Ok(receipt) = serde_json::from_str::<break_glass::BreakGlassReceipt>(&payload) else {
+            continue;
+        };
+        if pick(&receipt) {
+            return Ok(Some(blob32(
+                row.get(1)?,
+                "break_glass_receipts.entry_hash",
+            )?));
+        }
+    }
+    Ok(None)
+}
+
+/// The `TokenRedeemed` row that names `grant`, by its entry hash.
+pub(crate) fn break_glass_redemption_for_grant(
+    conn: &Connection,
+    grant: &[u8; 32],
+) -> Result<Option<[u8; 32]>> {
+    break_glass_find_entry(conn, |r| {
+        r.redeemed_token()
+            .is_some_and(|(_, granted)| &granted == grant)
+    })
+}
+
+/// The `Unsealed` row that completes `redemption`, by its entry hash.
+pub(crate) fn break_glass_unsealed_for_redemption(
+    conn: &Connection,
+    redemption: &[u8; 32],
+) -> Result<Option<[u8; 32]>> {
+    break_glass_find_entry(conn, |r| {
+        r.unsealed_record()
+            .is_some_and(|(names, _, _)| &names == redemption)
+    })
+}
+
 pub fn verify_export_bundle(bundle: &ExportBundle) -> Result<()> {
     let verifying_key = verifying_key_from_bytes(&bundle.device_public_key)?;
     let payload_json = serde_json::to_string(&bundle.receipt_entry.receipt)?;
@@ -4377,11 +5278,21 @@ pub fn verify_export_bundle(bundle: &ExportBundle) -> Result<()> {
     if artifact_hash != bundle.receipt_entry.receipt.artifact_hash {
         return Err(anyhow!("export artifact hash mismatch"));
     }
+    // Structural export-authorization rules (R0, R1, R6), the same strings
+    // every walk prints. The cross-ledger rules need the break-glass chain.
+    let value = serde_json::to_value(&bundle.receipt_entry.receipt)?;
+    verify::export_authorization_shape(&value).map_err(|why| anyhow!(why))?;
     Ok(())
 }
 
 pub mod verify_helpers;
 pub mod verify_runner;
+
+#[cfg(test)]
+mod disclosure_tests;
+
+#[cfg(test)]
+mod break_glass_reader_tests;
 
 pub(crate) fn blob32(bytes: Vec<u8>, context: &str) -> Result<[u8; 32]> {
     if bytes.len() != 32 {
@@ -4400,6 +5311,16 @@ fn now_s() -> Result<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Test seam for [`Kernel::sealed_log_document_from`]: runs on the
+    /// calling thread between the checkpoint read and the entries read, so
+    /// a test can commit a retention pass from a second connection exactly
+    /// where the race it guards against would land.
+    static SEALED_LOG_DOCUMENT_BETWEEN_READS: std::cell::RefCell<Option<Box<dyn FnMut()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// Test helper. A row stamped with the current 10-minute bucket is still
 /// inside a zero retention during that bucket's first second, when its start
 /// equals the cutoff. Wait that second out before a test prunes with
@@ -4409,6 +5330,163 @@ pub(crate) fn wait_out_bucket_first_second() {
     while now_s().is_ok_and(|s| s % u64::from(TEN_MINUTES_S) == 0) {
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// The newest clock-provenance entry hash, or the genesis `[0; 32]`, read on
+/// the transaction's own connection so the link and the insert see one state.
+fn last_clock_provenance_hash_or_zero(conn: &Connection) -> Result<[u8; 32]> {
+    let mut stmt =
+        conn.prepare("SELECT entry_hash FROM clock_provenance ORDER BY id DESC LIMIT 1")?;
+    let mut rows = stmt.query([])?;
+    match rows.next()? {
+        Some(row) => {
+            let entry_bytes: Vec<u8> = row.get(0)?;
+            blob32(entry_bytes, "clock_provenance.entry_hash")
+        }
+        None => Ok([0u8; 32]),
+    }
+}
+
+/// Hash, sign and insert one clock-provenance record with the write lock
+/// held (the caller owns the transaction). Chain shape = export receipts:
+/// `entry_hash = SHA256(prev_hash ‖ payload_json)`, signed under
+/// [`DOMAIN_CLOCK_PROVENANCE`]; `created_at` is the record's bucket start.
+fn append_clock_provenance_locked(
+    conn: &Connection,
+    key_material: &SignatureKeyMaterial,
+    record: &ClockProvenanceRecord,
+) -> Result<clock_provenance::ClockProvenanceRow> {
+    if record.schema != CLOCK_PROVENANCE_SCHEMA_V1 {
+        return Err(anyhow!(
+            "clock-provenance record schema must be {CLOCK_PROVENANCE_SCHEMA_V1} (got {:?})",
+            record.schema
+        ));
+    }
+    let created_at = record.time_bucket.start_epoch_s as i64;
+    let prev_hash = last_clock_provenance_hash_or_zero(conn)?;
+    let payload_json = serde_json::to_string(record)?;
+    let entry_hash = hash_entry(&prev_hash, payload_json.as_bytes());
+    let signature_set = sign_entry(
+        &key_material.signature_keys(),
+        &entry_hash,
+        DOMAIN_CLOCK_PROVENANCE,
+    )?;
+    let pq_signature = signature_set
+        .pq_signature
+        .as_ref()
+        .map(|sig| sig.signature.clone());
+    let pq_scheme = signature_set
+        .pq_signature
+        .as_ref()
+        .map(|sig| sig.scheme_id.clone());
+    conn.execute(
+        "INSERT INTO clock_provenance(created_at, payload_json, prev_hash, entry_hash, \
+         signature, pq_signature, pq_scheme) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            created_at,
+            payload_json,
+            prev_hash.to_vec(),
+            entry_hash.to_vec(),
+            signature_set.ed25519_signature,
+            pq_signature,
+            pq_scheme,
+        ],
+    )?;
+    Ok(clock_provenance::ClockProvenanceRow {
+        id: conn.last_insert_rowid(),
+        created_at,
+        payload_json,
+        prev_hash,
+        entry_hash,
+        signatures: signature_set,
+        record: record.clone(),
+    })
+}
+
+/// The body of [`Kernel::observe_anchors_for_clock_provenance`], with the
+/// write lock held.
+fn observe_anchors_locked(
+    conn: &Connection,
+    key_material: &SignatureKeyMaterial,
+    obs: &ClockObservation<'_>,
+) -> Result<Vec<SealedClockProvenance>> {
+    let cursor: Option<i64> = conn
+        .query_row(
+            "SELECT last_anchor_id FROM clock_provenance_cursor WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(cursor) = cursor else {
+        // First poll ever on this database: start at the newest row that
+        // exists, so nothing anchored before this release is ever measured
+        // against a clock that did not observe it.
+        let newest: i64 = if tsa::anchor_table_exists(conn)? {
+            conn.query_row("SELECT COALESCE(MAX(id), 0) FROM tsa_anchors", [], |row| {
+                row.get(0)
+            })?
+        } else {
+            0
+        };
+        conn.execute(
+            "INSERT INTO clock_provenance_cursor(id, last_anchor_id) VALUES (1, ?1)",
+            params![newest],
+        )?;
+        return Ok(Vec::new());
+    };
+    let rows = tsa::anchor_tokens_after(conn, cursor)?;
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let size = TEN_MINUTES_S as u64;
+    let time_bucket = TimeBucket {
+        start_epoch_s: (obs.observed_wall_s / size) * size,
+        size_s: TEN_MINUTES_S,
+    };
+    let mut sealed = Vec::new();
+    let mut last_id = cursor;
+    for (anchor_id, token_der) in rows {
+        last_id = anchor_id;
+        let Some(token_der) = token_der else {
+            continue;
+        };
+        let token_sha256 = clock_provenance::token_sha256_hex(&token_der);
+        // A measurement needs a completed previous poll no more than 3600 s
+        // ago (else the row's age is unbounded: a gap is a bound only while
+        // it is not clamped) and a readable genTime; otherwise the record
+        // binds the token and says nothing about the clock.
+        let measured = obs
+            .poll_gap_s
+            .filter(|gap| i64::from(*gap) <= CLOCK_PROVENANCE_CLAMP_S)
+            .and_then(|gap| {
+                let token = tsa::parse_token(&token_der).ok()?;
+                let gen_time = tsa::gen_time_unix(&token.gen_time)?;
+                let offset = (obs.observed_wall_s as i64 - gen_time)
+                    .clamp(-CLOCK_PROVENANCE_CLAMP_S, CLOCK_PROVENANCE_CLAMP_S)
+                    as i32;
+                Some((offset, gap.max(1)))
+            });
+        let record = ClockProvenanceRecord {
+            schema: CLOCK_PROVENANCE_SCHEMA_V1.to_string(),
+            time_bucket,
+            anchor_id,
+            token_sha256,
+            observed_offset_s: measured.map(|(offset, _)| offset),
+            poll_gap_s: measured.map(|(_, gap)| gap),
+            kernel_version: obs.kernel_version.to_string(),
+        };
+        let row = append_clock_provenance_locked(conn, key_material, &record)?;
+        sealed.push(SealedClockProvenance {
+            id: row.id,
+            anchor_id,
+            record,
+        });
+    }
+    conn.execute(
+        "UPDATE clock_provenance_cursor SET last_anchor_id = ?1 WHERE id = 1",
+        params![last_id],
+    )?;
+    Ok(sealed)
 }
 
 /// Durable anti-replay ledger for break-glass tokens.
@@ -5186,13 +6264,14 @@ mod tests {
             cfg.ruleset_hash,
         )?;
 
-        let artifact = kernel.export_events_sequential_unchecked(
+        let (artifact, _receipt) = kernel.export_events_sequential_unchecked(
             cfg.ruleset_hash,
             ExportOptions {
                 jitter_s: 0,
                 ..ExportOptions::default()
             },
             ExportAuthMode::SelfExport,
+            ReceiptDisclosure::default(),
         )?;
         let value = serde_json::to_value(&artifact)?;
 
@@ -6327,13 +7406,14 @@ mod tests {
             cfg.ruleset_hash,
         )?;
 
-        let artifact = kernel.export_events_sequential_unchecked(
+        let (artifact, _receipt) = kernel.export_events_sequential_unchecked(
             cfg.ruleset_hash,
             ExportOptions {
                 jitter_s: 0,
                 ..ExportOptions::default()
             },
             ExportAuthMode::SelfExport,
+            ReceiptDisclosure::default(),
         )?;
         let failures: Vec<&ExportFailureEvent> = artifact
             .batches
@@ -6516,6 +7596,76 @@ mod tests {
     }
 
     #[test]
+    fn unclean_shutdown_detected_after_retention_pruned_the_start_row() -> Result<()> {
+        // A daemon that runs longer than its retention window prunes its
+        // own `start` row behind a checkpoint. If it then dies, the phase
+        // read alone finds no lifecycle row and the loss went unwitnessed
+        // (the normal case: retention is 7 days, uptime is longer).
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("lifecycle_pruned.db");
+        let cfg = KernelConfig {
+            db_path: db_path.to_string_lossy().to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            zone_policy: ZonePolicy::default(),
+        };
+
+        let mut kernel = Kernel::open(&cfg)?;
+        assert!(
+            !kernel.previous_run_ended_uncleanly()?,
+            "an empty log is a first boot, not a loss"
+        );
+        // Rows a tool sealed before any daemon started here are not a run
+        // that died: nothing was pruned, so no `PowerLoss` is owed.
+        seal_failure_at(&mut kernel, &cfg, TimeBucket::now_10min()?.start_epoch_s)?;
+        assert!(
+            !kernel.previous_run_ended_uncleanly()?,
+            "sealed rows with no lifecycle record and no checkpoint are a seeded log"
+        );
+        kernel.append_lifecycle(
+            LifecyclePhase::Start,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+        assert!(kernel.previous_run_ended_uncleanly()?);
+
+        // The run outlives its retention: the prune takes the start row.
+        wait_out_bucket_first_second();
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(0))?;
+        assert_eq!(kernel.last_lifecycle_phase()?, None, "start row pruned");
+        drop(kernel);
+
+        // Reopen without a clean shutdown.
+        let mut kernel = Kernel::open(&cfg)?;
+        assert_eq!(
+            kernel.last_lifecycle_phase()?,
+            None,
+            "the phase read alone no longer sees the loss"
+        );
+        assert!(
+            kernel.previous_run_ended_uncleanly()?,
+            "a checkpoint with no live lifecycle row is a run that never sealed its shutdown"
+        );
+
+        // A clean stop still reads clean: only the running daemon prunes,
+        // so its shutdown row is always live at the next boot.
+        kernel.append_lifecycle(
+            LifecyclePhase::ShutdownClean,
+            &cfg.kernel_version,
+            &cfg.ruleset_id,
+            cfg.ruleset_hash,
+        )?;
+        drop(kernel);
+        let kernel = Kernel::open(&cfg)?;
+        assert!(!kernel.previous_run_ended_uncleanly()?);
+        Ok(())
+    }
+
+    #[test]
     fn export_skips_system_records() -> Result<()> {
         let (mut kernel, cfg) = setup_test_kernel()?;
         kernel.append_lifecycle(
@@ -6537,13 +7687,14 @@ mod tests {
             cfg.ruleset_hash,
         )?;
 
-        let artifact = kernel.export_events_sequential_unchecked(
+        let (artifact, _receipt) = kernel.export_events_sequential_unchecked(
             cfg.ruleset_hash,
             ExportOptions {
                 jitter_s: 0,
                 ..ExportOptions::default()
             },
             ExportAuthMode::SelfExport,
+            ReceiptDisclosure::default(),
         )?;
         let (events, failures): (usize, usize) = artifact
             .batches
@@ -7536,13 +8687,14 @@ mod tests {
         );
 
         // Verify failure event was recorded in sealed log
-        let artifact = kernel.export_events_sequential_unchecked(
+        let (artifact, _receipt) = kernel.export_events_sequential_unchecked(
             cfg.ruleset_hash,
             ExportOptions {
                 jitter_s: 0,
                 ..ExportOptions::default()
             },
             ExportAuthMode::SelfExport,
+            ReceiptDisclosure::default(),
         )?;
         let failures: Vec<&ExportFailureEvent> = artifact
             .batches
@@ -7574,13 +8726,14 @@ mod tests {
         );
 
         // Verify failure event was recorded in sealed log
-        let artifact = kernel.export_events_sequential_unchecked(
+        let (artifact, _receipt) = kernel.export_events_sequential_unchecked(
             cfg.ruleset_hash,
             ExportOptions {
                 jitter_s: 0,
                 ..ExportOptions::default()
             },
             ExportAuthMode::SelfExport,
+            ReceiptDisclosure::default(),
         )?;
         let failures: Vec<&ExportFailureEvent> = artifact
             .batches
@@ -7637,6 +8790,115 @@ mod tests {
         Ok(())
     }
 
+    /// A keyed kernel database in a temporary directory, for the two
+    /// SQLCipher pins below.
+    fn keyed_kernel_for_sqlcipher_pins() -> Result<(tempfile::TempDir, Kernel)> {
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("pin.db").to_string_lossy().to_string();
+        let kernel = Kernel::open(&KernelConfig {
+            db_path,
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            zone_policy: ZonePolicy::default(),
+        })?;
+        Ok((dir, kernel))
+    }
+
+    /// The SQLite the kernel runs is at least 3.54.0, the release that fixed
+    /// CVE-2026-119375 (the WAL page-size read; RUSTSEC-2026-0502 against
+    /// `sqlcipher-src`, earlier RUSTSEC-2026-0459; SECURITY.md, Group 5).
+    /// The fix lives in the SQLite that SQLCipher bundles, not in a Rust
+    /// crate, so this asks the library a kernel connection actually runs.
+    /// A floor, not an equality: a later SQLite passes without an edit.
+    #[test]
+    fn linked_sqlite_is_at_least_3_54_0() -> Result<()> {
+        let (_dir, kernel) = keyed_kernel_for_sqlcipher_pins()?;
+        let version: String = kernel
+            .conn
+            .query_row("SELECT sqlite_version()", [], |row| row.get(0))?;
+        let parts = version
+            .split('.')
+            .map(str::parse::<u32>)
+            .collect::<std::result::Result<Vec<u32>, _>>()
+            .map_err(|e| anyhow!("unparsable sqlite_version() {version:?}: {e}"))?;
+        assert!(
+            parts.len() >= 2,
+            "sqlite_version() {version:?} has no minor version"
+        );
+        let linked = (
+            parts[0],
+            parts[1],
+            parts.get(2).copied().unwrap_or_default(),
+        );
+        assert!(
+            linked >= (3, 54, 0),
+            "linked SQLite {version} is older than 3.54.0 and carries CVE-2026-119375 \
+             (SECURITY.md, Group 5)"
+        );
+        Ok(())
+    }
+
+    /// The SQLCipher defaults a kernel database is written with, as far as
+    /// SQLCipher reports them. The kernel sets none of them, and SQLCipher
+    /// does not record them in the file, so a release that changed one would
+    /// write databases older builds cannot open and could not open the
+    /// existing ones. Pinned here: the six rows of `PRAGMA cipher_settings`,
+    /// plus four values that list leaves out and that also decide whether a
+    /// file opens: the cipher, the PBKDF2 iteration count that derives the
+    /// HMAC key (`fast_kdf_iter`), the page-number byte order inside the
+    /// HMAC (`cipher_hmac_pgno`) and the mask applied to the HMAC salt
+    /// (`cipher_hmac_salt_mask`). Read without an argument, none of these
+    /// pragmas changes anything.
+    ///
+    /// Not pinned, because no pragma reports them: the 16-byte salt header,
+    /// the key and IV sizes. A release that changed one of those passes this
+    /// test. The kernel's own keys are 32-byte HKDF outputs passed as
+    /// `x'<64 hex>'`, which SQLCipher takes as a raw key without the PBKDF2
+    /// pass that `kdf_iter` sets, so that row matters only for a key in
+    /// another form; it is pinned so that a change is looked at. A new
+    /// `cipher_settings` row fails here too.
+    ///
+    /// Pinned to what SQLCipher 4.19.0 (rusqlite 0.41) reported; 4.20.0
+    /// reports the same.
+    #[test]
+    fn kernel_database_cipher_settings_are_pinned() -> Result<()> {
+        let (_dir, kernel) = keyed_kernel_for_sqlcipher_pins()?;
+        let mut stmt = kernel.conn.prepare("PRAGMA cipher_settings")?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<String>, _>>()?;
+        assert_eq!(
+            rows,
+            [
+                "PRAGMA kdf_iter = 256000;",
+                "PRAGMA cipher_page_size = 4096;",
+                "PRAGMA cipher_use_hmac = 1;",
+                "PRAGMA cipher_plaintext_header_size = 0;",
+                "PRAGMA cipher_hmac_algorithm = HMAC_SHA512;",
+                "PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA512;",
+            ],
+            "SQLCipher's settings for a new kernel database changed"
+        );
+        for (pragma, expected) in [
+            ("cipher", "AES-256-CBC"),
+            ("fast_kdf_iter", "2"),
+            ("cipher_hmac_pgno", "le"),
+            ("cipher_hmac_salt_mask", "3a"),
+        ] {
+            let value: String = kernel
+                .conn
+                .query_row(&format!("PRAGMA {pragma}"), [], |row| row.get(0))?;
+            assert_eq!(
+                value, expected,
+                "SQLCipher's `PRAGMA {pragma}` for a new kernel database changed"
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn sqlcipher_migration_from_unencrypted() -> Result<()> {
         let dir = tempfile::tempdir()?;
@@ -7678,6 +8940,185 @@ mod tests {
             "migrated database should be encrypted"
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn sqlcipher_migration_recovers_from_an_interrupted_one() -> Result<()> {
+        // A migration cut off before its final rename leaves `<db>.encrypted`
+        // beside the still-plaintext original. The next open exported into
+        // that leftover and failed — and so did every open after it, until
+        // someone deleted the file by hand.
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("interrupted.db");
+        let db_path_str = db_path.to_string_lossy().to_string();
+        {
+            let conn = Connection::open(&db_path)?;
+            conn.execute_batch(
+                "CREATE TABLE test_data (id INTEGER PRIMARY KEY, val TEXT);
+                 INSERT INTO test_data (val) VALUES ('migration_sentinel');",
+            )?;
+        }
+        let stale = dir.path().join("interrupted.db.encrypted");
+        std::fs::copy(&db_path, &stale)?;
+        assert!(std::fs::metadata(&stale)?.len() > 0);
+        // The killed export's rollback journal may be there too. SQLite
+        // discards a journal it finds beside a brand-new, empty database.
+        let stale_journal = dir.path().join("interrupted.db.encrypted-journal");
+        std::fs::write(&stale_journal, b"journal of an export that never finished")?;
+
+        let signing_key = signing_key_from_seed("devkey:test:a1b2c3d4e5f6a7b8c9d0")?;
+        let db_key = derive_db_encryption_key(&signing_key);
+        let conn = open_db_connection_with_key(&db_path_str, Some(&db_key))?;
+        let val: String = conn.query_row("SELECT val FROM test_data WHERE id = 1", [], |row| {
+            row.get(0)
+        })?;
+        assert_eq!(val, "migration_sentinel");
+        drop(conn);
+
+        assert!(
+            !is_unencrypted_db(&db_path_str),
+            "migrated database should be encrypted"
+        );
+        assert!(!stale.exists(), "the stale target was replaced, not kept");
+        assert!(!stale_journal.exists(), "and its journal went with it");
+        Ok(())
+    }
+
+    #[test]
+    fn sqlcipher_migration_that_fails_leaves_no_partial_target() -> Result<()> {
+        // A plaintext database with a damaged page deep in a table: the
+        // export starts, creates its target, and fails part-way. The target
+        // must not outlive the failure, or the next open starts from a
+        // leftover.
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("damaged.db");
+        let db_path_str = db_path.to_string_lossy().to_string();
+        {
+            let conn = Connection::open(&db_path)?;
+            conn.execute_batch("CREATE TABLE test_data (id INTEGER PRIMARY KEY, val TEXT);")?;
+            let filler = "x".repeat(512);
+            for _ in 0..512 {
+                conn.execute("INSERT INTO test_data (val) VALUES (?1)", params![filler])?;
+            }
+        }
+        let mut bytes = std::fs::read(&db_path)?;
+        assert!(bytes.starts_with(b"SQLite format 3\0"));
+        let middle = bytes.len() / 2;
+        let damaged_until = (middle + 4096).min(bytes.len());
+        bytes[middle..damaged_until].fill(0xFF);
+        std::fs::write(&db_path, &bytes)?;
+
+        let signing_key = signing_key_from_seed("devkey:test:a1b2c3d4e5f6a7b8c9d0")?;
+        let db_key = derive_db_encryption_key(&signing_key);
+        assert!(open_db_connection_with_key(&db_path_str, Some(&db_key)).is_err());
+        assert!(
+            !dir.path().join("damaged.db.encrypted").exists(),
+            "a failed migration must clean up its partial target"
+        );
+        assert_eq!(
+            std::fs::read(&db_path)?,
+            bytes,
+            "and must leave the original as it was"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sqlcipher_migration_is_serialized_across_concurrent_opens() -> Result<()> {
+        // Two services that start together (the Home Assistant app's API and
+        // its Frigate bridge) both open the kernel, and on a legacy plaintext
+        // database both reach the migration. Unserialized, each took the
+        // other's in-progress target for a stale one and removed it: both
+        // opens failed and the database stayed plaintext. Each opener here
+        // uses its own lock-file handle, as two processes do.
+        let dir = tempfile::tempdir()?;
+        let db_path = dir.path().join("shared.db");
+        let db_path_str = db_path.to_string_lossy().to_string();
+        {
+            let mut conn = Connection::open(&db_path)?;
+            conn.execute_batch(
+                "CREATE TABLE test_data (id INTEGER PRIMARY KEY, val TEXT);
+                 INSERT INTO test_data (val) VALUES ('migration_sentinel');",
+            )?;
+            // Enough rows that one export is still running when the other
+            // opener arrives.
+            let filler = "x".repeat(512);
+            let tx = conn.transaction()?;
+            for _ in 0..4096 {
+                tx.execute("INSERT INTO test_data (val) VALUES (?1)", params![filler])?;
+            }
+            tx.commit()?;
+        }
+        assert!(is_unencrypted_db(&db_path_str));
+
+        let signing_key = signing_key_from_seed("devkey:test:a1b2c3d4e5f6a7b8c9d0")?;
+        let db_key = derive_db_encryption_key(&signing_key);
+        let barrier = std::sync::Barrier::new(2);
+        let open_and_read = || -> Result<String> {
+            barrier.wait();
+            let conn = open_db_connection_with_key(&db_path_str, Some(&db_key))?;
+            Ok(
+                conn.query_row("SELECT val FROM test_data WHERE id = 1", [], |row| {
+                    row.get(0)
+                })?,
+            )
+        };
+        let (first, second) = std::thread::scope(|scope| {
+            let first = scope.spawn(open_and_read);
+            let second = scope.spawn(open_and_read);
+            (
+                first.join().expect("first opener panicked"),
+                second.join().expect("second opener panicked"),
+            )
+        });
+        assert_eq!(first?, "migration_sentinel");
+        assert_eq!(second?, "migration_sentinel");
+
+        assert!(
+            !is_unencrypted_db(&db_path_str),
+            "the database is encrypted after both opens"
+        );
+        assert!(
+            !dir.path().join("shared.db.encrypted").exists(),
+            "no migration target is left behind"
+        );
+        // The lock file is named like a SQLite sidecar (`<db>-...`) on
+        // purpose: a file policy that allows `<db>-*` beside the database
+        // (the Home Assistant app's AppArmor profile) covers it.
+        assert!(
+            dir.path().join("shared.db-migrate-lock").exists(),
+            "the migration lock is the `<db>-migrate-lock` sibling"
+        );
+        let conn = open_db_connection_with_key(&db_path_str, Some(&db_key))?;
+        let rows: i64 = conn.query_row("SELECT count(*) FROM test_data", [], |row| row.get(0))?;
+        assert_eq!(rows, 4097, "every row survived the migration");
+        Ok(())
+    }
+
+    #[test]
+    fn unencrypted_db_check_reads_the_header_only() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path_of = |name: &str| dir.path().join(name).to_string_lossy().to_string();
+
+        // The plaintext SQLite header, and nothing else, says "unencrypted".
+        let plain = path_of("plain.db");
+        std::fs::write(&plain, b"SQLite format 3\0then anything at all")?;
+        assert!(is_unencrypted_db(&plain));
+
+        // Sixteen or more bytes that are not the header: an encrypted file.
+        let opaque = path_of("opaque.db");
+        std::fs::write(&opaque, [0x5Au8; 64])?;
+        assert!(!is_unencrypted_db(&opaque));
+
+        // Shorter than the header, empty, or absent: not unencrypted.
+        let short = path_of("short.db");
+        std::fs::write(&short, b"SQLite format")?;
+        assert!(!is_unencrypted_db(&short));
+        let empty = path_of("empty.db");
+        std::fs::write(&empty, b"")?;
+        assert!(!is_unencrypted_db(&empty));
+        assert!(!is_unencrypted_db(&path_of("absent.db")));
         Ok(())
     }
 
@@ -7774,6 +9215,155 @@ mod tests {
             count += 1;
         }
         assert_eq!(count, baseline + 50);
+        Ok(())
+    }
+
+    /// A file-backed config for the receipt-ledger race tests: the writers
+    /// are separate connections to one database, as two processes are.
+    fn file_backed_test_cfg(dir: &tempfile::TempDir, name: &str) -> KernelConfig {
+        KernelConfig {
+            db_path: dir.path().join(name).to_string_lossy().to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(3600),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            zone_policy: ZonePolicy::default(),
+        }
+    }
+
+    #[test]
+    fn concurrent_exports_cannot_fork_the_export_receipt_chain() -> Result<()> {
+        // An operator's `court_export` beside the API's hourly bundle: two
+        // writers, one ledger. Each receipt append is a read-modify-write of
+        // the chain head; unlocked, both read the same head and the ledger
+        // forks — after which every verify, and witnessd's boot check, fails
+        // closed until someone edits the database by hand.
+        const EXPORTS_PER_WRITER: usize = 25;
+        let dir = tempfile::tempdir()?;
+        let cfg = file_backed_test_cfg(&dir, "export_receipts.db");
+        // Create the DB (schema, key) before the race.
+        drop(Kernel::open(&cfg)?);
+
+        let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let mut handles = Vec::new();
+        for _writer in 0..2 {
+            let cfg = cfg.clone();
+            let start = std::sync::Arc::clone(&start);
+            handles.push(std::thread::spawn(move || -> Result<()> {
+                let mut kernel = Kernel::open(&cfg)?;
+                start.wait();
+                for _ in 0..EXPORTS_PER_WRITER {
+                    // The bundle carries the receipt its own export sealed:
+                    // the builder refuses a receipt whose artifact hash is
+                    // not this artifact's.
+                    let bundle = kernel.export_events_bundle_self(
+                        cfg.ruleset_hash,
+                        ExportOptions {
+                            jitter_s: 0,
+                            ..ExportOptions::default()
+                        },
+                    )?;
+                    let artifact_hash: [u8; 32] =
+                        Sha256::digest(serde_json::to_vec(&bundle.artifact)?).into();
+                    assert_eq!(bundle.receipt_entry.receipt.artifact_hash, artifact_hash);
+                }
+                Ok(())
+            }));
+        }
+        for handle in handles {
+            handle.join().expect("export thread panicked")?;
+        }
+
+        let kernel = Kernel::open(&cfg)?;
+        let walked = crate::verify::verify_export_receipts_with(
+            &kernel.conn,
+            &[kernel.device_verifying_key()],
+            SignatureMode::Compat,
+            kernel.device_pq_public_key_ref(),
+            |_, _| {},
+        )?;
+        assert_eq!(
+            walked,
+            2 * EXPORTS_PER_WRITER as u64,
+            "every receipt extends the one before it"
+        );
+        let report = kernel.verify_sealed_log_with_hwm_path(None)?;
+        assert!(report.chain_valid, "{:?}", report.error);
+        Ok(())
+    }
+
+    #[test]
+    fn concurrent_writers_cannot_fork_the_break_glass_receipt_chain() -> Result<()> {
+        // The same race on the break-glass ledger: two CLI invocations (or a
+        // CLI beside the backend) each record an authorization outcome.
+        const RECEIPTS_PER_WRITER: usize = 25;
+        let dir = tempfile::tempdir()?;
+        let cfg = file_backed_test_cfg(&dir, "break_glass_receipts.db");
+        let alice = SigningKey::from_bytes(&[33u8; 32]);
+        let policy = QuorumPolicy::new(
+            1,
+            vec![TrusteeEntry {
+                id: TrusteeId::new("alice"),
+                public_key: alice.verifying_key().to_bytes(),
+            }],
+        )?;
+        {
+            let mut kernel = Kernel::open(&cfg)?;
+            kernel.set_break_glass_policy(&policy)?;
+        }
+
+        let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let mut handles = Vec::new();
+        for writer in 0..2 {
+            let cfg = cfg.clone();
+            let policy = policy.clone();
+            let alice = alice.clone();
+            let start = std::sync::Arc::clone(&start);
+            handles.push(std::thread::spawn(move || -> Result<()> {
+                let mut kernel = Kernel::open(&cfg)?;
+                let bucket = TimeBucket::now(600)?;
+                start.wait();
+                for n in 0..RECEIPTS_PER_WRITER {
+                    let request = UnlockRequest::new(
+                        &format!("vault:{writer}-{n}"),
+                        cfg.ruleset_hash,
+                        "incident",
+                        bucket,
+                    )?;
+                    let approval =
+                        Approval::signed(TrusteeId::new("alice"), request.request_hash(), &alice);
+                    let (_token, receipt) = BreakGlass::authorize(
+                        &policy,
+                        &request,
+                        std::slice::from_ref(&approval),
+                        bucket,
+                    );
+                    kernel.append_break_glass_receipt(&receipt, std::slice::from_ref(&approval))?;
+                }
+                Ok(())
+            }));
+        }
+        for handle in handles {
+            handle.join().expect("receipt thread panicked")?;
+        }
+
+        let kernel = Kernel::open(&cfg)?;
+        let counts = crate::verify::verify_break_glass_receipts_with(
+            &kernel.conn,
+            &[kernel.device_verifying_key()],
+            Some(&policy),
+            SignatureMode::Compat,
+            kernel.device_pq_public_key_ref(),
+            |_, _| {},
+        )?;
+        assert_eq!(
+            counts.total,
+            2 * RECEIPTS_PER_WRITER as u64,
+            "every receipt extends the one before it"
+        );
+        let report = kernel.verify_sealed_log_with_hwm_path(None)?;
+        assert!(report.chain_valid, "{:?}", report.error);
         Ok(())
     }
 
@@ -8401,6 +9991,100 @@ mod tests {
         Ok(())
     }
 
+    /// An OpenTimestamps proof over `hash`, built from the fixture calendar
+    /// body (a calendar's ops apply to any commitment).
+    fn ots_fixture_proof(hash: &[u8; 32]) -> crate::ots::Proof {
+        let body = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/ots/response-bob.otsr"
+        ))
+        .unwrap();
+        // Random like the kernel's own, never a literal.
+        let nonce = crate::ots::random_nonce();
+        let c = crate::ots::commitment(hash, &nonce);
+        let node = crate::ots::parse_timestamp(&body, &c).unwrap();
+        crate::ots::Proof::compose(hash, &nonce, node).unwrap()
+    }
+
+    #[test]
+    fn retention_checkpoints_ots_anchored_heads() -> Result<()> {
+        // A chain head anchored ONLY on the OpenTimestamps leg (pending, even)
+        // survives pruning as a signed checkpoint, exactly as a TSA-anchored one.
+        let bucket = TimeBucket {
+            start_epoch_s: 600,
+            size_s: TEN_MINUTES_S,
+        };
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        for z in ["zone:a", "zone:b", "zone:c"] {
+            seal_one_event(&mut kernel, &cfg, z)?;
+        }
+        let events = sealed_event_hashes(&kernel)?;
+        let (h1, h2, h3) = (events[0].1, events[1].1, events[2].1);
+        crate::ots::insert_ots_anchor(
+            &kernel.conn,
+            bucket,
+            crate::tsa::AnchorSubject::ChainHead,
+            &h2,
+            "https://bob.btc.calendar.opentimestamps.org",
+            &ots_fixture_proof(&h2),
+        )?;
+        assert!(!crate::tsa::anchor_table_exists(&kernel.conn)?);
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(0))?;
+        let checkpoints = checkpoint_rows(&kernel)?;
+        assert_eq!(
+            checkpoints.len(),
+            2,
+            "one OTS-anchored head + the real cutoff"
+        );
+        assert_eq!((checkpoints[0].1, checkpoints[0].2), (2, h2));
+        assert_eq!((checkpoints[1].1, checkpoints[1].2), (3, h3));
+        assert!(!crate::tsa::hash_in_history(&kernel.conn, &h1)?);
+        let report = crate::verify_runner::run_full_verify(
+            &kernel.conn,
+            None,
+            None,
+            SignatureMode::Compat,
+            |_| {},
+        )?;
+        assert!(report.chain_valid, "{:?}", report.error);
+
+        // Both tables present: the union holds (h1 by TSA, h3 by OTS).
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        for z in ["zone:a", "zone:b", "zone:c", "zone:d"] {
+            seal_one_event(&mut kernel, &cfg, z)?;
+        }
+        let events = sealed_event_hashes(&kernel)?;
+        let (h1, h3, h4) = (events[0].1, events[2].1, events[3].1);
+        crate::tsa::ensure_anchor_table(&kernel.conn)?;
+        crate::tsa::insert_anchor(
+            &kernel.conn,
+            "chain_head",
+            &h1,
+            "(offline)",
+            &tsa_fixture_token(),
+        )?;
+        crate::ots::insert_ots_anchor(
+            &kernel.conn,
+            bucket,
+            crate::tsa::AnchorSubject::Digest,
+            &h3,
+            "https://bob.btc.calendar.opentimestamps.org",
+            &ots_fixture_proof(&h3),
+        )?;
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(0))?;
+        let checkpoints = checkpoint_rows(&kernel)?;
+        let kept: Vec<(i64, [u8; 32])> = checkpoints.iter().map(|c| (c.1, c.2)).collect();
+        assert_eq!(kept, vec![(1, h1), (3, h3), (4, h4)]);
+
+        // Neither table: only the real cutoff checkpoint, as before.
+        let (mut kernel, cfg) = setup_test_kernel()?;
+        seal_one_event(&mut kernel, &cfg, "zone:a")?;
+        seal_one_event(&mut kernel, &cfg, "zone:b")?;
+        kernel.enforce_retention_with_checkpoint(Duration::from_secs(0))?;
+        assert_eq!(checkpoint_rows(&kernel)?.len(), 1);
+        Ok(())
+    }
+
     /// A failure record stamped with an explicit bucket: the one append path
     /// that lets a test seal a row with a chosen `created_at`.
     fn seal_failure_at(kernel: &mut Kernel, cfg: &KernelConfig, start_epoch_s: u64) -> Result<()> {
@@ -8476,6 +10160,67 @@ mod tests {
             |_| {},
         )?;
         assert!(report.chain_valid, "{:?}", report.error);
+        Ok(())
+    }
+
+    #[test]
+    fn sealed_log_document_reads_its_anchor_and_entries_in_one_snapshot() -> Result<()> {
+        // The retention writer commits a new checkpoint and the prune behind
+        // it between the document's checkpoint read and its entries read.
+        // Read as separate autocommit statements, the document then paired
+        // the OLD anchor with the NEW tail: a first entry that links to
+        // nothing served — a false broken-chain alarm on the Witness Wall.
+        let dir = tempfile::tempdir()?;
+        let cfg = KernelConfig {
+            db_path: dir.path().join("snapshot.db").to_string_lossy().to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(86_400),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            zone_policy: ZonePolicy::default(),
+        };
+        // `daemon` is the retention writer; `api` is the Event API's own
+        // kernel handle — a second connection to the same database.
+        let mut daemon = Kernel::open(&cfg)?;
+        let now = TimeBucket::now_10min()?.start_epoch_s;
+        seal_failure_at(&mut daemon, &cfg, now - 3 * 86_400)?;
+        seal_failure_at(&mut daemon, &cfg, now - 3 * 86_400)?;
+        seal_failure_at(&mut daemon, &cfg, now)?;
+        seal_failure_at(&mut daemon, &cfg, now)?;
+        let api = Kernel::open(&cfg)?;
+        let anchor_of = |doc: &SealedLogDocument| {
+            doc.checkpoint_head
+                .clone()
+                .unwrap_or_else(|| hex::encode([0u8; 32]))
+        };
+
+        SEALED_LOG_DOCUMENT_BETWEEN_READS.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                daemon
+                    .enforce_retention_with_checkpoint(Duration::from_secs(86_400))
+                    .expect("retention pass commits beside the reader");
+            }));
+        });
+        let raced = api.sealed_log_document();
+        SEALED_LOG_DOCUMENT_BETWEEN_READS.with(|hook| hook.borrow_mut().take());
+        let raced = raced?;
+        assert_eq!(
+            raced.entries[0].prev_hash,
+            anchor_of(&raced),
+            "the first served entry links to the anchor served with it"
+        );
+        assert_eq!(raced.entries.len(), 4, "the snapshot predates the prune");
+
+        // The prune did commit: the next document is the pruned tail on the
+        // new checkpoint, and it links too.
+        let after = api.sealed_log_document()?;
+        assert_eq!(
+            after.entries.iter().map(|e| e.id).collect::<Vec<_>>(),
+            vec![3, 4]
+        );
+        assert!(after.checkpoint_head.is_some());
+        assert_eq!(after.entries[0].prev_hash, anchor_of(&after));
         Ok(())
     }
 
@@ -8760,5 +10505,491 @@ mod tests {
         assert_eq!(count, 2, "legacy rotation record must verify on the chain");
         assert_eq!(reconstruct_device_key_lineage(&kernel.conn)?.len(), 2);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod clock_provenance_tests {
+    use super::*;
+    use crate::clock_provenance::token_sha256_hex;
+    use crate::crypto::signatures::verify_with_domain;
+    use crate::tsa;
+
+    /// The committed fixture token's genTime, `20260610123324Z`.
+    const FIXTURE_GEN_TIME: i64 = 1_781_094_804;
+    const FIXTURE_BUCKET: u64 = 1_781_094_600;
+
+    fn kernel() -> Kernel {
+        Kernel::open(&KernelConfig {
+            db_path: ":memory:".to_string(),
+            ruleset_id: "ruleset:test".to_string(),
+            ruleset_hash: KernelConfig::ruleset_hash_from_id("ruleset:test"),
+            kernel_version: "0.0.0-test".to_string(),
+            retention: Duration::from_secs(60),
+            device_key_seed: "devkey:test:a1b2c3d4e5f6a7b8c9d0".to_string(),
+            zone_policy: ZonePolicy::default(),
+        })
+        .expect("open kernel")
+    }
+
+    fn fixture_token() -> tsa::TimestampToken {
+        let path = format!(
+            "{}/tests/fixtures/tsa/reply.tsr",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        tsa::parse_response(&std::fs::read(&path).expect("reading TSA fixture"))
+            .expect("fixture token parses")
+    }
+
+    fn insert_fixture_anchor(conn: &Connection) -> i64 {
+        tsa::ensure_anchor_table(conn).unwrap();
+        let token = fixture_token();
+        let imprint: [u8; 32] = token.imprint.clone().try_into().expect("32-byte imprint");
+        tsa::insert_anchor(conn, "digest", &imprint, "(offline)", &token).unwrap()
+    }
+
+    fn cursor(conn: &Connection) -> Option<i64> {
+        conn.query_row(
+            "SELECT last_anchor_id FROM clock_provenance_cursor WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .unwrap()
+    }
+
+    fn obs(observed_wall_s: u64, poll_gap_s: Option<u32>) -> ClockObservation<'static> {
+        ClockObservation {
+            observed_wall_s,
+            poll_gap_s,
+            kernel_version: "0.0.0-test",
+        }
+    }
+
+    /// Cursor at 0 with no anchors stored: the state a fresh database reaches
+    /// at its first poll.
+    fn kernel_with_cursor() -> Kernel {
+        let mut k = kernel();
+        assert!(k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, None))
+            .unwrap()
+            .is_empty());
+        assert_eq!(cursor(&k.conn), Some(0));
+        k
+    }
+
+    fn record(offset: Option<i32>, gap: Option<u32>) -> ClockProvenanceRecord {
+        ClockProvenanceRecord {
+            schema: CLOCK_PROVENANCE_SCHEMA_V1.to_string(),
+            time_bucket: TimeBucket {
+                start_epoch_s: FIXTURE_BUCKET,
+                size_s: 600,
+            },
+            anchor_id: 7,
+            token_sha256: "ab".repeat(32),
+            observed_offset_s: offset,
+            poll_gap_s: gap,
+            kernel_version: "0.0.0-test".to_string(),
+        }
+    }
+
+    const DDL_LEDGER: &str = "CREATE TABLE IF NOT EXISTS clock_provenance (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at INTEGER NOT NULL, payload_json TEXT NOT NULL, prev_hash BLOB NOT NULL, entry_hash BLOB NOT NULL, signature BLOB NOT NULL, pq_signature BLOB, pq_scheme TEXT);";
+    const DDL_CURSOR: &str = "CREATE TABLE IF NOT EXISTS clock_provenance_cursor (id INTEGER PRIMARY KEY CHECK (id = 1), last_anchor_id INTEGER NOT NULL);";
+
+    #[test]
+    fn ddl_literals_are_frozen() {
+        // Pinned in the source …
+        let source = include_str!("lib.rs");
+        // (twice: once in `ensure_schema`, once in the constants above).
+        assert!(
+            source.matches(DDL_LEDGER).count() >= 2,
+            "clock_provenance DDL changed"
+        );
+        assert!(
+            source.matches(DDL_CURSOR).count() >= 2,
+            "clock_provenance_cursor DDL changed"
+        );
+        // … and in the schema SQLite actually holds (it drops IF NOT EXISTS).
+        let k = kernel();
+        for (name, ddl) in [
+            ("clock_provenance", DDL_LEDGER),
+            ("clock_provenance_cursor", DDL_CURSOR),
+        ] {
+            let stored: String = k
+                .conn
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name=?1",
+                    [name],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let expected = ddl
+                .replace("CREATE TABLE IF NOT EXISTS", "CREATE TABLE")
+                .trim_end_matches(';')
+                .to_string();
+            assert_eq!(stored, expected);
+        }
+    }
+
+    #[test]
+    fn payload_wire_shape_is_byte_pinned() {
+        let measured = serde_json::to_string(&record(Some(2), Some(5))).unwrap();
+        assert_eq!(
+            measured,
+            format!(
+                r#"{{"schema":"securacv/clock_provenance/v1","time_bucket":{{"start_epoch_s":1781094600,"size_s":600}},"anchor_id":7,"token_sha256":"{}","observed_offset_s":2,"poll_gap_s":5,"kernel_version":"0.0.0-test"}}"#,
+                "ab".repeat(32)
+            )
+        );
+        let binding_only = serde_json::to_string(&record(None, None)).unwrap();
+        assert!(
+            binding_only.ends_with(
+                r#""observed_offset_s":null,"poll_gap_s":null,"kernel_version":"0.0.0-test"}"#
+            ),
+            "{binding_only}"
+        );
+        // Round trip, both shapes.
+        for text in [&measured, &binding_only] {
+            let parsed: ClockProvenanceRecord = serde_json::from_str(text).unwrap();
+            assert_eq!(serde_json::to_string(&parsed).unwrap(), **text);
+        }
+    }
+
+    #[test]
+    fn append_chains_from_genesis_and_signs_under_the_domain() {
+        let mut k = kernel();
+        let first = k
+            .append_clock_provenance(&record(Some(2), Some(5)))
+            .unwrap();
+        let second = k.append_clock_provenance(&record(None, None)).unwrap();
+        assert_eq!(first.id, 1);
+        assert_eq!(first.prev_hash, [0u8; 32]);
+        assert_eq!(
+            first.entry_hash,
+            hash_entry(&[0u8; 32], first.payload_json.as_bytes())
+        );
+        assert_eq!(second.prev_hash, first.entry_hash);
+        assert_eq!(second.created_at, FIXTURE_BUCKET as i64);
+        let key = device_public_key_from_db(&k.conn).unwrap();
+        verify_with_domain(
+            DOMAIN_CLOCK_PROVENANCE,
+            &key,
+            &first.entry_hash,
+            &first.signatures,
+            SignatureMode::Compat,
+            None,
+        )
+        .expect("verifies under its own domain");
+        assert!(verify_with_domain(
+            DOMAIN_EXPORT_RECEIPT,
+            &key,
+            &first.entry_hash,
+            &first.signatures,
+            SignatureMode::Compat,
+            None,
+        )
+        .is_err());
+        // The stored row is what the walker sees.
+        let rows = clock_provenance::list_rows(&k.conn).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].payload_json, first.payload_json);
+        assert_eq!(rows[1].record, record(None, None));
+        // A record of another schema is refused before anything is written.
+        let mut other = record(None, None);
+        other.schema = "securacv/clock_provenance/v2".to_string();
+        assert!(k.append_clock_provenance(&other).is_err());
+        assert_eq!(clock_provenance::row_count(&k.conn).unwrap(), 2);
+    }
+
+    #[test]
+    fn first_observation_initializes_the_cursor_to_the_newest_anchor_and_seals_nothing() {
+        let mut k = kernel();
+        insert_fixture_anchor(&k.conn);
+        let newest = insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(5)))
+            .unwrap();
+        assert!(sealed.is_empty(), "pre-upgrade rows are never backfilled");
+        assert_eq!(cursor(&k.conn), Some(newest));
+        assert_eq!(clock_provenance::row_count(&k.conn).unwrap(), 0);
+        // Without an anchors table the cursor starts at 0.
+        let k2 = kernel_with_cursor();
+        assert_eq!(cursor(&k2.conn), Some(0));
+    }
+
+    #[test]
+    fn new_rows_get_one_record_each_and_the_cursor_advances_with_them() {
+        let mut k = kernel_with_cursor();
+        let a = insert_fixture_anchor(&k.conn);
+        let b = insert_fixture_anchor(&k.conn);
+        let w = (FIXTURE_GEN_TIME + 2) as u64;
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(w, Some(5)))
+            .unwrap();
+        assert_eq!(sealed.len(), 2);
+        assert_eq!((sealed[0].anchor_id, sealed[1].anchor_id), (a, b));
+        assert_eq!((sealed[0].id, sealed[1].id), (1, 2));
+        let token_hash = token_sha256_hex(&fixture_token().token_der);
+        for s in &sealed {
+            assert_eq!(s.record.observed_offset_s, Some(2));
+            assert_eq!(s.record.poll_gap_s, Some(5));
+            assert_eq!(s.record.token_sha256, token_hash);
+            assert_eq!(s.record.time_bucket.start_epoch_s, FIXTURE_BUCKET);
+            assert_eq!(s.record.time_bucket.size_s, 600);
+            assert_eq!(s.record.kernel_version, "0.0.0-test");
+        }
+        assert_eq!(cursor(&k.conn), Some(b));
+        // Nothing new: nothing sealed, cursor unchanged.
+        assert!(k
+            .observe_anchors_for_clock_provenance(&obs(w + 5, Some(5)))
+            .unwrap()
+            .is_empty());
+        assert_eq!(cursor(&k.conn), Some(b));
+        assert_eq!(clock_provenance::row_count(&k.conn).unwrap(), 2);
+    }
+
+    #[test]
+    fn a_failing_append_leaves_the_cursor_where_it_was() {
+        let mut k = kernel_with_cursor();
+        let a = insert_fixture_anchor(&k.conn);
+        // Simulate the crash: the ledger insert aborts mid-transaction.
+        k.conn
+            .execute_batch(
+                "CREATE TRIGGER simulated_failure BEFORE INSERT ON clock_provenance BEGIN \
+                 SELECT RAISE(ABORT, 'simulated storage failure'); END;",
+            )
+            .unwrap();
+        let err = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(5)))
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("simulated storage failure"),
+            "{err}"
+        );
+        assert_eq!(
+            cursor(&k.conn),
+            Some(0),
+            "the cursor must not move past an unsealed row"
+        );
+        assert_eq!(clock_provenance::row_count(&k.conn).unwrap(), 0);
+        assert!(k.conn.is_autocommit(), "the transaction was rolled back");
+        k.conn
+            .execute_batch("DROP TRIGGER simulated_failure;")
+            .unwrap();
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(5)))
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].anchor_id, a);
+        assert_eq!(cursor(&k.conn), Some(a));
+    }
+
+    #[test]
+    fn first_poll_of_a_process_seals_binding_only_records() {
+        let mut k = kernel_with_cursor();
+        insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, None))
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].record.observed_offset_s, None);
+        assert_eq!(sealed[0].record.poll_gap_s, None);
+        let rows = clock_provenance::list_rows(&k.conn).unwrap();
+        assert!(rows[0].is_binding_only());
+        assert!(rows[0]
+            .payload_json
+            .contains(r#""observed_offset_s":null,"poll_gap_s":null"#));
+    }
+
+    #[test]
+    fn unreadable_token_der_gets_no_record_but_the_cursor_moves_past_it() {
+        let mut k = kernel_with_cursor();
+        tsa::ensure_anchor_table(&k.conn).unwrap();
+        k.conn
+            .execute(
+                "INSERT INTO tsa_anchors (created_bucket_start, created_bucket_size, subject, \
+                 subject_hash, tsa_url, gen_time, token_der) VALUES (?1, 600, 'digest', ?2, \
+                 '(offline)', '20260610123324Z', 5)",
+                params![FIXTURE_BUCKET as i64, vec![0u8; 32]],
+            )
+            .unwrap();
+        let bad = k.conn.last_insert_rowid();
+        let good = insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(5)))
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].anchor_id, good);
+        assert_eq!(cursor(&k.conn), Some(good));
+        assert!(good > bad);
+    }
+
+    #[test]
+    fn unparseable_gen_time_gives_a_binding_only_record() {
+        let mut k = kernel_with_cursor();
+        tsa::ensure_anchor_table(&k.conn).unwrap();
+        let mut token_der = fixture_token().token_der;
+        let needle = b"20260610123324Z";
+        let at = token_der
+            .windows(needle.len())
+            .position(|w| w == needle)
+            .expect("genTime occurs in the token");
+        token_der[at..at + needle.len()].copy_from_slice(b"20261310123324Z");
+        assert_eq!(tsa::gen_time_unix("20261310123324Z"), None);
+        k.conn
+            .execute(
+                "INSERT INTO tsa_anchors (created_bucket_start, created_bucket_size, subject, \
+                 subject_hash, tsa_url, gen_time, token_der) VALUES (?1, 600, 'digest', ?2, \
+                 '(offline)', '20261310123324Z', ?3)",
+                params![FIXTURE_BUCKET as i64, vec![0u8; 32], token_der.clone()],
+            )
+            .unwrap();
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(5)))
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].record.observed_offset_s, None);
+        assert_eq!(sealed[0].record.poll_gap_s, None);
+        assert_eq!(sealed[0].record.token_sha256, token_sha256_hex(&token_der));
+    }
+
+    #[test]
+    fn offsets_are_clamped_both_ways() {
+        let mut k = kernel_with_cursor();
+        insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs((FIXTURE_GEN_TIME + 10_000) as u64, Some(5)))
+            .unwrap();
+        assert_eq!(sealed[0].record.observed_offset_s, Some(3600));
+        insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs((FIXTURE_GEN_TIME - 10_000) as u64, Some(5)))
+            .unwrap();
+        assert_eq!(sealed[0].record.observed_offset_s, Some(-3600));
+        // A gap of 0 still reads as a 1 s bound.
+        insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(0)))
+            .unwrap();
+        assert_eq!(sealed[0].record.poll_gap_s, Some(1));
+        // Exactly 3600 s is still a bound.
+        insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(3600)))
+            .unwrap();
+        assert_eq!(sealed[0].record.poll_gap_s, Some(3600));
+    }
+
+    #[test]
+    fn list_walked_rows_keeps_only_the_rows_a_walk_checked() {
+        let mut k = kernel_with_cursor();
+        insert_fixture_anchor(&k.conn);
+        insert_fixture_anchor(&k.conn);
+        k.observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(5)))
+            .unwrap();
+        let all = clock_provenance::list_rows(&k.conn).unwrap();
+        assert_eq!(all.len(), 2);
+        // The walk saw only the first row; the second committed after it.
+        let walked = [(all[0].id, all[0].entry_hash)];
+        let kept = clock_provenance::list_walked_rows(&k.conn, &walked).unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].id, all[0].id);
+        // A row whose entry_hash differs from the one walked is dropped too.
+        let walked = [(all[0].id, [0u8; 32])];
+        assert!(clock_provenance::list_walked_rows(&k.conn, &walked)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn a_gap_over_the_clamp_seals_a_binding_only_record() {
+        // The main loop stalled 25 h: a clamped gap would state a false
+        // bound on the row's age, so the record binds and measures nothing.
+        let mut k = kernel_with_cursor();
+        insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(90_000)))
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].record.observed_offset_s, None);
+        assert_eq!(sealed[0].record.poll_gap_s, None);
+        let payload: String = k
+            .conn
+            .query_row(
+                "SELECT payload_json FROM clock_provenance WHERE id = ?1",
+                [sealed[0].id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            payload.contains("\"observed_offset_s\":null,\"poll_gap_s\":null"),
+            "{payload}"
+        );
+        // 3601 s is already over.
+        insert_fixture_anchor(&k.conn);
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_BUCKET, Some(3601)))
+            .unwrap();
+        assert_eq!(sealed[0].record.poll_gap_s, None);
+    }
+
+    #[test]
+    fn the_clock_readings_are_taken_once_under_the_write_lock() {
+        let mut k = kernel_with_cursor();
+        insert_fixture_anchor(&k.conn);
+        let mut calls = 0;
+        let sealed = k
+            .observe_anchors_for_clock_provenance_with("0.0.0-test", || {
+                calls += 1;
+                Some((FIXTURE_GEN_TIME as u64 + 2, Some(5)))
+            })
+            .unwrap()
+            .expect("readings taken");
+        assert_eq!(calls, 1);
+        assert_eq!(sealed.len(), 1);
+        assert_eq!(sealed[0].record.observed_offset_s, Some(2));
+        // An unreadable wall clock: nothing written, the cursor unmoved, and
+        // the row is still there for the next poll.
+        insert_fixture_anchor(&k.conn);
+        let before: i64 = k
+            .conn
+            .query_row("SELECT COUNT(*) FROM clock_provenance", [], |r| r.get(0))
+            .unwrap();
+        assert!(k
+            .observe_anchors_for_clock_provenance_with("0.0.0-test", || None)
+            .unwrap()
+            .is_none());
+        let after: i64 = k
+            .conn
+            .query_row("SELECT COUNT(*) FROM clock_provenance", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(before, after);
+        assert!(k.conn.is_autocommit(), "the transaction was closed");
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(FIXTURE_GEN_TIME as u64, Some(5)))
+            .unwrap();
+        assert_eq!(sealed.len(), 1);
+    }
+
+    #[test]
+    fn one_wall_clock_reading_serves_every_row_of_a_poll() {
+        let mut k = kernel_with_cursor();
+        for _ in 0..3 {
+            insert_fixture_anchor(&k.conn);
+        }
+        let w = (FIXTURE_GEN_TIME + 599 + 600) as u64; // the next bucket, +1199 s
+        let sealed = k
+            .observe_anchors_for_clock_provenance(&obs(w, Some(7)))
+            .unwrap();
+        assert_eq!(sealed.len(), 3);
+        let buckets: std::collections::BTreeSet<u64> = sealed
+            .iter()
+            .map(|s| s.record.time_bucket.start_epoch_s)
+            .collect();
+        assert_eq!(buckets.len(), 1, "one W per poll ⇒ one bucket");
+        assert!(sealed
+            .iter()
+            .all(|s| s.record.observed_offset_s == Some(1199)));
+        assert_eq!(sealed[0].record.time_bucket.start_epoch_s, (w / 600) * 600);
     }
 }

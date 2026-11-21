@@ -9,9 +9,11 @@
 
 ## Witnessing without watching.
 
-SecuraCV is a calm, local-first witness layer for homes, studios, labs, and small sites. It helps you understand **what happened** without turning your cameras and sensors into an identity archive.
+SecuraCV is an open-source witness for the cameras and sensors you already own: it keeps a signed, tamper-evident record of **what happened** — never a face, a plate or a cloud archive. It is calm, local-first, and built for homes, studios, labs, and small sites.
 
 Clips stay on your hardware. Events become privacy-preserving claims. The durable record is a signed, hash-chained log you can verify offline.
+
+**On the web:** [securacv.com](https://securacv.com) · [install on Home Assistant](https://securacv.com/home-assistant) (two buttons, nothing to type) · [run the real firmware in your browser](https://securacv.com/lab) · [what exists today](https://securacv.com/today) · [help](https://securacv.com/help)
 
 ### The promise
 
@@ -32,7 +34,7 @@ Clips stay on your hardware. Events become privacy-preserving claims. The durabl
 | If you are... | Start here | Outcome |
 |---|---|---|
 | Completely new — you just found this | [Why this matters](docs/why_this_matters.md) → [the FAQ](docs/FAQ.md) | The idea in plain words, then the questions everyone asks — answered honestly. Nothing to install, nothing to buy. |
-| Running Home Assistant with cameras | [Home Assistant setup](docs/homeassistant_setup.md) → [Frigate integration](docs/frigate_integration.md) | Frigate keeps recording; SecuraCV adds sealed, signed witness events per camera, a chain-status header, a daily digest, notifications with proof, and a one-tap evidence export. |
+| Running Home Assistant with cameras | [The install page](https://securacv.com/home-assistant) → [Home Assistant setup](docs/homeassistant_setup.md) → [Frigate integration](docs/frigate_integration.md) | Frigate keeps recording; SecuraCV adds sealed, signed witness events per camera, a chain-status header, a daily digest, notifications with proof, and a one-tap evidence export. |
 | Running Docker beside an existing Frigate | [Docker quickstart](docs/frigate_integration.md#quick-start-docker-no-home-assistant) | One sidecar container wraps the witness API, bridge, and doctor checks; Home Assistant pairs with one 6-digit code. |
 | Building hardware | [Getting started with Canaries](docs/getting_started_canary.md) → [hardware guides](docs/hardware/README.md) | Small independent witnesses for radar, camera-module presence, WiFi sensing, and displays. |
 | Evaluating trust and safety | [Why exports work this way](docs/why_secure.md) → [threat model](docs/security/THREAT_MODEL.md) | A clear view of what is enforced, what is audited, and what remains out of scope. |
@@ -51,7 +53,7 @@ Prefer to explore first? The [SecuraCV Lab](https://kmay89.github.io/securaCV/ca
 
 Requires Home Assistant 2026.5.0 or newer, an MQTT broker Home Assistant and Frigate share, and Frigate 0.14 or newer with MQTT enabled. Three ways in, one product at the end — a **SecuraCV** device with the chain's state, one witness event entity per camera, a daily digest, notifications with proof attached, and a one-tap signed evidence export:
 
-1. **Home Assistant OS — the SecuraCV app.** Add [the SecuraCV app repository](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fkmay89%2FsecuraCV) (`https://github.com/kmay89/securaCV`), install **SecuraCV** from the App Store and open its Web UI: the wizard finds Mosquitto and Frigate (anything missing is a link into your own App Store — the Frigate app's repository is `https://github.com/blakeblackshear/frigate-hass-addons`), reads Frigate's cameras from its config, and has nothing for you to type. Its done screen's one button, **Install the integration and restart Home Assistant**, installs the integration the app carries; after the restart, press **Configure** on the *SecuraCV discovered* card. Nothing to type.
+1. **Home Assistant OS — the SecuraCV app.** Add [the SecuraCV app repository](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fkmay89%2FsecuraCV) (`https://github.com/kmay89/securaCV`), install **SecuraCV** from the App Store and open its Web UI: the wizard finds Mosquitto and Frigate (anything missing is a link into your own App Store — the Frigate app's repository is `https://github.com/blakeblackshear/frigate-hass-addons`), reads Frigate's cameras from its config, and has nothing for you to type. Its done screen's one button, **Install the integration and restart Home Assistant**, installs the integration the app carries; after the restart, press **Add** on the *SecuraCV app* card under Discovered. Nothing to type.
 2. **HACS first.** SecuraCV is a HACS **custom repository** (not in the default store yet): add [the integration via HACS](https://my.home-assistant.io/redirect/hacs_repository/?owner=kmay89&repository=securacv-homeassistant&category=integration), then **Add Integration → SecuraCV → Automatic**, which finds the app or a sidecar by itself.
 3. **Home Assistant Container + the Docker sidecar.** Run the sidecar beside Frigate (`docker compose up -d`, two lines to edit), then pair it from the discovered *SecuraCV sidecar* card with the 6-digit code `docker exec securacv pair` prints beside the kernel's key fingerprint.
 
@@ -95,7 +97,7 @@ display — joins a home the same way, because the steps live once in
    `SecuraCV-<type>-<four characters>` (`SecuraCV-sense-4dC2`), and prints
    that name, the key and a scannable `WIFI:` code on its serial console
    (`[SETUP] Setup network up: …`, `[SETUP] QR …`). A display shows the same
-   code on its glass; a Sense or Vision also opens a Bluetooth setup door for
+   code on its glass; a Sense, Vision or WAP also opens a Bluetooth setup door for
    30 minutes, so the companion app can hand it the network with one tap.
 2. **Join that network from your phone.** The setup page opens by itself
    (or at `http://192.168.4.1/`). It lists the networks it can see, strongest
@@ -242,7 +244,7 @@ High-signal references:
 
 ## Status
 
-SecuraCV is a **v1 release candidate**.
+SecuraCV is a **v1 release candidate**: the Home Assistant app and the integration are released, and v1 itself is held until the firmware is proven on real devices. Treat it as software under active development, not a finished product ([the FAQ's honest status](docs/FAQ.md#honest-status)).
 
 Current audited docs status:
 
@@ -278,7 +280,7 @@ any scale, forever. Two short, plain-language companions cover the rest:
 - **[LICENSING.md](LICENSING.md)** — who pays, who doesn't, and why. Free for
   schools, universities, nonprofits, groups, businesses, and governments to
   self-host at any scale; the short list of things that cost money (bought
-  hardware, court-grade attestation, support SLAs) each has a free path; and the
+  hardware, third-party attestation, support SLAs) each has a free path; and the
   survival promises (no phone-home, no kill switch, standalone verifier) that
   make it safe to standardize on.
 - **[TRADEMARK.md](TRADEMARK.md)** — using the name, logo, and mascot: a free

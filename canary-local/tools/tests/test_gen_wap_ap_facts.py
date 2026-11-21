@@ -736,16 +736,25 @@ class SketchApFacts(unittest.TestCase):
                 finally:
                     self.tearDown()
 
-    def test_the_model_pair_is_read_and_half_of_it_is_refused(self):
-        # Both branches add "model" with their own board: listed by key.
+    def test_the_model_is_listed_by_key_and_a_pair_is_read_or_half_of_it_refused(self):
+        # Every start adds "model" as the target's board (build_config.h's
+        # HARDWARE_BOARD_NAME), a macro and no literal: listed by key.
         self.assertIn("model", self.base["ap"]["mdns_services"][1]["txt"])
-        c3 = '\n    MDNS.addServiceTxt("securacv", "tcp", "model",     "XIAO ESP32C3");'
-        s3 = c3.replace("ESP32C3", "ESP32S3")
+        one = '\n    MDNS.addServiceTxt("securacv", "tcp", "model",     HARDWARE_BOARD_NAME);'
+        c3 = '\n    MDNS.addServiceTxt("securacv", "tcp", "model",     "XIAO ESP32-C3");'
+        s3 = c3.replace("ESP32-C3", "ESP32-S3 Sense")
+        pair = "\n    #if defined(HARDWARE_XIAO_ESP32C3)" + c3 + "\n    #else" + s3 + "\n    #endif"
+        # The form the sketch had until every start read the macro, an
+        # #if/#else pair that adds the key in both branches, each with its
+        # own board, is still read, and reads as the same page.
+        self.edit(INO, one, pair)
+        self.assertEqual(self.generate(), self.base)
+        # half of a pair is a record under a condition
         self.edit(INO, s3, s3.replace('"model"', '"board"'))
         self.assert_refused("under a condition this generator does not evaluate")
         self.tearDown()
         # one literal in both branches is a fixed value
-        self.edit(INO, c3, s3)
+        self.edit(INO, one, pair.replace(c3, s3))
         self.assert_refused("the mDNS starts disagree on the securacv service's TXT records")
 
     def test_a_txt_record_outside_a_start_is_refused(self):

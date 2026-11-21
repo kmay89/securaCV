@@ -4,6 +4,9 @@ name: Dependency Audit
 # what SECURITY.md tracked by hand. Dependabot (.github/dependabot.yml) is the
 # companion that opens update PRs. Runs weekly, on demand, and on PRs that
 # touch a lockfile — so normal PRs aren't gated on a newly-disclosed CVE.
+# The firmware has no lockfile and no Dependabot ecosystem: the
+# firmware-advisories job compares the exact versions in the committed
+# firmware SBOM with its upstreams' GitHub repository advisories.
 on:
   schedule:
     - cron: '0 6 * * 1'   # Mondays 06:00 UTC
@@ -46,6 +49,10 @@ on:
       # broadened ignore merges unvalidated — hiding a real advisory until
       # the next Monday run.
       - '.cargo/audit.toml'
+      # ...and the check that holds it equal to deny.toml's list.
+      - 'scripts/check_advisory_ignores.py'
+      # The firmware advisory check (and its REVIEWED list) re-runs its job.
+      - 'scripts/check_firmware_advisories.py'
 
 permissions:
   contents: read
@@ -61,6 +68,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+      # For the ignore-list check at the end of this job (CI.md R9).
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
       # Compiling cargo-audit from source cost ~5 min of every run. Cache
       # the built binary under a weekly key: at most one build per week,
       # and "latest" can never go stale longer than that. The advisory DB
@@ -123,6 +134,14 @@ jobs:
         if: ${{ success() || failure() }}
         run: cargo audit -f household/Cargo.lock
 
+      # deny.toml says its advisory policy is cargo-audit's. That was false
+      # for the one recorded ignore, so a local `cargo deny check` went red
+      # with no reason on file. The two lists are held equal here; last, and
+      # whatever the audits above concluded, so it never hides one of them.
+      - name: The two advisory ignore lists are one list
+        if: ${{ success() || failure() }}
+        run: python3 scripts/check_advisory_ignores.py
+
   cargo-deny:
     name: cargo deny (licenses / bans / sources)
     runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
@@ -182,3 +201,32 @@ jobs:
       - name: Audit npm deps (fail on high/critical)
         working-directory: ${{ matrix.dir }}
         run: npm audit --audit-level=high
+
+  firmware-advisories:
+    name: firmware libraries (upstream repository advisories)
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: pyproject.toml
+      # Dependabot has no PlatformIO or Arduino ecosystem, and OSV / the
+      # GitHub Advisory Database have none for Arduino C/C++ libraries or
+      # ESP-IDF, so a scanner over the SBOM's purls would match nothing and
+      # pass. The script reads each upstream's own published repository
+      # advisories (NimBLE-Arduino, ArduinoJson, PubSubClient, Crypto, LVGL,
+      # Arduino_GFX, Seeed_Arduino_SSCMA, arduino-esp32, ESP-IDF and the two
+      # PlatformIO platforms) and compares their affected ranges with the
+      # exact versions in sbom/sbom-firmware.cdx.json. It fails on a match,
+      # on a range it cannot read until REVIEWED records a verdict, and on a
+      # third-party component with no exact version or no known upstream, so
+      # it cannot pass on a component it never compared. Its output names
+      # what it does not cover (Espressif's own advisory page, the libraries
+      # bundled inside ESP-IDF). No secret: the job's own token, sent for
+      # the rate limit (GitHub's REST docs list this endpoint as readable
+      # without authentication for a public repository).
+      - name: Compare the firmware SBOM's exact versions with upstream advisories
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check_firmware_advisories.py

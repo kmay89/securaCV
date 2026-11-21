@@ -468,9 +468,10 @@ so a page planted over plain HTTP is cross-origin to the device and takes
 none of these (it reads nothing; but `SameSite=Strict` compares sites, so in
 a browser that does not count the scheme in the site, as Chromium does, its
 requests still carry the session cookie and it can write blind with the
-owner's session: any write a session may make, of which since F361 only
-the firmware install restarts the unit, and only into a newer signed
-image); a page
+owner's session: any write a session may make, which since 2.4.20 no
+longer includes the firmware install or the update settings; the one
+restart left to a session is an install sent from a broker it re-pointed
+the MQTT bridge at, and only into a newer signed image); a page
 served over https at that name whose certificate
 warning the owner accepted still does, and so does any page during the
 first-boot setup or on a unit whose HTTPS start failed, which serve plain
@@ -584,12 +585,16 @@ CA-verified mode is the defense), and the boot scan has no time window.
 
 The session also cannot make a write that grants a credential or moves the
 unit off its owner's network (a network one moved it to before F334 can
-stay saved, below), and of its writes only the firmware install
-restarts the unit (`POST /api/ota/install`, automatic updates turned on
-with `POST /api/ota/config`, or the MQTT update entity's Install or
-auto-update switch, sent from whatever broker the bridge points at, which a
-session may re-point with a password typed), which installs only a newer
-signed image.
+stay saved, below). Since 2.4.20 it cannot start a firmware install or
+change the update settings over HTTP either: `POST /api/ota/install` and
+`POST /api/ota/config` (the update server's address, the plain-HTTP local
+server opt-in and automatic updates) take the bearer. What is left to a
+session is the MQTT update entity: the bridge acts on an Install or an
+auto-update switch sent from whatever broker it points at, which a session
+may re-point with a password typed. Through a broker of its own a session
+can therefore still turn automatic updates on or off and start an install,
+which restarts the unit only into a newer signed image fetched from the
+update server the unit already holds.
 A client that holds the device's pinned identity fingerprint may send the
 bearer sealed instead of plain: `GET /api/device/seal` agrees a session key
 over X25519 under the identity key's signature, and `Authorization: Sealed
@@ -620,7 +625,12 @@ the list):
   `/api/wifi/ap-only`, each on every interface, the recovery portal's SoftAP
   included (F334, F345); `POST /api/wifi/qr-scan` answers `404` outside
   setup;
-- `POST /api/reboot` and `POST /api/safe-mode/retry` (F361).
+- `POST /api/reboot` and `POST /api/safe-mode/retry` (F361);
+- `POST /api/ota/install`, which restarts the unit as a reboot does, and
+  `POST /api/ota/config`, which chooses the server every later update is
+  fetched from, whether a plain-HTTP server on the local network is allowed
+  and whether the unit installs by itself (since 2.4.20; `GET
+  /api/ota/status` and `POST /api/ota/check` stay on the session).
 A network a session moved it to before F334 can stay among its saved
 networks: `wifi_store_note_joined()` writes every network the unit joins
 into a ring of up to four, and when the current network is not found twice
@@ -746,9 +756,11 @@ guesses a minute between reboots from any number of addresses. Until F361 a
 landing session could reboot the unit at will (`POST /api/reboot`, `POST
 /api/safe-mode/retry`), so a guesser that rebooted it every few seconds got
 more (about 100 a minute if it was back on the LAN 10 s later;
-`THREAT_MODEL.md` scenario 10); both routes take the bearer now, and a
-session's firmware install restarts the unit only into a newer signed
-image. The token's entropy stays the bound. Host-tested; not run on a
+`THREAT_MODEL.md` scenario 10); both routes take the bearer now, and since
+2.4.20 so do the firmware install and the update settings (`POST
+/api/ota/install`, `POST /api/ota/config`). The restart a session can still
+cause is an install sent from a broker it re-pointed the MQTT bridge at,
+and only into a newer signed image. The token's entropy stays the bound. Host-tested; not run on a
 device. Every bearer
 compare on the WAP counts toward that per-address lockout, and none is
 compared while its address is held (sweep
@@ -1045,10 +1057,7 @@ Evidence exported from this device can be verified by **anyone**,
 Open the included `verification.html` file in any web browser.
 It runs entirely offline — no internet connection required.
 
-### Option 2: Online Verifier
-Visit verify.securacv.com and upload the export bundle.
-
-### Option 3: Manual Verification
+### Option 2: Manual Verification
 Using any Ed25519 implementation:
 1. The device's public key is in `device_identity.json`
 2. Each record's Ed25519 signature can be checked independently

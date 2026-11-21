@@ -10,13 +10,18 @@
 import SwiftUI
 
 struct HubSetupView: View {
-    @StateObject private var runner = HubSetupRunner()
-    @State private var typedHost = ""
-    @State private var name = ""
-    @State private var username = ""
-    @State private var password = ""
-    @State private var confirm = ""
-    @State private var showPassword = false
+    @EnvironmentObject var store: FleetStore
+
+    /// The runner is the store's, not this screen's: closing the
+    /// walkthrough mid-boot keeps the watch, its clock, and the typed
+    /// account (HubSetupRunner's drafts).
+    var body: some View {
+        HubSetupContent(runner: store.hubRunner)
+    }
+}
+
+private struct HubSetupContent: View {
+    @ObservedObject var runner: HubSetupRunner
     @State private var formProblem: String?
 
     var body: some View {
@@ -42,31 +47,19 @@ struct HubSetupView: View {
         .navigationTitle("A hub")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            // A first visit starts the watch; a return RESUMES it — the
-            // onDisappear below stops the loop, and without this a glance
-            // at another screen mid-boot lost the hub (the phase stayed
-            // "watching", so nothing ever started it again).
-            if runner.phase == .idle {
-                runner.startWatching()
-            } else {
-                runner.resumeWatching(typedHost: typedHost.isEmpty ? nil : typedHost)
-            }
-        }
-        .onDisappear { if case .watching = runner.phase { runner.stopWatching() } }
-        // The hub answered. Say so once (only if notifications are already
-        // allowed — nothing here asks), and finish by itself when the form
-        // above is complete; otherwise the button below is the fallback.
-        .onChange(of: runner.phase) { _, phase in
-            guard case .watching(.ready) = phase else { return }
-            let finishing = HubWalkthrough.finishesByItself(ready: true,
-                                                            loginProblem: login.problem(),
-                                                            passwordsMatch: passwordsMatch)
-            Task {
-                await CourtesyNotice.postIfAlreadyAllowed(title: HubWalkthrough.readyNoticeTitle,
-                                                          body: HubWalkthrough.readyNoticeBody(finishing: finishing),
-                                                          threadID: HubWalkthrough.readyNoticeThreadID)
-            }
-            if finishing { startFinish() }
+            // Opening the walkthrough starts nothing: step 3's "Start
+            // watching" does, so iOS's Local Network alert never comes
+            // before the person reaches the step that explains it. A watch
+            // already in progress is resumed if its loop is not running.
+            // Leaving the screen does not stop it — the runner outlives the
+            // screen, and the "Your hub is ready" notice and the finish
+            // happen with the screen closed (HubSetupRunner.hubAnswered).
+            // A rotation asked in Set up after the hub was finished in this
+            // app session returns the runner to the start, so the re-mint
+            // can run (a finished runner offers no Start or Finish).
+            runner.resetForRotationIfAsked()
+            let host = runner.draftTypedHost
+            runner.resumeWatching(typedHost: host.isEmpty ? nil : host)
         }
     }
 
@@ -80,8 +73,11 @@ struct HubSetupView: View {
     @ViewBuilder private var watchControl: some View {
         switch runner.phase {
         case .idle:
-            Button("Start watching") { runner.startWatching(typedHost: typedHost) }
-                .buttonStyle(.borderedProminent)
+            Button("Start watching") {
+                let host = runner.draftTypedHost
+                runner.startWatching(typedHost: host.isEmpty ? nil : host)
+            }
+            .buttonStyle(.borderedProminent)
         case .watching(let probe):
             HStack(spacing: Theme.s) {
                 if probe == .ready {
@@ -129,13 +125,15 @@ struct HubSetupView: View {
             }
             if probe != .ready {
                 HStack {
-                    TextField("Hub address, if it isn't found (an IP works)", text: $typedHost)
+                    TextField("Hub address, if it isn't found (an IP works)", text: $runner.draftTypedHost)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
-                    Button("Use") { runner.startWatching(typedHost: typedHost) }
-                        .disabled(typedHost.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button("Use") { runner.startWatching(typedHost: runner.draftTypedHost) }
+                        .disabled(runner.draftTypedHost.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
+                Button("Stop watching", role: .destructive) { runner.cancelWatching() }
+                    .font(.footnote)
             }
         default:
             Label("Home Assistant answered at \(runner.hubURL?.host ?? "the hub").", systemImage: "checkmark.circle")
@@ -151,8 +149,8 @@ struct HubSetupView: View {
                   systemImage: "checkmark.circle")
                 .foregroundStyle(Theme.color(.calm))
         } else {
-            TextField("Your name", text: $name)
-            TextField("Username", text: $username)
+            TextField("Your name", text: $runner.draftName)
+            TextField("Username", text: $runner.draftUsername)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
             HStack {
@@ -162,21 +160,21 @@ struct HubSetupView: View {
                 // password a person creates anywhere in setup; every Wi-Fi
                 // field is an existing network's password and is annotated
                 // `.password` instead.
-                if showPassword {
-                    TextField("New hub account password", text: $password)
+                if runner.draftShowPassword {
+                    TextField("New hub account password", text: $runner.draftPassword)
                         .textContentType(.newPassword)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                 } else {
-                    SecureField("New hub account password", text: $password)
+                    SecureField("New hub account password", text: $runner.draftPassword)
                         .textContentType(.newPassword)
                 }
-                Button { showPassword.toggle() } label: {
-                    Image(systemName: showPassword ? "eye.slash" : "eye").foregroundStyle(.secondary)
+                Button { runner.draftShowPassword.toggle() } label: {
+                    Image(systemName: runner.draftShowPassword ? "eye.slash" : "eye").foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
             }
-            if !showPassword {
-                SecureField("Confirm hub account password", text: $confirm)
+            if !runner.draftShowPassword {
+                SecureField("Confirm hub account password", text: $runner.draftConfirm)
                     .textContentType(.newPassword)
             }
             if let formProblem {
@@ -186,12 +184,10 @@ struct HubSetupView: View {
         }
     }
 
-    private var login: HubOwnerLogin {
-        HubOwnerLogin(name: name, username: username, password: password)
-    }
+    private var login: HubOwnerLogin { runner.draftLogin }
 
     /// The confirm field exists only while the password is hidden.
-    private var passwordsMatch: Bool { showPassword || confirm == password }
+    private var passwordsMatch: Bool { runner.draftPasswordsMatch }
 
     // MARK: - finishing
 

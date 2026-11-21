@@ -1142,9 +1142,9 @@ void setup() {
   // numbers instead of zeros.
   canary::diag::loop(canary::ms_now());
 
-  // Confirm (or roll back) a freshly installed image now — before anything
-  // that can block on external services. See ota_mgr.h.
-  canary::net::ota_boot_validate();
+  // The OTA boot probe of a freshly installed image no longer runs here:
+  // it runs from loop() at its healthy gate (ota_boot_validate), so one
+  // missed association on the new image's first boot is not its verdict.
 
   canary::net::mqtt_init(TOPICS);
 
@@ -1169,9 +1169,9 @@ void setup() {
     canary::log_line("MQTT", "Broker unreachable — sensing starts anyway; retrying in loop().");
   }
 
-  // Signed pull-OTA: arm the engine (validation already ran right after
-  // WiFi). Daily jittered checks; HA's Install button and auto-update
-  // switch are drained in loop().
+  // Signed pull-OTA: arm the engine (the boot probe runs at loop()'s healthy
+  // gate, after this). Daily jittered checks; HA's Install button and
+  // auto-update switch are drained in loop().
   canary::net::ota_init(TOPICS);
 
   set_last_event("boot");
@@ -1332,6 +1332,12 @@ void loop() {
       /*wifi_provisioned=*/canary::net::wifi_configured() ||
           canary::net::setup_portal_active());
 #endif
+
+  // The boot probe of a freshly installed image, at its healthy gate: the
+  // first pass with the link up, or 90 s after the first pass at the latest
+  // (ota_mgr.cpp). Called on every pass, ahead of the health tick and the
+  // broker gate; it does its work once.
+  canary::net::ota_boot_validate();
 
   // Confirm a new image only after a healthy minute — before the broker
   // early-return below, so it runs on EVERY pass. Behind it, a new image that

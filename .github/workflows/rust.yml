@@ -106,6 +106,20 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+    - name: Compile-fail wording, on the compiler that wrote the snapshots
+      # tests/compile_fail/*.stderr are rustc's own prose, and rustc rewrites
+      # its prose: on 2026-11-20 the runner's stable moved 1.99 -> 1.100, the
+      # "required by a bound" note was drawn differently, and this workflow
+      # went red on main with no change to the kernel or to what it refuses.
+      # So tests/compile_fail.rs proves the refusal (each case fails to
+      # compile) on whatever compiler runs it, and compares the wording only
+      # on the compiler named in tests/compile_fail/RUSTC. This step is that
+      # compiler, whatever the runner image ships this week; the version is
+      # read from the file the test reads, so there is no second copy.
+      run: |
+        SNAPSHOT_RUSTC="$(tr -d '[:space:]' < tests/compile_fail/RUSTC)"
+        rustup toolchain install "$SNAPSHOT_RUSTC" --profile minimal --no-self-update
+        cargo "+$SNAPSHOT_RUSTC" test --test compile_fail
     - name: Build with no default features
       run: cargo check --no-default-features
     - name: Build with PQC features
@@ -361,6 +375,13 @@ jobs:
       run: cargo clippy --all-targets --features tsa -- -D warnings
     - name: Test (tsa, offline)
       run: cargo test --verbose --features tsa --test log_anchor_cli
+    # The ots feature adds the OpenTimestamps calendar client (ureq) to the
+    # same online loop; the CLI tests stay offline (the leg's logic is tested
+    # through the CalendarTransport trait with an in-process fake).
+    - name: Clippy (tsa, ots)
+      run: cargo clippy --all-targets --features tsa,ots -- -D warnings
+    - name: Test (tsa, ots, offline)
+      run: cargo test --verbose --features tsa,ots --test log_anchor_cli
     - name: Clippy (surface-busybar)
       run: cargo clippy --all-targets --features surface-busybar -- -D warnings
     # The surface's tests ARE its privacy contract: which card class may reach

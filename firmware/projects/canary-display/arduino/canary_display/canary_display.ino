@@ -1658,9 +1658,9 @@ void setup() {
   // numbers instead of zeros.
   canary::diag::loop(canary::ms_now());
 
-  // Confirm (or roll back) a freshly installed image now — before anything
-  // that can block on external services. See ota_mgr.h.
-  canary::net::ota_boot_validate();
+  // The OTA boot probe of a freshly installed image no longer runs here:
+  // it runs from loop() at its healthy gate (ota_boot_validate), so one
+  // missed association on the new image's first boot is not its verdict.
 
   canary::net::mqtt_init(TOPICS);
 
@@ -1701,9 +1701,9 @@ void setup() {
     canary::log_line("MQTT", "Broker unreachable — rendering anyway; retrying in loop().");
   }
 
-  // Signed pull-OTA: arm the engine (validation already ran right after
-  // WiFi). Daily jittered checks; HA's Install button and auto-update
-  // switch are drained in loop().
+  // Signed pull-OTA: arm the engine (the boot probe runs at loop()'s healthy
+  // gate, after this). Daily jittered checks; HA's Install button and
+  // auto-update switch are drained in loop().
   canary::net::ota_init(TOPICS);
 
 #if defined(FEATURE_WATCHDOG) && FEATURE_WATCHDOG
@@ -1717,7 +1717,7 @@ void setup() {
 
   boot_scene_ready(
       "It will watch the witnesses so you don't have to,",
-      "verify their chains on its own silicon, and never phone home.",
+      "verify their chains on its own silicon, with no cloud in between.",
       NULL);
 
   render(canary::ms_now());
@@ -1838,8 +1838,12 @@ void loop() {
   // So once the shared policy says this failure is one a human could fix, and
   // we have never been online since power-on, raise the same wizard. It is
   // blocking and returns with credentials persisted, exactly as at boot.
-  // wifi_wants_setup() is false forever after a single successful association,
-  // so a device that has been running for months never does this.
+  // The setup rule inside wifi_wants_setup() is off once this power cycle
+  // has associated, and off as well once any saved network has ever joined
+  // (the ring's joined bit, persisted with it) — so a device that has been
+  // running for months never does this, not even after a power cut that
+  // restarts it while the router is still rebooting. What remains is the
+  // ten-minute offline re-raise, which wipes nothing.
   if (canary::net::wifi_wants_setup()) {
     canary::log_line("WIFI", "Can't join with the saved credentials — reopening setup.");
     canary::net::provision_run(g_display_ok);
@@ -1956,6 +1960,12 @@ void loop() {
     local_time(&hh, nullptr);
     fleet.set_wall_hour(hh);
   }
+
+  // The boot probe of a freshly installed image, at its healthy gate: the
+  // first pass with the link up, or 90 s after the first pass at the latest
+  // (ota_mgr.cpp). Called on every pass, ahead of the health tick and the
+  // broker gate; it does its work once.
+  canary::net::ota_boot_validate();
 
   // Confirm a new image only after a healthy minute — on EVERY pass, broker or
   // no broker. A glass with no hub still installs (Settings → firmware, POST

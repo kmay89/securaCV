@@ -187,7 +187,7 @@ export function pickBootedAppPartition(apps, otadata) {
 
 // ── esp_app_desc_t (256 bytes, at app_offset + 0x20) ──────────────────────
 // magic(u32)=0xABCD5432, secure_ver(u32), reserv(u32*2), version[32],
-// project_name[32], time[16], date[16], idf_ver[32], sha256[32], …
+// project_name[32], time[16], date[16], idf_ver[32], app_elf_sha256[32], …
 export const APP_DESC_MAGIC = 0xabcd5432;
 export const APP_DESC_OFFSET = 0x20;
 
@@ -200,7 +200,57 @@ export function parseAppDescriptor(bytes) {
     time: cstr(bytes, 80, 16),
     date: cstr(bytes, 96, 16),
     idfVer: cstr(bytes, 112, 32),
+    // The image's own anti-rollback number (what the bootloader compares with
+    // the chip's SECURE_VERSION fuse), and the first 8 bytes of the ELF's
+    // SHA-256: build facts, the same on every board running this image.
+    secureVersion: u32le(bytes, 4),
+    elfSha256Prefix: bytes.length >= 152 ? hexOf(bytes.subarray(144, 152)) : null,
   };
+}
+
+function hexOf(bytes) {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// ── the image header at the start of the bootloader ───────────────────────
+// The second-stage bootloader is an ESP image: magic 0xE9, segment count,
+// then the SPI mode byte and a byte whose high nibble is the flash size and
+// low nibble the flash frequency the image was BUILT for (esptool
+// bin_image.py; esptool 5.6.0 targets/<chip>.py FLASH_FREQUENCY). It sits at
+// 0x0 on the S3, C3 and C6 and at 0x1000 on the classic ESP32. What it says
+// is the image's claim about the board, which the chip's own JEDEC reading
+// can contradict — the rows show the two side by side.
+export const IMAGE_HEADER_MAGIC = 0xe9;
+
+export function bootloaderOffset(chip) {
+  return normalizeChip(chip) === "ESP32" ? 0x1000 : 0x0;
+}
+
+const SPI_MODES = { 0: "QIO", 1: "QOUT", 2: "DIO", 3: "DOUT", 4: "FAST_READ", 5: "SLOW_READ" };
+
+export function parseBootloaderHeader(bytes, chip) {
+  if (!bytes || bytes.length < 4 || bytes[0] !== IMAGE_HEADER_MAGIC) return null;
+  const sizeCode = bytes[3] >> 4;
+  const freqCode = bytes[3] & 0x0f;
+  // 0x0 on the C6 is esptool's own spelling for BOTH 40 and 80 MHz (its ROM
+  // workaround), so the header cannot say which; everywhere else the codes
+  // are the classic ESP32's.
+  const c6 = normalizeChip(chip) === "ESP32C6";
+  const freqs = c6 ? { 2: 20 } : { 0: 40, 1: 26, 2: 20, 0xf: 80 };
+  return {
+    flashMode: SPI_MODES[bytes[2]] || null,
+    flashMhz: freqs[freqCode] || null,
+    flashMhzEither: c6 && freqCode === 0 ? [40, 80] : null,
+    flashBytes: sizeCode <= 7 ? (1 << sizeCode) * 1024 * 1024 : null,
+    codes: { mode: bytes[2], size: sizeCode, freq: freqCode },
+  };
+}
+
+// The silicon revision a ROM tool printed ("ESP32-S3 (QFN56) (revision v0.2)",
+// espflash's "esp32s3 (revision v0.2)") → "v0.2", or null.
+export function chipRevisionFromDesc(desc) {
+  const m = /revision\s+(v\d+\.\d+)/i.exec(String(desc || ""));
+  return m ? m[1] : null;
 }
 
 // Map a firmware image's compiled project_name back to a catalog product, so
@@ -1542,6 +1592,90 @@ export function apiTokenToNvs(token) {
   return { blobs: { api_token: bytes, api_tkn: bytes } };
 }
 
+// ── the settings one install bakes, assembled in one place ─────────────────
+// Everything typed on the confirm card — Wi-Fi, the broker block, the dials,
+// the auto-update answer — and the minted API token are written as ONE NVS
+// page (buildNvsSeedImage). The install's bake and the confirm card's
+// up-front fit check both build their seed here, so the check can never
+// pass a seed the bake then assembles differently. `prov` rides along
+// because the done card's hub line and Ring ID come from what was sealed,
+// not from the form.
+export function installSettingsSeed({ catalog, product, wifi, mqtt, detect, reflex, autoUpdate, apiToken }) {
+  const dials = detect ? detectDials(catalog, product) : null;
+  const dInts = detect ? detectValuesToNvs(detect, dials) : { u8: {}, u32: {} };
+  const reflexes = reflex ? reflexDials(catalog, product) : null;
+  const rInts = reflex ? reflexValuesToNvs(reflex, reflexes) : { u32: {} };
+  // Broker + device id (usb-secrets) → the same NVS keys the native app writes.
+  const prov = mqtt ? mqttProvisioningToNvs(mqtt) : { strings: {}, u16: {}, u8: {} };
+  const tokenNvs = apiToken ? apiTokenToNvs(apiToken) : { blobs: {} };
+  return {
+    prov,
+    seed: {
+      wifi: wifi || null,
+      wifiScheme: (product && product.wifi_nvs) || "blob",
+      strings: prov.strings, u16: prov.u16, blobs: tokenNvs.blobs,
+      u8: { ...dInts.u8, ...prov.u8 }, u32: { ...dInts.u32, ...rInts.u32 },
+      // The OTA opt-in, seeded into the engine's own namespace
+      // ("securacv_ota"/auto_upd) — null means the checkbox never appeared
+      // (rescue, local file), and nothing is written.
+      autoUpdate: typeof autoUpdate === "boolean" ? autoUpdate : null,
+    },
+  };
+}
+
+// Blob-scheme boards (canary/wap) load their local-API bearer token from NVS
+// before deriving one, so an install that bakes Wi-Fi mints one and seeds it.
+export function wantsApiToken(product, wifi) {
+  return !!(product && product.wifi_nvs === "blob" && wifi);
+}
+
+// Will the settings typed for this install fit the one page they are written
+// into? Asked on the confirm card, BEFORE anything is downloaded or written:
+// the bake used to find out mid-install, drop every typed setting after a
+// 1.2-second notice, and finish as if the network had been left blank on
+// purpose. Returns null when they fit, else the builder's own reason. The
+// token is minted at bake time; a placeholder of the same shape stands in
+// for it here — the same bytes on the page.
+export function settingsSeedProblem(o) {
+  try {
+    const apiToken = wantsApiToken(o.product, o.wifi) ? "cv_" + "0".repeat(TOKEN_CHARS) : null;
+    buildNvsSeedImage(installSettingsSeed({ ...o, apiToken }).seed, NVS_PAGE);
+    return null;
+  } catch (e) {
+    return String((e && e.message) || e);
+  }
+}
+
+// What both flashers say when the typed settings are too big for that page.
+// The desktop Flasher's engine refuses the same install (provisioning.rs,
+// "provisioning values do not fit in one NVS page") and its app.js carries
+// this sentence too; tests/desktop_parity.test.js holds the two equal.
+export const SETTINGS_TOO_BIG =
+  "Nothing was written. The settings typed here (Wi-Fi, the hub, the dials) are baked into one small page " +
+  "of the board's settings region, and together they are too big for it. The broker's CA certificate can " +
+  "take most of that page by itself: paste one certificate rather than a chain, then install again.";
+
+// The confirm card's words for a settingsSeedProblem.
+export function settingsProblemText(problem) {
+  return /exceeds one page/.test(String(problem))
+    ? `${SETTINGS_TOO_BIG} (${problem})`
+    : `Nothing was written. These settings can't be baked in: ${problem}`;
+}
+
+// Why the automatic safety copy will not run although one was due — or null
+// when none was due (a restore, the Advanced skip, a copy already held this
+// session) or it will run. Today the one reason is a chip that did not report
+// its flash size: there is no length to read. The install used to go ahead
+// without the copy and say nothing; both flashers now say this sentence on
+// the install and after it (the desktop's twin is BACKUP_SKIP_NO_SIZE in
+// desktop/src/app.js; tests/desktop_parity.test.js holds the two equal).
+export const BACKUP_SKIP_NO_SIZE =
+  "the board did not report its flash size, so no safety copy could be taken";
+export function backupSkipReason({ flashBytes, isBackup, skipBackup, haveBackup }) {
+  if (isBackup || skipBackup || haveBackup) return null;
+  return flashBytes ? null : BACKUP_SKIP_NO_SIZE;
+}
+
 // The standard WiFi-QR payload (WPA assumed unless the password is empty).
 // Escaping per the de-facto spec: backslash the chars \ ; , " :
 export function wifiQrString(ssid, pass) {
@@ -2116,7 +2250,9 @@ export function hasSetupDoor(product) {
   return !!(product && product.setup_door === true);
 }
 export const SETUP_DOOR_NOTE =
-  "Leave blank for Sense, Vision and WAP: your iPhone hands them your Wi-Fi when you power them on near it.";
+  "Sense, Vision and WAP can be left blank if you have the SecuraCV iPhone app (TestFlight by invite today): " +
+  "it hands them your Wi-Fi at first power-on. Otherwise type the network here, or leave it blank and join the " +
+  "setup network the Canary raises — its key is shown after the install.";
 
 // ── a network name with no password is a question, not an answer ────────────
 // An SSID typed with the password left empty used to seed an OPEN join: the
@@ -2539,18 +2675,22 @@ export function visionChecklistModel(parts) {
 
 // ── self-healing: a copy-paste diagnostic report (never get stuck) ──────────
 // One click turns "I'm stuck" into an actionable, paste-into-Discussions block.
-// Public-only by construction — enforced HERE, in the builder, not by hoping
-// callers pass safe facts: the field list is a fixed allowlist, the MAC is
-// truncated to a non-stable tail (a stable identifier has no business in a
-// pastebin — see spec/invariants.md III), and the serial tail is scrubbed of
-// credential lines before it is included, because the WAP legitimately prints
-// its device-unique AP password to serial at boot ("[WIFI] AP started: …
-// (password: …)", acknowledged in build_config.h), every setup surface prints
-// the same key inside a Wi-Fi QR payload when its setup network comes up
-// ("[SETUP] QR WIFI:…;P:<key>;;", onboarding_fsm.h qr_line; the WAP once, at
-// boot, the flagship again on every re-raise after a home-link drop), and a
-// report someone is ASKED to paste must not carry it. Pure + testable; the desktop app mirrors
-// this byte-for-byte in spirit (desktop_parity.test.js pins both sides).
+// What it carries is decided HERE, in the builder, not by hoping callers pass
+// safe facts: the field list is a fixed allowlist with no hardware address in
+// it at all (not even a tail: the base MAC is the station address in every
+// Wi-Fi frame the board sends, so any slice of it matches the board in radio
+// range), and the serial tail is scrubbed before it is included. Credentials
+// first: the WAP legitimately prints its device-unique AP password to serial at
+// boot ("[WIFI] AP started: … (password: …)", acknowledged in build_config.h),
+// every setup surface prints the same key inside a Wi-Fi QR payload when its
+// setup network comes up ("[SETUP] QR WIFI:…;P:<key>;;", onboarding_fsm.h
+// qr_line; the WAP once, at boot, the flagship again on every re-raise after a
+// home-link drop), and a report someone is ASKED to paste must not carry it.
+// Then identity: the boot banner's salted Hardware ID and the self-manifest
+// line name this one board, and TAIL_IDENTITY names the rest. The tail is a
+// list of the lines it names, not public-only by construction: a line no
+// pattern names passes. Pure + testable; the desktop app mirrors this
+// byte-for-byte in spirit (desktop_parity.test.js pins both sides).
 
 // Lines the serial tail may never carry into a report. Matched per line and
 // replaced with a marker (not silently dropped — a redaction you can see is
@@ -2565,16 +2705,70 @@ const TAIL_REDACT = [
   /\bWIFI:.*\bP:/,        // "[SETUP] QR WIFI:T:WPA;S:<ssid>;P:<key>;;" — the key, in any field order
 ];
 
+// Lines that are no secret but name this one board (or, for a peer's
+// fingerprint or name, another in the household): the boot banner's "Hardware
+// ID" (boot_kv on the display, Sense, Vision and Sentinel; the WAP's
+// "  Hardware ID    : …" in sys_monitor.h — the flagship prints none), the
+// self-manifest line, which carries the key fingerprint, the device id and the
+// boot count, the lines the firmware prints with the device id (its boot lines,
+// every MQTT publish and discovery line, whose topic carries it, and the
+// Bluetooth status line), a key fingerprint, the TLS certificate (per device,
+// its CN the key fingerprint) or a .local name (built from the device id; on
+// the WAP from the name the person gave it, or else the key fingerprint), the
+// board's own setup network (SecuraCV-[<type>-]<four>, the four from the device
+// id or the Hardware ID, sent in every beacon while it is up), the flagship's
+// welcome, trust, attestation, identity and nearby cards' rows with its device
+// id or key (the trust card's key randomart among them), the MQTT client id
+// (the device id and the Hardware ID), the names the person typed (the
+// flagship's, which is also its Bluetooth name, on its boot line and ready
+// banner and in its Bluetooth and rename lines, its 'e' card's recent events
+// among them; the WAP's on its boot line, and its host name, Bluetooth names
+// and opera name in its health log), a peer's fingerprint or name (the
+// flagship's nearby card and opera lines, the WAP's nearby scan and opera
+// lines, the display's fleet referral and restored mutes), and any line with a
+// MAC-shaped token in it (the ROM tools print the board's own). Shown in the
+// flasher, never pasted. A line no pattern names passes: flash.test.js renders
+// the ones these patterns are for from the firmware's own sources.
+const TAIL_IDENTITY = [
+  /hardware\s*id\b/i,               // "    Hardware ID 3f7a9e21b4c5d6e8", "  Hardware ID    : …"
+  /securacv\.canary\.manifest\//,   // {"schema":"securacv.canary.manifest/v1",…}
+  /\bdevice[\s_-]*id\b/i,           // every family's Device ID boot line (often a name the person typed)
+  /\bkey[\s_-]*fp\b|\bfp8\b|\bkey\s+fingerprint\b|\bpubkey(?:[\s_-]*fp)?\b|\bfp=/i, // the flagship's Key FP; the WAP's FP8, Pubkey, fingerprint and receipt lines; the witness ready line, a mesh peer's line
+  /\bCN:\s*securacv-|cert[\s_-]*(?:fp|fingerprint)\b/i, // the TLS certificate's CN (the key fingerprint), its own fingerprint lines
+  /[\w-]\.local\b/i,                 // the advertised .local name (from the device id, a name the person typed, or the key fingerprint)
+  /\b[0-9a-f]{2}(?:[:-][0-9a-f]{2}){5}\b/i, // a ROM tool's "MAC: …" / "MAC address: …", any MAC-shaped token
+  /\bthat's me:/i,                   // the flagship's boot welcome card, "(that's me: <device id>)"
+  /\bdevice {2,}(?:: *)?[^\s║│|]/i,   // the flagship's trust card "Device    <id>" and attestation card "  Device    : <id>"
+  /\bpublic\s*key\s*:/i,             // the flagship's identity card, "  Public Key: <the whole key>"
+  /\bthis canary {2,}/i,              // the nearby card, "This Canary  <id>   fp <fingerprint>"
+  /\b[0-9a-f]{4} +\S+ +\S+ +\S+ +#[0-9a-f]{4}\b/i, // the nearby card's peer rows, "a1b2   3s 100%  87% #4210  ok"
+  /^(?=.*\b(?:opera|peer|member)\b).*\b[0-9a-f]{16}\b/i, // a peer's whole fingerprint: the flagship's opera lines and their health-log echoes, the WAP's "Peer removed"
+  /\bcanary (?:discovered|lost):/i,  // the WAP's nearby scan, a peer's fingerprint
+  /(?:— |\[OK\] )device (?:prefix|name):/i, // the flagship's and the WAP's "[OK] Device name:" boot line (the name the person typed); the WAP's chirp prefix and Opera Bluetooth name, its key fingerprint's last two bytes
+  /\b(?:peer state changed|opera alert received) \|/i, // the WAP's opera health lines, a peer's name
+  /\bBLE initialized(?: \(scanners held\))? \||\bsaved bluetooth name (?:unreadable or )?held a control byte\b/i, // the WAP's Bluetooth name
+  /\b(?:mdns (?:started|begin failed|re-announced on sta|re-announce failed)|identify requested) \|/i, // the WAP's host name, without its .local
+  /\bconnecting \S+ as securacv-/i,  // the MQTT client id, "securacv-<device id>-<Hardware ID>"
+  /\bfleet referral:.*\(from /i,     // the display's referral, a peer's name
+  /\bmuted for \d+s more\b/i,        // the display's restored mute, a peer's device id
+  /\|[ .o+=*BOX@%&#\/^SE]{17}\|/,     // a row of the trust card's key randomart
+  / => (?:OK|FAIL) \(retain=/,        // an MQTT publish or discovery line: its topic carries the device id
+  /\bSecuraCV-(?:[a-z]{1,8}-)?[A-Za-z0-9]{4}(?:-[A-Za-z0-9]{2})?\b/, // the board's own setup network (SETUP_SSID_RE's shapes), its four from the device id or Hardware ID
+  /\b(?:device|opera) name (?:changed|updated|not persisted)\b[^|—]*[|—]/i, // a rename with its name after " | " or " — ": the flagship's name, the WAP's Bluetooth and opera names
+  /\bGATT status service started\b/i, // the Bluetooth status line: the WAP's device id, the flagship's Bluetooth name
+  /\[ERROR(?:\/BLUETOOTH)?\] NimBLE init failed [|—]/, // the flagship's Bluetooth failure, with its Bluetooth name
+  /\bname {2,}: *[^\s║]/i,           // the flagship's ready banner, "║  Name       : <the name the person typed>"
+];
+
 // Scrub a serial tail for inclusion in a shareable report. Exported so the
-// tests can feed it the WAP's real boot lines.
+// tests can feed it the firmware's real boot lines.
 export function sanitizeLogTail(text) {
   return String(text || "").split("\n").map((ln) =>
-    TAIL_REDACT.some((re) => re.test(ln)) ? "[redacted: credential line]" : ln
+    TAIL_REDACT.some((re) => re.test(ln)) ? "[redacted: credential line]"
+      : TAIL_IDENTITY.some((re) => re.test(ln)) ? "[identity line: shown in the flasher, not in reports]"
+        : ln
   ).join("\n");
 }
-
-// The MAC in the report is the same non-stable tail the nursery roster shows
-// (macTail, below with the roster helpers) — one truncation, one behavior.
 
 export function buildDiagnosticReport(info = {}) {
   const lines = ["SecuraCV flasher diagnostic", "==========================="];
@@ -2588,18 +2782,317 @@ export function buildDiagnosticReport(info = {}) {
   add("web serial", info.webSerial === undefined ? undefined : (info.webSerial ? "yes" : "no"));
   add("firmware train", info.catalogVersion);
   add("chip", info.chipDesc || info.chip);
-  add("MAC tail", macTail(info.mac) || undefined);
   add("flash size", info.flashBytes ? formatBytes(info.flashBytes) : undefined);
   add("USB device", info.usb);
   add("chosen product", info.product);
   add("connected baud", info.baud);
   add("stage", info.stage);
-  add("error", info.error);
+  // The error is scrubbed like the tail: the desktop's carries espflash's own
+  // last lines, which can hold the hardware address its board info prints.
+  // The address is masked first, so the rest of that line stays readable.
+  add("error", info.error == null ? undefined : sanitizeLogTail(maskHardwareAddress(info.error)));
   if (info.logTail) {
     lines.push("--- last serial output ---");
     lines.push(sanitizeLogTail(String(info.logTail).split("\n").slice(-12).join("\n")));
   }
   return lines.join("\n") + "\n";
+}
+
+// ── the hardware address in a tool's own log ───────────────────────────────
+// The ROM tools print it unasked: esptool-js's connect logs "MAC: …", and
+// espflash prints its board info ("MAC address: …") before every flash,
+// write-bin and read-flash. Each flasher masks a MAC-shaped token (six
+// two-digit hex octets joined by ':' or '-') where it draws a log line, so no
+// console shows the address, and the report's tail scrubber replaces any line
+// still carrying one with a visible marker.
+const HW_ADDRESS_RE = /\b[0-9a-f]{2}(?:[:-][0-9a-f]{2}){5}\b/gi;
+export const HW_ADDRESS_MASK = "[hardware address hidden]";
+export function maskHardwareAddress(text) {
+  return String(text ?? "").replace(HW_ADDRESS_RE, HW_ADDRESS_MASK);
+}
+
+// ── About this board: the rows every flasher frontend draws ─────────────────
+// One model, three frontends: this file feeds the browser flasher and the
+// Lab's native bench (flash-native.js); the desktop Flasher carries a
+// byte-for-byte copy (desktop/src/app.js, aboutBoardGroups) because its bundle
+// cannot import canary-local, and desktop_parity.test.js runs both on the same
+// facts. The frontends share these rows, never their DOM.
+//
+// Every row carries where it came from, by group:
+//   "Read from the chip"         the ROM tool's chip line, the allowlisted
+//                                eFuse fields (intake.js), the JEDEC flash size
+//   "From the installed image"   the bootloader's image header and the running
+//                                app's descriptor: what the image CLAIMS, which
+//                                the chip's own reading can contradict
+//   "From the maker’s datasheet" what this model of chip can do. Radios,
+//                                cores and crystal are listed by model: for
+//                                the S3, C3 and C6 both ROM tools print fixed
+//                                strings for them rather than reading anything
+//                                (esptool-js and espflash 3.3.0), so calling
+//                                them "read from the chip" would overclaim.
+// A value that cannot be given is one of the phrases below, never a zero,
+// a blank or a guess. The hardware address is a row with no value: each
+// frontend reveals it on that page only, and no copy, report or file ever
+// carries it (desktop_parity.test.js holds both flashers to that).
+export const ABOUT_CANNOT = {
+  notCheckedYet: "Not checked yet",
+  notChecked: "Not checked",
+  notOnChip: "Not on this chip",
+  notReported: "Not reported",
+  flasherOnly: "Read with the Flasher",
+};
+
+const ABOUT_MB = 1024 * 1024;
+export function sizeWords(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return null;
+  if (bytes % ABOUT_MB === 0) return `${bytes / ABOUT_MB} MB`;
+  if (bytes < ABOUT_MB) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / ABOUT_MB).toFixed(1)} MB`;
+}
+
+const CHIP_SHEETS = {
+  ESP32S3: { radios: "Wi-Fi 4 · Bluetooth LE 5", cores: "2 cores, up to 240 MHz", crystal: "40 MHz" },
+  ESP32C3: { radios: "Wi-Fi 4 · Bluetooth LE 5", cores: "1 core, up to 160 MHz", crystal: "40 MHz" },
+  ESP32C6: { radios: "Wi-Fi 6 · Bluetooth LE 5 · 802.15.4 (Thread, Zigbee)",
+             cores: "1 core, up to 160 MHz, plus a low-power core", crystal: "40 MHz" },
+  ESP32: { radios: "Wi-Fi 4 · Bluetooth Classic and LE", cores: "1 or 2 cores, up to 240 MHz",
+           crystal: "40 MHz or 26 MHz, chosen by the board" },
+};
+
+// What the Firmware row says for a descriptor that names the Arduino core
+// (aboutBoardGroups).
+const ABOUT_ARDUINO_SKETCH = "An Arduino sketch · its version can’t be read off the board";
+function aboutRow(id, label, value, level, term, raw) {
+  const r = { id, label, value, level, term };
+  if (raw) r.raw = raw;
+  return r;
+}
+
+function packagePartWords(part) {
+  if (!part) return ABOUT_CANNOT.notReported;
+  if (!part.present) return "None — a separate chip on the board, if any";
+  const bits = [sizeWords(part.bytes) || "Size not reported"];
+  if (part.vendor) bits.push(part.vendor);
+  if (part.temp) bits.push(`rated to ${part.temp}`);
+  return bits.join(" · ");
+}
+
+function rawFields(fields, keys) {
+  return keys.filter((k) => fields && Number.isInteger(fields[k])).map((k) => `${k}=${fields[k]}`).join(" ");
+}
+
+// facts: { chip, chipDesc, flashBytes,
+//          fuses:      undefined (not read yet) | null (read failed) | intake.js decodeChipFuses()
+//          image:      undefined (not read yet) | null (nothing installed) | { projectName, version, idf, secureVersion, elfSha256Prefix }
+//          bootloader: undefined | null | parseBootloaderHeader()
+//          bench:      true where this frontend cannot read fuses or images (the Lab's native bench) }
+export function aboutBoardGroups(facts = {}) {
+  const C = ABOUT_CANNOT;
+  const chip = facts.chip || null;
+  const norm = normalizeChip(chip);
+  const fuses = facts.fuses;
+  const fuseGap = facts.bench ? C.flasherOnly
+    : fuses === undefined ? C.notCheckedYet
+      : !fuses || !fuses.supported ? C.notChecked : null;
+  const f = (fuses && fuses.fields) || {};
+  const rev = chipRevisionFromDesc(facts.chipDesc) || (fuses && fuses.supported ? fuses.wafer : null);
+  const chipRows = [
+    aboutRow("chip", "Chip", chip ? (rev ? `${chip} · ${rev}` : chip) : C.notReported, "about",
+      "chip model and silicon revision (eFuse wafer version)", facts.chipDesc || null),
+    aboutRow("flash", "Flash", sizeWords(facts.flashBytes) || C.notReported, "about",
+      "SPI flash size from the flash chip's JEDEC id"),
+    { id: "mac", label: "Hardware address", level: "about", term: "factory MAC (eFuse block 1)", reveal: true },
+    aboutRow("package", "Package", fuseGap || fuses.package || C.notReported, "details",
+      "PKG_VERSION", rawFields(f, ["PKG_VERSION"])),
+    aboutRow("flash_in_package", "Flash in the package", fuseGap || packagePartWords(fuses.flash), "details",
+      "FLASH_CAP · FLASH_VENDOR · FLASH_TEMP", rawFields(f, ["FLASH_CAP", "FLASH_VENDOR", "FLASH_TEMP"])),
+    aboutRow("psram_in_package", "PSRAM in the package",
+      norm === "ESP32C3" || norm === "ESP32C6" ? C.notOnChip : fuseGap || packagePartWords(fuses.psram), "details",
+      "PSRAM_CAP · PSRAM_VENDOR · PSRAM_TEMP", rawFields(f, ["PSRAM_CAP", "PSRAM_CAP_3", "PSRAM_VENDOR", "PSRAM_TEMP"])),
+    aboutRow("calibration", "Factory calibration",
+      fuseGap || (fuses.calibration ? "Present" : "Not written"), "details",
+      `block version ${fuseGap ? "" : fuses.blockVersion}`.trim(), rawFields(f, ["BLK_VERSION_MAJOR", "BLK_VERSION_MINOR"])),
+  ];
+
+  const img = facts.image;
+  const boot = facts.bootloader;
+  let imageRows;
+  if (facts.bench) {
+    imageRows = [aboutRow("installed", "Installed image", C.flasherOnly, "about", "esp_app_desc_t")];
+  } else if (img === undefined && boot === undefined) {
+    imageRows = [aboutRow("installed", "Installed image", C.notCheckedYet, "about", "esp_app_desc_t")];
+  } else if (!img && !boot && (img === false || boot === false)) {
+    // A read that failed is not an empty board, whatever the other read
+    // found: "None found" needs every read that ran to have found nothing.
+    imageRows = [aboutRow("installed", "Installed image", C.notChecked, "about", "esp_app_desc_t")];
+  } else if (!img && !boot) {
+    imageRows = [aboutRow("installed", "Installed image", "None found", "about", "esp_app_desc_t")];
+  } else {
+    imageRows = [];
+    if (img) {
+      // A descriptor that names the Arduino core (`arduino-lib-builder`, with
+      // the core's ESP-IDF version where a firmware version goes) is every
+      // SecuraCV release up to 2.4.17, a build made outside a release, or any
+      // other Arduino sketch. The row names it for what it is, by the readback
+      // line's own test on the same card (flash.js ARDUINO_READBACK_NOTE: no
+      // catalog product matched, and the name starts "arduino"), and the
+      // descriptor's two strings stay in the technical view.
+      const arduino = !img.productName && /^arduino/i.test(img.projectName || "");
+      imageRows.push(
+        aboutRow("firmware", "Firmware",
+          arduino ? ABOUT_ARDUINO_SKETCH : `${img.projectName || "unnamed"} ${img.version || ""}`.trim(), "about",
+          "esp_app_desc_t project_name · version",
+          arduino ? `${img.projectName} ${img.version || ""}`.trim() : null),
+        aboutRow("idf", "Built with", img.idf ? `ESP-IDF ${img.idf}` : C.notReported, "details",
+          "esp_app_desc_t idf_ver"),
+        aboutRow("secure_version", "Anti-rollback number",
+          Number.isInteger(img.secureVersion) ? String(img.secureVersion) : C.notReported, "details",
+          "esp_app_desc_t secure_version"),
+        aboutRow("image_fingerprint", "Image fingerprint", img.elfSha256Prefix || C.notReported, "details",
+          "first 8 bytes of the app ELF's SHA-256"));
+    } else {
+      imageRows.push(aboutRow("firmware", "Firmware", C.notReported, "about", "esp_app_desc_t project_name · version"));
+    }
+    const bootGap = boot === false ? C.notChecked : boot === undefined ? C.notCheckedYet : null;
+    const builtFor = bootGap || (boot && boot.flashBytes
+      ? (facts.flashBytes && facts.flashBytes !== boot.flashBytes
+        ? `${sizeWords(boot.flashBytes)} · the chip has ${sizeWords(facts.flashBytes)}`
+        : sizeWords(boot.flashBytes))
+      : C.notReported);
+    const mhz = boot && (boot.flashMhz ? `${boot.flashMhz} MHz`
+      : boot.flashMhzEither ? `${boot.flashMhzEither.join(" or ")} MHz` : null);
+    const mode = boot ? [boot.flashMode, mhz].filter(Boolean).join(" · ") : "";
+    const codes = boot && boot.codes ? `mode=${boot.codes.mode} size=${boot.codes.size} freq=${boot.codes.freq}` : null;
+    imageRows.push(
+      aboutRow("built_for_flash", "Flash it was built for", builtFor, "details",
+        "bootloader image header flash size", codes),
+      aboutRow("flash_mode", "Flash mode and speed", bootGap || mode || C.notReported, "details",
+        "bootloader image header SPI mode and frequency", codes));
+  }
+
+  const groups = [
+    { id: "chip", title: "This chip", source: "Read from the chip", rows: chipRows },
+    { id: "image", title: "Installed image", source: "From the installed image", rows: imageRows },
+  ];
+  const sheet = CHIP_SHEETS[norm];
+  if (sheet) {
+    groups.push({ id: "datasheet", title: "What this chip can do", source: "From the maker’s datasheet", rows: [
+      aboutRow("radios", "Radios", sheet.radios, "details", "radio features"),
+      aboutRow("cores", "Processor", sheet.cores, "details", "CPU cores and top clock"),
+      aboutRow("crystal", "Crystal", sheet.crystal, "details", "main crystal frequency"),
+    ] });
+  }
+  return groups;
+}
+
+// The one-line summary a connect line carries: "ESP32-S3 v0.2 · 8 MB flash".
+export function aboutBoardSummary(facts = {}) {
+  const rev = chipRevisionFromDesc(facts.chipDesc);
+  const bits = [[facts.chip, rev].filter(Boolean).join(" ")];
+  const size = sizeWords(facts.flashBytes);
+  if (size) bits.push(`${size} flash`);
+  return bits.filter(Boolean).join(" · ");
+}
+
+// The copyable text: every row with a value, grouped under where it came
+// from. Never the hardware address (a reveal row has no value to copy).
+export function aboutBoardText(groups, appLabel) {
+  const lines = [`About this board · ${appLabel}`];
+  for (const g of groups || []) {
+    const rows = (g.rows || []).filter((r) => !r.reveal && r.value != null);
+    if (!rows.length) continue;
+    lines.push(g.source);
+    for (const r of rows) lines.push(`  ${r.label}: ${r.value}`);
+  }
+  return lines.join("\n") + "\n";
+}
+
+// ── saved files: a neutral name, and a report that is safe to share ────────
+// No file a flasher saves is named after the board. The base MAC is the
+// station address in every Wi-Fi frame the board sends, so even its last
+// six hex digits match the board in radio range; a file name travels with
+// the file. Names are the local date and a counter instead
+// (canary-2026-10-22-1-backup.bin), which both restore panels' canary-…-
+// backup.bin pattern still matches.
+export function localDay(when) {
+  const d = when instanceof Date ? when : new Date(when);
+  const p = (x) => String(x).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+export function fileStamp(when, n) {
+  return `${localDay(when)}-${Math.max(1, Math.floor(Number(n) || 1))}`;
+}
+export function backupFileName(stamp) {
+  return `canary-${stamp}-backup.bin`;
+}
+export function reportFileName(stamp, full) {
+  return `canary-${stamp}-${full ? "full-report" : "report"}.json`;
+}
+
+export const SHARE_REPORT_NOTE =
+  "Chip, image and partition facts only: no hardware address, no counters, no crash or " +
+  "update state, no chain head, and the day rather than the time.";
+export const FULL_REPORT_NOTE =
+  "Describes this one board: its boot and witness counters, crash record and update state. " +
+  "For your own records, not for posting. It carries no hardware address.";
+
+// An image's descriptor stamp cut to its day. Both flashers build a slot's
+// `built` from the app descriptor's date and time ("Oct 22 2026 14:33:12"),
+// which say when the descriptor was compiled: on an Arduino build, when the
+// Arduino core was built; on an ESP-IDF build, the second someone built the
+// image. The time of day is dropped (any token holding a colon, or the time
+// after an ISO "T"). null when no day is left.
+export function buildDay(built) {
+  const day = String(built == null ? "" : built).split(/\s+/)
+    .map((t) => (t.includes(":") ? ((/^(\d{4}-\d{2}-\d{2})T/.exec(t) || [])[1] || "") : t))
+    .filter(Boolean).join(" ");
+  return day || null;
+}
+
+// "Save report": the share projection. What it keeps is listed, not what it
+// drops, so a field added to the health report later stays out until someone
+// decides it is shareable. No counter (lifetime boots, witness records,
+// updates seen), no posture (a crash record, OTA pending-verify, a tamper
+// flag, whether a key or Wi-Fi is stored, the eFuse security scan), no
+// chain-head prefix, no hardware address, and every date as a day: the save's
+// own, and the day each image's descriptor is dated (buildDay), never a time.
+export function reportShareProjection(r = {}, when = Date.now()) {
+  const out = { report: "securacv-board-report", scope: "share", note: SHARE_REPORT_NOTE, day: localDay(when) };
+  if (r.chip) out.chip = r.chip;
+  if (Number.isFinite(r.flashBytes)) out.flashBytes = r.flashBytes;
+  if (r.blank) out.blank = true;
+  if (Array.isArray(r.partitions)) {
+    out.partitions = r.partitions.map((p) => ({ label: p.label, kind: p.kind, offset: p.offset, size: p.size }));
+  }
+  if (Array.isArray(r.slots)) {
+    out.slots = r.slots.map((s) => {
+      const o = { label: s.label, subtype: s.subtype, empty: !!s.empty };
+      for (const k of ["project", "version", "built", "idf"]) {
+        const v = k === "built" ? buildDay(s.built) : s[k];
+        if (v != null) o[k] = v;
+      }
+      if (s.active) o.active = true;
+      return o;
+    });
+  }
+  if (r.witnessLog && Number.isFinite(r.witnessLog.size)) {
+    out.witnessLog = { label: r.witnessLog.label, size: r.witnessLog.size };
+  }
+  if (Array.isArray(r.about)) {
+    out.about = r.about.map((g) => ({
+      source: g.source,
+      rows: (g.rows || []).filter((x) => !x.reveal && x.value != null).map((x) => ({ label: x.label, value: x.value })),
+    }));
+  }
+  return out;
+}
+
+// "Save full report for your own records": everything the health check read,
+// labeled as describing this one board — and still no hardware address.
+export function reportFullProjection(r = {}) {
+  const rest = { ...(r || {}) };
+  delete rest.mac;
+  return { report: "securacv-board-report", scope: "full", note: FULL_REPORT_NOTE, ...rest };
 }
 
 // ── the install verdict: is this an update, a downgrade, or a sidestep? ─────
@@ -3022,8 +3515,10 @@ export function pickLesson(catalog, stageText, shownIds = []) {
 // ── the Nursery roster: don't get lost flashing a batch ────────────────────
 // Every successful install becomes a hatchling entry; the connect card can
 // then say "this one's already done" and the session shows its progression.
-// Pure list helpers — flash.js owns sessionStorage. Entries are public-only
-// facts (product, version, preset names, MAC) — never credentials.
+// Pure list helpers — flash.js owns sessionStorage (this tab only). Entries
+// hold product, version and preset names, and the board's hardware address
+// only so the same board is recognized again this session — rosterLines()
+// never puts it on screen. Never credentials.
 const ROSTER_MAX = 60;
 
 export function rosterAdd(list, entry) {
@@ -3049,17 +3544,6 @@ export function rosterFind(list, mac) {
   return null;
 }
 
-// Short MAC tail for a human label ("…a4:3b") — enough to tell boards apart
-// on a bench without shouting the full identifier. Also the ONLY form of the
-// MAC the diagnostic report may carry (review hardening on #1549): hex-based
-// rather than split-on-colons, so a separator-free MAC can never fall through
-// as the full stable identifier, and "" (not the input) when it isn't a MAC.
-export function macTail(mac) {
-  const hex = String(mac || "").replace(/[^0-9a-fA-F]/g, "").toLowerCase();
-  if (hex.length < 4) return "";
-  return "…" + hex.slice(-4, -2) + ":" + hex.slice(-2);
-}
-
 // One line per hatchling for the progression strip; `now` passed in so the
 // "m ago" math stays pure.
 export function rosterLines(list, now) {
@@ -3068,7 +3552,6 @@ export function rosterLines(list, now) {
     return {
       n: e.n,
       label: `${e.product || "firmware"}${e.version ? " v" + e.version : ""}`,
-      mac: macTail(e.mac),
       extras: [e.preset ? `dialed: ${e.preset}` : null, e.wifi ? "WiFi baked ✓" : null]
         .filter(Boolean).join(" · "),
       ago: ago < 1 ? "just now" : ago === 1 ? "1 min ago" : `${ago} min ago`,

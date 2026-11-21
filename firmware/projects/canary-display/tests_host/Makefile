@@ -679,3 +679,98 @@ clean-lvgl-port-turn:
 
 run: run-lvgl-port-turn
 clean: clean-lvgl-port-turn
+
+# The OTA glue of the display, Sense, Sentinel and Vision (each product's
+# src/net/ota_mgr.cpp, which needs the Arduino stack): copy_json_safe(), the
+# release summary published to Home Assistant's update entity, and
+# ota_boot_validate(), the boot probe of a freshly installed image — cut
+# verbatim out of each of the four files by firmware/tests_host/
+# cut_functions.awk and driven over a stand-in radio, clock and engine. The
+# summary is cut between characters, never inside a multibyte one (half a
+# UTF-8 sequence made Home Assistant refuse the retained update payload); the
+# probe runs once, from loop(), at the first pass with the station link up or
+# 90 s after the first pass at the latest (it ran in setup() after the single
+# bounded boot join, where one missed association rolled a good image back).
+# The test also reads each main.cpp (paths passed in) for the one call of
+# ota_boot_validate(): in loop(), ahead of the health tick. Hooked into `run`
+# and `clean` by prerequisite.
+OTACUT_BIN      = test_ota_mgr_cut
+OTACUT_AWK      = ../../../tests_host/cut_functions.awk
+OTACUT_SIGS     = void copy_json_safe(char* dst, size_t cap, const char* src) {|void ota_boot_validate() {
+OTACUT_PRODUCTS = display sense sentinel vision
+OTACUT_INCS     = $(foreach p,$(OTACUT_PRODUCTS),test_ota_mgr_cut_$(p).inc)
+
+test_ota_mgr_cut_%.inc: ../../canary-%/src/net/ota_mgr.cpp $(OTACUT_AWK) Makefile
+	awk -v 'sigs=$(OTACUT_SIGS)' -f $(OTACUT_AWK) $< > $@.tmp && mv $@.tmp $@
+
+$(OTACUT_BIN): test_ota_mgr_cut.cpp $(OTACUT_INCS) ../../../common/ota/src/securacv_ota.h \
+	  $(foreach p,$(OTACUT_PRODUCTS),../../canary-$(p)/src/main.cpp)
+	$(CXX) $(CXXFLAGS) -Werror -DSECURACV_OTA_HOST_BUILD -I ../../../common/ota/src \
+	  '-DOTACUT_INC_DISPLAY="test_ota_mgr_cut_display.inc"' \
+	  '-DOTACUT_INC_SENSE="test_ota_mgr_cut_sense.inc"' \
+	  '-DOTACUT_INC_SENTINEL="test_ota_mgr_cut_sentinel.inc"' \
+	  '-DOTACUT_INC_VISION="test_ota_mgr_cut_vision.inc"' \
+	  '-DOTACUT_MAIN_DISPLAY="$(abspath ../../canary-display/src/main.cpp)"' \
+	  '-DOTACUT_MAIN_SENSE="$(abspath ../../canary-sense/src/main.cpp)"' \
+	  '-DOTACUT_MAIN_SENTINEL="$(abspath ../../canary-sentinel/src/main.cpp)"' \
+	  '-DOTACUT_MAIN_VISION="$(abspath ../../canary-vision/src/main.cpp)"' \
+	  -o $@ test_ota_mgr_cut.cpp
+
+.PHONY: run-ota-mgr-cut clean-ota-mgr-cut
+run-ota-mgr-cut: $(OTACUT_BIN)
+	$(call run_marked,$(OTACUT_BIN))
+clean-ota-mgr-cut:
+	rm -f $(OTACUT_BIN) $(OTACUT_INCS)
+
+run: run-ota-mgr-cut
+clean: clean-ota-mgr-cut
+
+# Canary Vision fleet-beacon payload builder (audit A2-07): the real
+# canary-vision/src/net/fleet_beacon_payload.cpp over stand-ins for the
+# witness, diagnostics, STA link, setup door and stored detection settings.
+# The live detection (ALERT flag, class, confidence) rides the cleartext
+# beacon only while the owner's opt-in (detect_config.h beacon_detect) is on,
+# and opted out a detection edge never moves the generation. Here beside the
+# Vision's OTA cut because this is the suite CI runs. Hooked into `run` and
+# `clean` by prerequisite.
+VBEACON_BIN = test_vision_beacon_payload
+VBEACON_SRC = test_vision_beacon_payload.cpp ../../canary-vision/src/net/fleet_beacon_payload.cpp
+VBEACON_HDR = ../../canary-vision/include/canary/detect_config.h \
+  ../../canary-vision/include/canary/net/fleet_beacon_payload.h \
+  ../../../common/fleet_link/fleet_beacon.h
+
+$(VBEACON_BIN): $(VBEACON_SRC) $(VBEACON_HDR)
+	$(CXX) $(CXXFLAGS) -Werror -I ../../canary-vision/include \
+	  -I ../../../configs/canary-vision/default -I ../../../common \
+	  -I ../../../common/fleet_link -o $@ $(VBEACON_SRC)
+
+.PHONY: run-vision-beacon-payload clean-vision-beacon-payload
+run-vision-beacon-payload: $(VBEACON_BIN)
+	$(call run_marked,$(VBEACON_BIN))
+clean-vision-beacon-payload:
+	rm -f $(VBEACON_BIN)
+
+run: run-vision-beacon-payload
+clean: clean-vision-beacon-payload
+
+# The display LAN API's Host guard (audit A2-12), read from
+# src/net/glass_web.cpp: every handler that serves the home network's name,
+# the log ring, the OTA status or the per-witness rows refuses a foreign Host
+# (a DNS-rebinding page) before it sends a byte. glass_web.cpp needs the
+# Arduino WebServer, so this reads the source rather than running it.
+# Hooked into `run` and `clean` by prerequisite.
+HOSTGUARD_BIN = test_glass_web_host_guard
+
+$(HOSTGUARD_BIN): test_glass_web_host_guard.cpp ../src/net/glass_web.cpp
+	$(CXX) $(CXXFLAGS) -Werror \
+	  '-DGLASS_WEB_CPP="$(abspath ../src/net/glass_web.cpp)"' \
+	  -o $@ test_glass_web_host_guard.cpp
+
+.PHONY: run-glass-web-host-guard clean-glass-web-host-guard
+run-glass-web-host-guard: $(HOSTGUARD_BIN)
+	$(call run_marked,$(HOSTGUARD_BIN))
+clean-glass-web-host-guard:
+	rm -f $(HOSTGUARD_BIN)
+
+run: run-glass-web-host-guard
+clean: clean-glass-web-host-guard

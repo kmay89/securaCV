@@ -411,7 +411,10 @@ struct Session {
   /// When the first-boot window began; 0 = none.
   uint32_t window_at_ms = 0;
   /// The window ran out or the cap shut it: no reopening without a tap or
-  /// a power cycle (a factory reset re-arms, since it wipes credentials).
+  /// a power cycle. A factory reset on a unit that had credentials re-arms
+  /// it (session_set_no_credentials); one that never had them stays spent
+  /// until a power cycle or a tap (the glue carries the spent time across
+  /// the restart).
   bool window_spent = false;
   uint32_t provisioning_at_ms = 0;
   uint32_t provisioned_at_ms = 0;

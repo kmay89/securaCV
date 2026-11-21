@@ -93,7 +93,7 @@
     {id:6,gx:17.2,gy:6.3,color:'#059669',hex:'#059669',name:'Proof',label:'Prove it',
      verb:'Prove',title:'it',kick:'Stage 6 · Proof, not promises',
      give:'A witness whose every claim is signed — trust the record without trusting anyone.',draw:'vault',
-     tools:[['✍️','Watch it witness','See a claim get signed — then try to forge it.','https://kmay89.github.io/securaCV/canary-local/scenes.html'],['🔐','Break the glass','Real N-of-M Ed25519 quorum, in your browser.','https://kmay89.github.io/securaCV/canary-local/vault.html#quorum'],['⚖️','Compare & kits','The honest head-to-head vs. the big names.','https://securacv.com/compare.html']],next:null}
+     tools:[['✍️','Watch it witness','See a claim get signed — then try to forge it.','https://kmay89.github.io/securaCV/canary-local/scenes.html'],['🔐','Break the glass','Real N-of-M Ed25519 quorum, in your browser.','https://kmay89.github.io/securaCV/canary-local/vault.html#quorum'],['⚖️','Compare & kits','The honest head-to-head vs. the big names.','https://securacv.com/compare']],next:null}
   ];
   var LINKS=[[1,2],[2,3],[3,4],[4,5],[5,6]];
   var byId={}; STATIONS.forEach(function(s){byId[s.id]=s;});

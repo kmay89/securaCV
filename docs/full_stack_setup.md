@@ -119,16 +119,19 @@ curl -fsSL https://raw.githubusercontent.com/kmay89/securaCV/main/scripts/instal
 It installs and wires this step *and* step 4a in one narrated, idempotent
 run: Mosquitto (minting a `canary` broker login for your devices — the
 password stays out of the terminal; read it under **Settings → Apps →
-Mosquitto broker → Configuration → Logins**), the hub's own MQTT connection,
-Frigate with the curated config already placed, the kernel in frigate mode,
+Mosquitto broker → Configuration → Logins**), the hub's own MQTT connection
+(made through the Mosquitto app's own discovery; if it still does not finish,
+the run names it and you press Submit on the MQTT card under Settings →
+Devices & Services), Frigate with the curated config already placed, the kernel in frigate mode,
 the SecuraCV integration with its config entry created, and the blueprints
 and dashboards. What's left for you is exactly what should be: your cameras'
 RTSP URLs (step 4) and your Canaries' broker login (step 5). Details:
 [`homeassistant_setup.md`](homeassistant_setup.md).
 
-> Worth a detour later: the **no-hands path** (if you ticked **"Let this app
-> finish hub setup by itself"** when flashing, the Flasher runs this whole
-> step for you), **Pi-hole**, and **a screen on the hub** — see
+> Worth a detour later: the **no-hands path** (with **"Put the self-setup
+> bundle and maintenance key on the card"** ticked when flashing, under the
+> Flasher's *Self-setup: broker, MQTT, Frigate, securaCV* panel, the Flasher
+> runs this whole step for you), **Pi-hole**, and **a screen on the hub** — see
 > [the appendix](#appendix--worth-knowing-not-on-the-path).
 
 By hand, it's two installs:
@@ -136,8 +139,8 @@ By hand, it's two installs:
 1. **Mosquitto** — Settings → Apps → App Store → **Mosquitto broker** →
    Install → Start.
 2. **securaCV** — add this repo as an app repository
-   (`https://github.com/kmay89/securaCV`), then install the **Privacy Witness
-   Kernel** app and start it. It **auto-discovers** the broker; no MQTT config
+   (`https://github.com/kmay89/securaCV`), then install the **SecuraCV** app
+   (its store slug is still `privacy_witness_kernel`) and start it. It **auto-discovers** the broker; no MQTT config
    to type.
 3. Open the **SecuraCV** panel in the sidebar — its wizard walks the rest.
 
@@ -181,6 +184,7 @@ cameras:
         - path: rtsp://USER:PASS@10.0.0.20:554/stream   # ← your camera's real URL
           roles: [detect]
     detect: { width: 1280, height: 720, fps: 5 }
+    mqtt: { enabled: false }     # ← keep: no JPEG of each tracked object on the broker
 ```
 
 Restart the app. (The example camera ships **disabled** so the config is valid
@@ -209,7 +213,10 @@ Assistant OS doesn't run on Jetson — it's the *eyes*, not a second hub.)
 > `topic_prefix` (Mosquitto allows one connection per client ID), and point
 > securaCV's `frigate.topic_prefix` at the one you want it to read.
 
-> **Privacy default:** recordings **and** snapshots ship **off** — securaCV is
+> **Privacy default:** recordings **and** snapshots ship **off**, and so do the
+> example camera's MQTT images (`mqtt: enabled: false`: Frigate otherwise
+> publishes a retained JPEG of every tracked object to the broker, whatever
+> `snapshots` says, and a camera you add needs the same block) — securaCV is
 > "claims, not recordings". Detection and events work fully with no raw imagery
 > stored. Turn them on only if you deliberately want stored images (and use an
 > SSD — continuous recording destroys SD cards).
@@ -300,14 +307,17 @@ Three asides from step 3, moved here so the golden path reads straight
 through. Nothing below is required — each is a detour worth taking once the
 hub is up.
 
-**The no-hands path (on by default now):** with **"Finish hub setup by
-itself"** ticked when flashing — it is checked unless you untick it — skip
-most of step 3: keep the Flasher open and it does it for you. The card
+**The no-hands path (on by default now):** with **"Put the self-setup bundle
+and maintenance key on the card"** (under the Flasher's *Self-setup: broker,
+MQTT, Frigate, securaCV* panel) ticked when flashing — it is checked unless you
+untick it — skip most of step 3 (for a card flashed earlier, the Flasher's
+standing banner has a **Finish hub setup** button): keep the Flasher open and it does it for you. The card
 carries the self-setup bundle and a maintenance key; the moment Home
 Assistant answers (the Flasher waits out the OS's "Preparing" page, and
 retries a hub that says "not ready yet" on its own), it connects to the
 hub's service console over your network and installs the broker, the
-Canaries' broker login, the MQTT connection, Frigate, and the securaCV
+Canaries' broker login, the MQTT connection (through the Mosquitto app's own
+discovery; if that still does not finish, the console names it), Frigate, and the securaCV
 kernel app, narrating every step in its console. The Pi never needs a
 monitor — the Flasher's screen is the screen, and so is the iPhone app's
 Set up walkthrough when the Flasher is closed. If a run stops partway it's

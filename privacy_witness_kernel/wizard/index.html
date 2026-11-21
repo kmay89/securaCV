@@ -115,6 +115,7 @@
   .choice { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px;
     border: 1.5px solid var(--border); border-radius: 7px; margin-bottom: 8px; cursor: pointer; }
   .choice input { margin-top: 3px; }
+  .choice input:disabled + span { opacity: 0.55; }
   .choice-label { font-size: 0.95rem; font-weight: 500; }
   .choice-sub { font-size: 0.82rem; color: var(--text-muted); }
 
@@ -280,6 +281,9 @@
       No running Frigate was found, so SecuraCV writes Frigate's camera
       config for you. Enter the name and RTSP stream URL for each camera.
       Name cameras by place ("Front door", "Driveway"), not by person.
+      The config it writes is detection-only: recording is off,
+      snapshots are not turned on and each camera's MQTT images are off —
+      enable either in Frigate if you want footage.
     </p>
 
     <div id="discovered-note" class="info-box green hidden"></div>
@@ -332,9 +336,10 @@
       <input type="radio" name="seal" id="seal-reviews" value="reviews">
       <span>
         <span class="choice-label">Only Frigate alerts</span><br>
-        <span class="choice-sub">Frigate's review items of severity "alert" — what Frigate itself would notify you about.</span>
+        <span class="choice-sub">Frigate's review items of severity "alert" — what Frigate itself would notify you about. Needs recording on in Frigate: it creates alerts only for cameras that record.</span>
       </span>
     </label>
+    <small class="hint hidden" id="seal-reviews-note"></small>
   </div>
 
   <div class="toggle-row">
@@ -694,6 +699,27 @@ function frigateSummary(plan, checks) {
   return `${running} ${cams}, and ${broker}. Nothing to type. ${seal}`;
 }
 
+// Whether "Only Frigate alerts" can be chosen. It makes the bridge listen
+// to Frigate's review items INSTEAD of its events, and Frigate creates
+// review items only for cameras that record. On the RTSP path SecuraCV
+// writes Frigate's camera config itself, detection-only (recording off), so
+// that choice would seal nothing: it is not offered there, and the reason
+// is shown under it. The server holds the same rule (serve_wizard.py,
+// ALERTS_ONLY_NOT_APPLIED_NOTE).
+function sealChoiceView(plan) {
+  if (plan.path === "frigate") return { alertsOffered: true, note: "" };
+  return {
+    alertsOffered: false,
+    note: "\"Only Frigate alerts\" is not offered here: Frigate creates alerts only for cameras that record, and the camera config this wizard writes keeps recording off, so nothing would be sealed. To seal alerts only, turn recording on in Frigate, then turn on frigate.enable_reviews in this app's Configuration tab.",
+  };
+}
+
+// The choice a save carries and the Confirm screen names: alerts-only only
+// where it is offered.
+function sealChoice(form, plan) {
+  return form.seal === "reviews" && sealChoiceView(plan).alertsOffered ? "reviews" : "events";
+}
+
 // What the Confirm screen lists.
 function summaryRows(form, plan) {
   const cameras = plan.path === "frigate"
@@ -703,7 +729,7 @@ function summaryRows(form, plan) {
     ["Mode", "Frigate integration (recommended)"],
     ["Cameras", cameras],
     ["Keep sealed events for", form.retentionLabel],
-    ["What to seal", form.seal === "reviews" ? "Only Frigate alerts" : "Every tracked object"],
+    ["What to seal", sealChoice(form, plan) === "reviews" ? "Only Frigate alerts" : "Every tracked object"],
     ["Daily digest", form.digestEnabled ? form.digestTime : "Disabled"],
   ];
 }
@@ -738,7 +764,7 @@ function savePayload(form, plan, state) {
           zone_id: c.zone_id || "zone:" + zoneSlug(c.name.trim()),
         })),
     retention_days: form.retentionDays,
-    enable_reviews: form.seal === "reviews",
+    enable_reviews: sealChoice(form, plan) === "reviews",
     digest_enabled: form.digestEnabled,
     digest_time: form.digestTime,
   };
@@ -794,9 +820,9 @@ function donePlan(saveResult, status) {
 
   const after = [];
   if (integration.loaded === true) {
-    after.push("Settings → Devices & Services: the \"SecuraCV discovered\" card is there (it may take a moment after the app restarts). Press Configure — nothing to type.");
+    after.push("Settings → Devices & Services: the \"SecuraCV app\" card is under Discovered (it may take a moment after the app restarts). Press Add — nothing to type.");
   } else {
-    after.push("After the restart: Settings → Devices & Services → \"SecuraCV discovered\" → Configure. Nothing to type.");
+    after.push("After the restart: Settings → Devices & Services → the \"SecuraCV app\" card under Discovered → Add. Nothing to type.");
   }
   after.push("Then walk past a camera: the first sealed event appears within a minute, \"Verified ✓\" follows the next chain check.");
   after.push("Add the dashboard: Settings → Dashboards → Add dashboard → SecuraCV.");
@@ -867,6 +893,7 @@ function goTo(step) {
     document.getElementById("start-error").classList.add("hidden");
   }
   if (step === 2) renderCameraScreen();
+  if (step === 3) renderSealChoice();
   if (step === 4) renderSummary();
 }
 
@@ -1045,6 +1072,18 @@ function validateCamerasAndNext() {
     }
   }
   goTo(3);
+}
+
+// ---------------------------------------------------------------------------
+// Settings screen: "Only Frigate alerts" is not offered on the RTSP path
+// ---------------------------------------------------------------------------
+function renderSealChoice() {
+  const view = sealChoiceView(plan);
+  document.getElementById("seal-reviews").disabled = !view.alertsOffered;
+  if (!view.alertsOffered) document.getElementById("seal-events").checked = true;
+  const note = document.getElementById("seal-reviews-note");
+  note.textContent = view.note;
+  note.classList.toggle("hidden", view.alertsOffered);
 }
 
 // ---------------------------------------------------------------------------

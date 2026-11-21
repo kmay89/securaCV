@@ -1,0 +1,154 @@
+{
+  "schema": "securacv-compliance-map:v1",
+  "regime": {
+    "id": "fips_140_3_vocabulary",
+    "title": "FIPS 140-3 / ISO/IEC 19790 / SP 800-57 vocabulary: split knowledge and dual control",
+    "kind": "vocabulary",
+    "determination_by": "a CMVP testing laboratory and NIST, for a cryptographic module; nobody, for a vocabulary mapping",
+    "source": {
+      "citation": "FIPS 140-3; ISO/IEC 19790; NIST SP 800-57",
+      "access": "blocked",
+      "note": "csrc.nist.gov was unreachable when this map was written; term definitions are our paraphrase and are unverified"
+    }
+  },
+  "last_reviewed": "2026-11",
+  "preamble": [
+    "A vocabulary row says which SecuraCV mechanism a reader of FIPS 140-3 / ISO/IEC 19790 language should look at. It is not a statement about module validation: SecuraCV has no validated cryptographic module and no FIPS level (row `validated-module`). The definitions are our paraphrase; NIST sources were not reachable."
+  ],
+  "rows": [
+    {
+      "id": "split-knowledge",
+      "clause": "split knowledge",
+      "clause_verified": false,
+      "requirement": "No one person holds or sees a whole secret.",
+      "mechanism": "The vault KEK pair is shared n-of-m with Pedersen VSS over ristretto255. Shares travel in HPKE boxes to holders. It is reconstructed only in memory inside the unseal gate, after a device-signed redemption row of a quorum-approved grant, and zeroized immediately after the DEK unwrap (spec/quorum_unseal_v2.md:84-89). Threshold decryption, in which the KEK never exists whole, is a named future seam, not this design.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "spec/quorum_unseal_v2.md",
+          "anchor": "2-layer-1--threshold-custody-the-lock"
+        }
+      ],
+      "depends_on": [
+        "item5:S",
+        "item5:U",
+        "item5:V"
+      ]
+    },
+    {
+      "id": "dual-control-authorization",
+      "clause": "dual control",
+      "clause_verified": false,
+      "requirement": "An action requires two or more people acting together.",
+      "mechanism": "n-of-m trustee approvals for grants and policy changes, re-derived at the gate; the operator sets n.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/break_glass/core.rs",
+          "test": "valid_signature_counts_toward_quorum"
+        },
+        {
+          "kind": "test",
+          "path": "src/break_glass/core.rs",
+          "test": "duplicate_trustee_approvals_only_count_once"
+        },
+        {
+          "kind": "test",
+          "path": "src/break_glass/cli.rs",
+          "test": "policy_set_mutation_requires_and_accepts_current_quorum_approvals"
+        },
+        {
+          "kind": "code",
+          "path": "src/break_glass/core.rs",
+          "symbol": "pub fn authorize("
+        }
+      ],
+      "operator_action": "Set the quorum threshold to 2 or more and record the roster and threshold in the CPS; a threshold change is itself a quorum policy change.",
+      "limits": "The gate enforces the threshold the policy states, and a policy may set it to 1 (QuorumPolicy refuses only 0): under a 1-of-1 policy one trustee authorizes alone. Two-person control holds only when the operator sets n to 2 or more."
+    },
+    {
+      "id": "dual-control-key",
+      "clause": "dual control",
+      "clause_verified": false,
+      "requirement": "Using the key itself needs several parties.",
+      "mechanism": "Release of shares at the gate.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "spec/quorum_unseal_v2.md",
+          "anchor": "2-layer-1--threshold-custody-the-lock"
+        }
+      ],
+      "depends_on": [
+        "item5:V"
+      ]
+    },
+    {
+      "id": "zeroization",
+      "clause": "zeroization",
+      "clause_verified": false,
+      "requirement": "Secrets are destroyed after use.",
+      "mechanism": "The zeroization order of the release protocol.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "spec/quorum_unseal_v2.md",
+          "anchor": "2-layer-1--threshold-custody-the-lock"
+        }
+      ],
+      "depends_on": [
+        "item5:V",
+        "item5:X"
+      ]
+    },
+    {
+      "id": "key-component-entry",
+      "clause": "key component entry",
+      "clause_verified": false,
+      "requirement": "Key components are entered by separate parties.",
+      "mechanism": "Holder-side share release with the roster pinned in every share.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "spec/quorum_unseal_v2.md",
+          "anchor": "2-layer-1--threshold-custody-the-lock"
+        }
+      ],
+      "depends_on": [
+        "item5:S",
+        "item5:V"
+      ]
+    },
+    {
+      "id": "validated-module",
+      "clause": "module validation",
+      "clause_verified": false,
+      "requirement": "A cryptographic module is validated under the CMVP.",
+      "mechanism": "None.",
+      "status": "not-pursued",
+      "evidence": [
+        {
+          "kind": "decision",
+          "path": "docs/security/ENTERPRISE_CUSTODY.md",
+          "anchor": "6-regulated-market-assurance-tier"
+        }
+      ],
+      "reason": "Regulated-market assurance controls are absent by design from the consumer kernel and belong to a separate tier; nothing in this tree has CMVP module validation."
+    },
+    {
+      "id": "approved-functions",
+      "clause": "approved security functions",
+      "clause_verified": false,
+      "requirement": "Approved security functions are used in an approved mode.",
+      "mechanism": "Ed25519, SHA-256, ChaCha20-Poly1305, ML-KEM-768 and HPKE are named as algorithms only.",
+      "status": "not-applicable",
+      "evidence": [],
+      "reason": "Approval is a property of module validation under the CMVP, which nothing in this tree has; naming algorithms states nothing about approval."
+    }
+  ]
+}

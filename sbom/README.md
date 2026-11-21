@@ -79,18 +79,28 @@ resolver against PlatformIO's own `pio project config` for every build env
 
 | From | What the document takes |
 |------|-------------------------|
-| `firmware/flavors.json` | the products (`canary`, `canary-wap`, `canary-vision`, `canary-display`, `canary-sense`), their project dir, the envs CI builds and the subset that ships |
+| `firmware/flavors.json` | the products (`canary`, `canary-wap`, `canary-vision`, `canary-display`, `canary-sense`, `canary-sentinel`), their project dir, the envs CI builds and the subset that ships |
 | each project's `platformio.ini` + its `extra_configs` | the **resolved** config of every build env: `platform`, `framework`, `board`, `lib_deps`, `lib_extra_dirs` — through `extends` chains and `${section.option}` interpolation, the same way PlatformIO reads them |
 | `firmware/envs/platformio/platforms.ini` | which pin section each env's platform literal is ([`firmware/PLATFORMS.md`](../firmware/PLATFORMS.md)) |
 | `firmware/common/*/library.json` / `library.properties`, `firmware/canary/lib/*/library.json` | the first-party libraries (name, version, license) the images are built from |
-| `.github/workflows/*.yml` | every `esp32:esp32` core version the Arduino-CLI build path pins through `.github/actions/setup-arduino-esp32` (a literal, a matrix axis, or the action's "latest"), with each row's library pins and the sketch it goes on to compile |
+| `firmware/third_party/*/library.properties` | the upstream libraries built from a patched, committed copy ([`firmware/third_party/README.md`](../firmware/third_party/README.md)): the copy's name and version, and which builds link it — every build env whose `lib_extra_dirs` lists that storage and every Arduino-CLI row that passes the directory with `--library` |
+| `.github/workflows/*.yml` | every `esp32:esp32` core version the Arduino-CLI build path pins through `.github/actions/setup-arduino-esp32` (a literal, a matrix axis, or for a row that floats the major its `core-line` names), with each row's library pins and the sketch it goes on to compile |
 | `firmware/projects/*/arduino/*/sketch.yaml` | the other Arduino axis: the core (`esp32:esp32 (X.Y.Z)`) and library pins of every sketch profile, parsed from YAML — the files' comments quote core numbers too |
 | `firmware/canary/include/canary_config.h` | `FIRMWARE_VERSION` — the one release train (`scripts/lint_fw_version_sync.sh` holds the other six copies to it) |
 
 Each product is a `firmware` component; each PlatformIO platform package a
 `platform` component; each Arduino core and ESP-IDF release a `framework`
 component; every `lib_deps` entry and every first-party library a `library`
-component. The `dependencies` graph joins them: product → platform → Arduino
+component; and every library a release row installs through `arduino-cli`
+(`firmware-release.yml`, `flasher-release.yml`: the signed WAP image and the
+display images built that way, and the Flasher's factory images) an
+`arduino-lib:<name>@<version>` `library` component, with those rows as its
+`securacv:build_paths` and the products they build depending on it. Each
+`firmware/third_party` copy is a `vendored:<dir>` `library` component with a
+`pedigree` (below), its envs in `securacv:envs`, its Arduino-CLI rows in
+`securacv:build_paths`, and the products those builds belong to depending on
+it: today the core-2 WebServer with the GHSA-8cmm-3887-r32j backport, linked
+by Vision, the core-2 displays and Sentinel Lite. The `dependencies` graph joins them: product → platform → Arduino
 core → ESP-IDF, product → libraries. Which envs a platform or library serves is
 in each component's `securacv:envs` property; which build paths reach an
 Arduino core — PlatformIO platform sections, workflow rows, sketch profiles —
@@ -119,23 +129,36 @@ it — naming the row, the profile and the remedy:
    or the sketch dir it `cd`s into) — the release jobs install the WAP's core
    and both display cores in one job.
 
+A fourth rule is about the release rows alone: every library a
+`firmware-release.yml` or `flasher-release.yml` row installs names one exact
+version (`NimBLE-Arduino@2.5.2`), or generation fails naming the row. The
+action runs `arduino-cli lib install` on each line as written, so a bare name
+was Library Manager's newest release on the day the image was built and
+signed, recorded nowhere but that run's log. A bump is a reviewed edit of the
+row and of the sketch.yaml profile on its core, which rule 3 holds equal.
+
 Not asserted, on purpose: a workflow row on the action's "latest" has no
-version to agree with, and a sketch may pin libraries its row leaves floating.
+version to agree with, and a sketch may pin libraries its row leaves floating
+(`firmware.yml`'s PR rows and `csi_module_disable_matrix.yml`'s row still
+float; neither ships an image).
 That leaves one recorded residual, not a drift: the WAP's release rows
 (`firmware-release.yml`, `flasher-release.yml`, `ram_audit.yml`,
-`csi_module_disable_matrix.yml`) pin 3.3.8, the WAP sketch's core and the one
+`csi_module_disable_matrix.yml`) pin 3.3.11, the WAP sketch's core and the one
 inside `platform_core3`, so rule 1 holds them to the sketch; `firmware.yml`'s
-PR row still builds on "latest" by design, the early warning for the next
-core, and appears under the `framework:arduino-esp32@latest` component. That
+PR row still floats by design, the early warning for the next core, on the
+3.x line (`core-line: "3"`: the newest stable 3.x release that week, never
+the next major), and appears under the `framework:arduino-esp32@3.x`
+component, which carries no version because it has none. That
 split is a release decision ([`firmware/PLATFORMS.md`](../firmware/PLATFORMS.md),
-#1802), not a lint's. The generator does not refuse a row moved back to
-"latest" (it moves that build path to the `@latest` component, and `--check`
-is red until the document is regenerated); `scripts/tests/test_gen_firmware_sbom.py`
+#1802, bounded to a line on 2026-11-20), not a lint's. The generator does not
+refuse a row moved back to plain "latest" (it moves that build path to an
+`@latest` component, and `--check` is red until the document is regenerated;
+`.github/scripts/test_setup_arduino_esp32.py` is what refuses it); `scripts/tests/test_gen_firmware_sbom.py`
 holds each WAP row to its side of the split.
 
 ### What is still declared by hand
 
-Two facts are not in any file of ours, and are typed into the generator once,
+Three facts are not in any file of ours, and are typed into the generator once,
 where a reviewer can see them:
 
 - **`PLATFORM_FACTS`** — for each platform literal in `platforms.ini`, the
@@ -148,6 +171,17 @@ where a reviewer can see them:
   line ships today, not a promise. Since 2026-09-22 every section pins
   exactly (canary's `espressif32 @ ^7.0.0` was the last float —
   `firmware/PLATFORMS.md`), so the document carries no such component today.
+- **`VENDORED_FACTS`** — for each `firmware/third_party` copy, what it was
+  copied from (repository, tag, path, and the upstream manifest's own name and
+  version), the one Arduino core it belongs to, and the advisories its patch
+  resolves. They become the `vendored:<dir>` component's CycloneDX `pedigree`
+  (one ancestor, one `backport` patch). The copy is group `securacv`, built
+  from this repository's sources, so `check_firmware_advisories.py` does not
+  compare it; upstream's advisories are still compared with the core it came
+  from, which every product that links it also depends on. Generation fails
+  on a directory with no entry, an entry with no directory, a manifest version
+  that is not `<core>+securacv.<n>`, a build that links the copy on any other
+  core, and a copy no build links.
 - **The two framework licenses** (LGPL-2.1-or-later for arduino-esp32,
   Apache-2.0 for ESP-IDF).
 
@@ -157,11 +191,37 @@ And two things are deliberately **not** claimed:
   Their versions are fixed by the IDF release, which nothing in this tree pins
   independently; the old template's numbers for them were a guess dressed as a
   record. The `esp-idf` component says so in `securacv:bundled_components`.
-- **Resolved library versions.** PlatformIO keeps no lockfile. A `lib_deps`
-  entry with an exact spec (`GFX Library for Arduino@1.6.6`) gets a `version`;
-  a range (`ArduinoJson@^7.0.0`) gets only `securacv:version_spec` and
-  `securacv:resolved: at build time`. The version a given build linked is in
-  that build's log, not here.
+- **Resolved versions of a range.** PlatformIO keeps no lockfile. A
+  `lib_deps` entry with an exact spec (`GFX Library for Arduino@1.6.6`) gets a
+  `version`; a range (`^7.0.0`) gets only `securacv:version_spec` and
+  `securacv:resolved: at build time`, and the version a given build linked is
+  in that build's log, not here. Every `lib_deps` entry in
+  `firmware/envs/platformio/*.ini` is an exact pin (the versions the
+  fw-v2.4.20 release build resolved), so the products those inis configure
+  carry versions; `firmware/canary/platformio.ini` states its own `lib_deps`,
+  and a range there is still recorded only as a range.
+
+### Advisories
+
+Dependabot has no PlatformIO or Arduino ecosystem, and OSV and the GitHub
+Advisory Database have none for Arduino C/C++ libraries or ESP-IDF, so a
+scanner fed this document's purls would match nothing and pass.
+[`scripts/check_firmware_advisories.py`](../scripts/check_firmware_advisories.py),
+run weekly by `audit.yml`'s `firmware-advisories` job, reads the upstreams'
+own records instead: each third-party component's upstream repository (its
+`UPSTREAM` table) and that repository's published GitHub security advisories,
+whose affected ranges it compares with the component's exact `version`. It
+fails on a match; on a range it cannot read, until its `REVIEWED` table
+records a verdict; and on a third-party component with no exact version or
+no known upstream, so it cannot pass on a component it never compared. The
+one component it leaves unchecked, and says so, is the Arduino core on the
+3.x line (no fixed version) that only `firmware.yml`'s PR row builds. It needs no
+secret (the job's own token, for the rate limit). It does not cover
+Espressif's own advisory page, a CVE with no repository advisory, the
+libraries bundled inside ESP-IDF (not enumerated here) or the libraries'
+transitive dependencies; its output says so on every run.
+`python3 scripts/check_firmware_advisories.py --coverage` runs the coverage
+half offline. Tests: `scripts/tests/test_check_firmware_advisories.py`.
 
 ### Determinism
 
@@ -182,8 +242,9 @@ python3 scripts/gen_firmware_sbom.py --verify-with-pio     # needs `pio` on PATH
 ```
 
 Run the first after changing a platform pin, a `lib_deps` line, a library
-manifest, an Arduino core pin in a workflow, a `sketch.yaml` profile, or the
-firmware version, and commit the result in the same change. `--validate`
+manifest (a `firmware/third_party` copy's included), an Arduino core pin in a
+workflow, a `sketch.yaml` profile, or the firmware version, and commit the
+result in the same change. `--validate`
 needs `pip install 'cyclonedx-python-lib[json-validation]==11.12.0'` (the
 generator names that spec when the import fails, and the unit tests hold
 every workflow's pip line and this page to that one string); it is read-only,

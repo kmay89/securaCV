@@ -286,6 +286,11 @@ fn main() -> Result<()> {
                             id,
                             &verify_helpers::hex32(&entry_hash)[..16]
                         ),
+                        VerifiedItem::ClockProvenance { id, entry_hash } => println!(
+                            "  clock-provenance record {}: hash={} OK",
+                            id,
+                            &verify_helpers::hex32(&entry_hash)[..16]
+                        ),
                     }
                 }
             },
@@ -341,23 +346,58 @@ fn main() -> Result<()> {
             args.db
         );
     }
+    if let Some(n) = report.ots_anchors_checked {
+        println!(
+            "ots anchors: {n} checked (structural; Bitcoin attestations: log_anchor --db {} verify \
+             --bitcoin-headers <file>)",
+            args.db
+        );
+    }
     println!();
 
     println!("=== Break-Glass Receipts ===");
     println!(
-        "verified {} receipt entries ({} granted, {} denied, {} redeemed)",
+        "verified {} receipt entries ({} granted, {} denied, {} redeemed{})",
         report.break_glass_receipts_verified,
         report.break_glass_granted,
         report.break_glass_denied,
-        report.break_glass_redeemed
+        report.break_glass_redeemed,
+        report
+            .break_glass_unsealed
+            .map(|u| format!(", {} unsealed", u))
+            .unwrap_or_default()
     );
     println!();
 
     println!("=== Export Receipts ===");
     println!(
-        "verified {} export receipt entries",
-        report.export_receipts_verified
+        "verified {} export receipt entries{}",
+        report.export_receipts_verified,
+        report
+            .export_receipts_authorized
+            .map(|a| format!(", {} name their authorizing grant", a))
+            .unwrap_or_default()
     );
+    println!();
+
+    println!("=== Clock Provenance ===");
+    match report.clock_provenance_verified {
+        Some(n) => println!(
+            "verified {n} clock-provenance record(s) (device clock vs TSA genTime, one per \
+             anchor; assessment: log_anchor --db {} verify)",
+            args.db
+        ),
+        // A failed report carries no count: the ledger is what failed, or
+        // the verdict failed elsewhere (before the walk or after it), and
+        // neither means it is empty.
+        None if !report.chain_valid => match &report.failure {
+            Some(f) if f.ledger == verify::FailedLedger::ClockProvenance => {
+                println!("clock-provenance ledger FAILED (see Diagnosis)")
+            }
+            _ => println!("not reported: verification failed (see Diagnosis)"),
+        },
+        None => println!("no clock-provenance records"),
+    }
 
     if !report.chain_valid {
         if let Some(failure) = &report.failure {
@@ -375,11 +415,15 @@ fn main() -> Result<()> {
 
     // Anchor-row anomalies are a different finding from timeline anomalies
     // (a damaged auxiliary row, not a gap in the record), so they print under
-    // their own heading.
-    let (anchor_warnings, timeline_warnings): (Vec<&String>, Vec<&String>) = report
-        .warnings
-        .iter()
-        .partition(|w| verify::classify_warning(w) == verify::WarningKind::AnchorAnomaly);
+    // their own heading — the clock-provenance cross-check findings with them,
+    // since both are about the anchors table.
+    let (anchor_warnings, timeline_warnings): (Vec<&String>, Vec<&String>) =
+        report.warnings.iter().partition(|w| {
+            matches!(
+                verify::classify_warning(w),
+                verify::WarningKind::AnchorAnomaly | verify::WarningKind::ClockProvenance
+            )
+        });
     if !timeline_warnings.is_empty() {
         println!();
         println!("=== Timeline Audit ===");
@@ -387,13 +431,25 @@ fn main() -> Result<()> {
         print_warnings(&timeline_warnings);
     }
     if !anchor_warnings.is_empty() {
+        let (clock_warnings, row_warnings): (Vec<&String>, Vec<&String>) = anchor_warnings
+            .iter()
+            .partition(|w| verify::classify_warning(w) == verify::WarningKind::ClockProvenance);
         println!();
         println!("=== Anchor Audit ===");
-        println!(
-            "The ledgers verified and no anchored head is missing; these anchor rows cannot \
-             vouch for anything:"
-        );
-        print_warnings(&anchor_warnings);
+        if !row_warnings.is_empty() {
+            println!(
+                "The ledgers verified and no anchored head is missing; these anchor rows cannot \
+                 vouch for anything:"
+            );
+            print_warnings(&row_warnings);
+        }
+        if !clock_warnings.is_empty() {
+            println!(
+                "The clock-provenance ledger verified; these records contradict the anchors \
+                 table or read the device clock far from the TSA's time:"
+            );
+            print_warnings(&clock_warnings);
+        }
     }
     if args.strict && !report.warnings.is_empty() {
         // Exit 2, the same code the --json path uses for --strict warnings, so
@@ -882,7 +938,7 @@ mod tests {
     }
 
     #[test]
-    fn log_verify_rejects_unknown_trustee_approvals() -> Result<()> {
+    fn log_verify_skips_unknown_trustee_approvals_and_rejects_a_grant_on_them() -> Result<()> {
         let db = TempDb::new();
         let mut kernel = Kernel::open(&KernelConfig {
             db_path: db.path().to_string_lossy().to_string(),
@@ -910,23 +966,49 @@ mod tests {
         let approval = Approval::signed(TrusteeId::new("bob"), request.request_hash(), &bob_key);
         let (_, receipt) =
             BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
-        let _entry_hash = kernel.append_break_glass_receipt(&receipt, &[approval])?;
+        assert!(matches!(
+            receipt.outcome,
+            witness_kernel::BreakGlassOutcome::Denied { .. }
+        ));
+        let _entry_hash =
+            kernel.append_break_glass_receipt(&receipt, std::slice::from_ref(&approval))?;
 
         let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
-        drop(kernel);
+        let walk = |db: &Path| -> Result<()> {
+            let conn = open_encrypted_test_db(db);
+            let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
+            let policy = verify::load_break_glass_policy(&conn)?;
+            verify::verify_break_glass_receipts_with(
+                &conn,
+                std::slice::from_ref(&verifying_key),
+                policy.as_ref(),
+                SignatureMode::Compat,
+                None,
+                |_, _| {},
+            )
+            .map(|_| ())
+        };
+        // The honest denial verifies: an approval from a trustee outside the
+        // roster never counted, and the reader skips it (reader hardening).
+        walk(db.path())?;
 
-        let conn = open_encrypted_test_db(db.path());
-        let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
-        let policy = verify::load_break_glass_policy(&conn)?;
-        let result = verify::verify_break_glass_receipts_with(
-            &conn,
-            std::slice::from_ref(&verifying_key),
-            policy.as_ref(),
-            SignatureMode::Compat,
-            None,
-            |_, _| {},
+        // A device-signed row relabeled Granted on that approval still fails:
+        // a skipped approval is never counted.
+        let forged = witness_kernel::BreakGlassReceipt {
+            outcome: witness_kernel::BreakGlassOutcome::Granted,
+            trustees_used: vec![TrusteeId::new("bob")],
+            ..receipt
+        };
+        kernel.append_break_glass_receipt(&forged, &[approval])?;
+        drop(kernel);
+        let err = walk(db.path()).unwrap_err();
+        assert!(
+            format!("{err:#}").contains(
+                "break-glass receipt claims Granted but only 0 of the required 1 distinct \
+                 trustee approvals are valid"
+            ),
+            "{err:#}"
         );
-        assert!(result.is_err());
 
         Ok(())
     }
@@ -990,7 +1072,7 @@ mod tests {
     }
 
     #[test]
-    fn log_verify_rejects_invalid_trustee_signature() -> Result<()> {
+    fn log_verify_skips_an_invalid_trustee_signature_and_rejects_a_grant_on_it() -> Result<()> {
         let db = TempDb::new();
         let mut kernel = Kernel::open(&KernelConfig {
             db_path: db.path().to_string_lossy().to_string(),
@@ -1020,23 +1102,49 @@ mod tests {
             Approval::signed(TrusteeId::new("alice"), request.request_hash(), &wrong_key);
         let (_, receipt) =
             BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
-        let _entry_hash = kernel.append_break_glass_receipt(&receipt, &[approval])?;
+        assert!(matches!(
+            receipt.outcome,
+            witness_kernel::BreakGlassOutcome::Denied { .. }
+        ));
+        let _entry_hash =
+            kernel.append_break_glass_receipt(&receipt, std::slice::from_ref(&approval))?;
 
         let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
-        drop(kernel);
+        let walk = |db: &Path| -> Result<()> {
+            let conn = open_encrypted_test_db(db);
+            let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
+            let policy = verify::load_break_glass_policy(&conn)?;
+            verify::verify_break_glass_receipts_with(
+                &conn,
+                std::slice::from_ref(&verifying_key),
+                policy.as_ref(),
+                SignatureMode::Compat,
+                None,
+                |_, _| {},
+            )
+            .map(|_| ())
+        };
+        // The honest denial verifies: a signature that does not verify never
+        // counted, and the reader skips it (reader hardening).
+        walk(db.path())?;
 
-        let conn = open_encrypted_test_db(db.path());
-        let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
-        let policy = verify::load_break_glass_policy(&conn)?;
-        let result = verify::verify_break_glass_receipts_with(
-            &conn,
-            std::slice::from_ref(&verifying_key),
-            policy.as_ref(),
-            SignatureMode::Compat,
-            None,
-            |_, _| {},
+        // A device-signed row relabeled Granted on that signature still
+        // fails: a skipped approval is never counted.
+        let forged = witness_kernel::BreakGlassReceipt {
+            outcome: witness_kernel::BreakGlassOutcome::Granted,
+            trustees_used: vec![TrusteeId::new("alice")],
+            ..receipt
+        };
+        kernel.append_break_glass_receipt(&forged, &[approval])?;
+        drop(kernel);
+        let err = walk(db.path()).unwrap_err();
+        assert!(
+            format!("{err:#}").contains(
+                "break-glass receipt claims Granted but only 0 of the required 1 distinct \
+                 trustee approvals are valid"
+            ),
+            "{err:#}"
         );
-        assert!(result.is_err());
 
         Ok(())
     }

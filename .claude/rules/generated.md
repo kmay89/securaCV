@@ -3,6 +3,7 @@ paths:
   - "**/*.scad"
   - "devices/*/device.json"
   - "canary-local/devices/*.json"
+  - "canary-local/*.html"
   - "canary-local/tools/gen_*.py"
   - "canary-local/tools/**/gen_*.mjs"
   - "docs/hardware/enclosure/gen_*.py"
@@ -20,6 +21,7 @@ paths:
   - "firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h"
   - "spec/witness_dictionary.json"
   - "spec/device_details_vocabulary.json"
+  - "docs/compliance/maps/*.json"
   - "AGENTS.md"
   - ".github/release-targets.yml"
 ---
@@ -37,6 +39,7 @@ The account, with the stories: [`docs/GENERATED_FILES.md`](../../docs/GENERATED_
 | `spec/device_details_vocabulary.json` | `python3 scripts/gen_device_vocabulary.py` — `custom_components/securacv/device_vocabulary.py`, read by the diagnostics dump's `TO_REDACT`; its `--check` also fails a firmware edit that drops a key a row names, and the old key moves into `diagnostics.py`'s `INTEGRATION_REDACT_KEYS` before the row does (the generator will not drop a redacted key) |
 | a `.scad`, or `cad.params` in `devices/<slug>/device.json` | `python3 scripts/regen_cad.py --previews <dir>` — the whole chain in order; previews go to the requester |
 | `canary-local/devices/*.json` (a catalog) | the `canary-local/tools/gen_*.py` that reads it; `python3 scripts/lint_device_manifests.py` proves the joins |
+| a Lab page's `<title>` or description (`canary-local/*.html`) | `python3 canary-local/tools/gen_head.py` — the canonical link and share tags in its `<head>` |
 | a WAP portal page (`web_ui.h`, `csi_dashboard_html.h`, `companion_pwa.h`) | `gen_web_assets_gz.py` beside it, then `gen_wap.py`, **then** `gen_csp.py` |
 | `PORTAL_HTML` in `canary-display/src/net/provision.cpp` | `gen_display_portal.py`, **then** `gen_csp.py`, then the dist rebuild |
 | anything `canary-local/emulator/build.sh` compiles (display `src/`, the Vision core, `firmware/common/`, a `version.h`) | the dist rebuild, Actions → "Rebuild emulator dist (pinned emsdk)" on your branch, **before** any `gen_*.py` catalog (`canary-local/AGENTS.md`) |

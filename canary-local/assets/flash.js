@@ -63,10 +63,23 @@ const state = {
   session: null,        // { port, transport, esploader }
   chip: null,           // "ESP32-S3"
   chipDesc: null,
+  // The factory hardware address, kept in memory to recognize this board
+  // again this session (the roster, the backup dedupe, the intake checks).
+  // Never drawn unless the person asks ("Hardware address · Show"), never
+  // copied, and never written into a report or a file name. (A backup is the
+  // flash's own bytes, and ESP-IDF keeps the address in NVS with its PHY
+  // calibration, so a backup holds it the way the board does.)
   mac: null,
   flashBytes: null,
+  // About this board (aboutFacts): the allowlisted eFuse fields
+  // (intake.readChipFuses — undefined until read, null if the read failed)
+  // and the bootloader's image header (undefined until read, false if the
+  // read failed, null if there is no image at its offset).
+  chipFuses: undefined,
+  bootHeader: undefined,
+  fileCounter: 0,          // the "-1", "-2"… in a saved file's neutral name
   current: null,        // { productName, version, projectName } | { unknown:true }
-  backup: null,         // { bytes, name, mac } once taken this session
+  backup: null,         // { bytes, name, mac } once taken this session (mac: in memory only)
   report: null,         // last health-check result
   busy: false,
   ble: null,            // { device, characteristic } while a BLE console is open
@@ -1243,7 +1256,7 @@ async function onConnect() {
     // A stalled read should fail fast and retry (we read in small chunks),
     // not sit out esptool-js's default 100 s silence window per packet.
     esploader.FLASH_READ_TIMEOUT = 15000;
-    detail.textContent = "Asking for its MAC address and flash size…";
+    detail.textContent = "Asking for its hardware address and flash size…";
     try { state.mac = await esploader.chip.readMac(esploader); } catch { state.mac = null; }
     try {
       const kb = await esploader.getFlashSize();
@@ -1329,16 +1342,19 @@ let logSink = null;
 function makeTerminal() {
   return {
     clean() { if (logSink) logSink.textContent = ""; },
-    writeLine(data) { if (logSink) { logSink.textContent += data + "\n"; logSink.scrollTop = logSink.scrollHeight; } },
-    write(data) { if (logSink) { logSink.textContent += data; logSink.scrollTop = logSink.scrollHeight; } },
+    // esptool's connect logs "MAC: …" unasked; the address is masked here so
+    // the technical log never shows it (core.maskHardwareAddress).
+    writeLine(data) { if (logSink) { logSink.textContent += core.maskHardwareAddress(data) + "\n"; logSink.scrollTop = logSink.scrollHeight; } },
+    write(data) { if (logSink) { logSink.textContent += core.maskHardwareAddress(data); logSink.scrollTop = logSink.scrollHeight; } },
   };
 }
 
 // ── self-healing: the "I'm stuck" escape hatch ──────────────────────────────
 // One click turns a stuck moment into a paste-able report for Discussions.
-// Public-only is enforced inside buildDiagnosticReport itself (fixed field
-// allowlist, non-stable MAC tail, credential-scrubbed serial tail) — this
-// caller only gathers; it can't leak what the builder won't print.
+// What the report carries is decided inside buildDiagnosticReport itself
+// (fixed field allowlist with no hardware address, a serial tail scrubbed of
+// credential lines and of the identity lines it names) — this caller only
+// gathers; it can't add what the builder won't print.
 const hex4 = (n) => (n == null ? null : "0x" + n.toString(16).padStart(4, "0"));
 
 function gatherDiagnostics(extra = {}) {
@@ -1359,7 +1375,6 @@ function gatherDiagnostics(extra = {}) {
     catalogVersion: state.catalog && state.catalog.fw_train,
     chip: state.chip,
     chipDesc: state.chipDesc,
-    mac: state.mac ? core.formatMac(state.mac) : undefined,
     flashBytes: state.flashBytes || undefined,
     usb,
     baud: state.usedBaud,
@@ -1435,12 +1450,19 @@ async function readFlashChunked(esploader, offset, size, onProgress) {
 async function readCurrentFirmware() {
   state.current = null;
   state.pt = null;
+  state.bootHeader = undefined;
   // Did the partition sector actually come off the chip? "ok" means we got
   // bytes (whatever was in them); "failed" means the read threw. The intake
   // check needs these apart — an unread chip must never render as an empty
   // one, or missing evidence becomes the cleanest verdict on the page.
   state.ptRead = "failed";
   const { esploader } = state.session;
+  // The bootloader's image header: what flash the installed image was built
+  // for (About this board, "From the installed image"). 32 bytes, read-only.
+  try {
+    const hb = await readFlashChunked(esploader, core.bootloaderOffset(state.chip), 0x20);
+    state.bootHeader = core.parseBootloaderHeader(hb, state.chip);
+  } catch { state.bootHeader = false; }
   try {
     const ptBytes = await readFlashChunked(esploader, 0x8000, 0xc00);
     state.ptRead = "ok";
@@ -1473,9 +1495,14 @@ async function readCurrentFirmware() {
       projectName: d.projectName,
       productName: product ? product.name : null,
       idf: d.idfVer || null,
+      secureVersion: d.secureVersion,
+      elfSha256Prefix: d.elfSha256Prefix,
     };
   } catch {
-    state.current = { unknown: true };
+    // A read that threw — the partition table's, or the descriptor's after a
+    // good table — is not an empty board: About this board says "Not checked"
+    // for it (aboutFacts), as the desktop does for a passport read that failed.
+    state.current = { unknown: true, readFailed: true };
   }
 }
 
@@ -1507,6 +1534,17 @@ async function runIntake(narrate) {
       efuses = intake.readSecurityEfuses(state.chip, words);
     }
   } catch { efuses = null; }
+
+  // 1b. What this chip is (About this board): the allowlisted fields of
+  //     eFuse blocks 1 and 2 — package, wafer, in-package flash and PSRAM,
+  //     calibration — each word reduced to those fields as it arrives, so
+  //     no word (and none of the per-chip trims beside them) is kept.
+  state.chipFuses = null;
+  try {
+    say("Customs — reading what this chip is…");
+    state.chipFuses = await intake.readChipFuses(state.chip, esploader.chip && esploader.chip.EFUSE_BASE,
+      (addr) => esploader.readReg(addr));
+  } catch { state.chipFuses = null; }
 
   // 2. Is the flash the size its SPI id claims? A relabeled part wraps its
   //    address lines, so reading AT a candidate capacity returns offset zero
@@ -1660,11 +1698,18 @@ function phaseConnected() {
   head.append(ht);
   hello.append(head);
 
+  // About this board, L1: the chip and its revision, the flash it carries,
+  // and the hardware address behind a reveal. The rest (L2, L4) folds out
+  // below. The same rows, words and order as the desktop Flasher's This
+  // Board card (core.aboutBoardGroups; desktop_parity.test.js).
+  const about = core.aboutBoardGroups(aboutFacts());
+  const aboutRow = (id) => about[0].rows.find((r) => r.id === id);
   const facts = el("div", "flash-facts");
-  facts.append(fact("Chip", state.chipDesc || state.chip, "chip"));
-  if (state.mac) facts.append(fact("ID (MAC)", core.formatMac(state.mac), "mac"));
-  if (state.flashBytes) facts.append(fact("Flash", core.formatBytes(state.flashBytes), "flash_size"));
+  facts.append(fact("Chip", aboutRow("chip").value, "chip"));
+  if (state.flashBytes) facts.append(fact("Flash", aboutRow("flash").value, "flash_size"));
+  if (state.mac) facts.append(macRevealFact());
   hello.append(facts);
+  hello.append(renderAboutBoard(about));
 
   // The passport strip: the board's story so far, read without changing a
   // byte while we said hello — updates seen, lifetime boots, witness records,
@@ -1974,7 +2019,6 @@ function renderRosterStrip() {
     row.append(el("span", "flash-roster-n", `#${l.n}`));
     const main = el("span", "flash-roster-main");
     main.append(el("strong", null, l.label));
-    if (l.mac) main.append(document.createTextNode(` ${l.mac}`));
     if (l.extras) main.append(el("span", "flash-roster-extras", ` · ${l.extras}`));
     row.append(main);
     row.append(el("span", "flash-roster-ago", l.ago));
@@ -1982,8 +2026,9 @@ function renderRosterStrip() {
   });
   sec.append(list);
   sec.append(el("p", "fineprint",
-    "Kept for this tab only, and only public facts — which firmware, which " +
-    "dials, whether WiFi was baked (never the network itself)."));
+    "Kept for this tab only: which firmware, which dials, whether WiFi was " +
+    "baked (never the network itself), and each board's hardware address, only " +
+    "to recognize it if it comes back — never shown."));
   return sec;
 }
 
@@ -2169,7 +2214,7 @@ async function takeBackup(box, journey) {
   }
   const secs = (performance.now() - t0) / 1000;
   if (journey && toRead > 0 && secs > 0.5) journey.rate("link", toRead / secs, 0);
-  const name = `canary-${macStamp()}-backup.bin`;
+  const name = core.backupFileName(nextFileStamp());
   downloadBytes(bytes, name);
   state.backup = { bytes, name, mac: state.mac };
   if (journey) journey.done("backup", skipped > 0
@@ -2370,6 +2415,14 @@ function renderPicker() {
       " Before anything is written, a full copy of the board is saved to your " +
       "downloads automatically — your undo button, no clicks needed. (Keep " +
       "backup files private: they contain the board's identity key.)"));
+    card.append(bk);
+  } else {
+    // No flash size, no length to read: the copy cannot run. Say so where
+    // the promise would have been, not only after the chip was rewritten.
+    const bk = el("p", "flash-autobackup fineprint");
+    bk.append(document.createTextNode(
+      `⚠ Heads up: ${core.BACKUP_SKIP_NO_SIZE}. An install still works; ` +
+      "it just goes ahead without that undo file."));
     card.append(bk);
   }
 
@@ -3835,10 +3888,28 @@ function phaseConfirm(product, entry) {
       const r = wifiUI.credentials();
       if (!r.ok) { go.disabled = false; return; } // invalid input — the field showed why
       wifi = r.wifi; mqtt = r.mqtt; autoUpdate = r.autoUpdate;
-      wifiUI.clear();    // never leave the password sitting in the DOM
     }
     const dialSel = dialsUI ? dialsUI.selection() : null;
     const reflexSel = reflexUI ? reflexUI.selection() : null;
+    // Everything typed here is baked into ONE settings page, and each field
+    // passing its own check does not mean they fit together (a two-certificate
+    // broker CA beside Wi-Fi, a login and a token does not). Ask now — the
+    // same seed the install will build (core.installSettingsSeed) — and say
+    // so in the form, with every field still filled in, instead of flashing
+    // the board with none of it.
+    if (wifiUI) {
+      const problem = core.settingsSeedProblem({
+        catalog: state.catalog, product, wifi, mqtt, autoUpdate,
+        detect: dialSel ? dialSel.values : null,
+        reflex: reflexSel ? reflexSel.values : null,
+      });
+      if (problem) {
+        wifiUI.fail(core.settingsProblemText(problem));
+        go.disabled = false;
+        return;
+      }
+      wifiUI.clear();    // never leave the password sitting in the DOM
+    }
     // The forced first-contact erase clears what the board arrived with,
     // proportionally; the Advanced box is a request for the whole-chip erase.
     startFlash({ entry, product, eraseAll: !!eraseOn, skipBackup: !!skipBackup, wifi, mqtt, autoUpdate,
@@ -4486,6 +4557,12 @@ function renderWifiFields(box, product) {
       }
     },
     clear() { pass.value = ""; },
+    // Say a problem with the settings as a whole in the form's own error
+    // slot (the confirm card's fit check).
+    fail(message) {
+      err.textContent = message;
+      err.classList.remove("flash-hidden");
+    },
   };
 }
 
@@ -4524,6 +4601,20 @@ async function startFlash(opts) {
   // from rates measured in this install. "Step 2 of 4" alone said where you
   // were and nothing about how long the rest would take.
   const willBackup = state.flashBytes && !opts.isBackup && !opts.skipBackup && !haveBackupForThisBoard();
+  // A copy that was due and cannot be taken (the chip did not report its
+  // flash size): said here and again on the done card, never skipped in
+  // silence — the connect card promised an automatic undo file.
+  const backupSkipReason = core.backupSkipReason({
+    flashBytes: state.flashBytes, isBackup: !!opts.isBackup,
+    skipBackup: !!opts.skipBackup, haveBackup: haveBackupForThisBoard(),
+  });
+  // What the owner should know about THIS install that no step line says.
+  // Kept on the card for the whole run: a stage line is overwritten by the
+  // next step within a second.
+  const cardNote = (text) => box.card.insertBefore(el("p", "fineprint", `⚠ ${text}`), logEl);
+  if (backupSkipReason) cardNote(`No safety copy this time: ${backupSkipReason}.`);
+  // A restore's "smaller than the chip" heads-up (validateBackupFile).
+  if (opts.warn) cardNote(opts.warn);
   // A first-contact erase clears what the board arrived with, proportionally
   // (eraseForFirstContact); an erase the user asked for — Clean install, the
   // Advanced box, a rescue — stays the whole-chip erase they asked for.
@@ -4683,6 +4774,10 @@ async function startFlash(opts) {
     // that region, the install continues — never block a flash on a
     // convenience.
     let wifiFile = null, wifiSsid = null, seededDials = null, seededReflex = null, bakedDeviceId = "", bakedApiToken = null, bakedBroker = null;
+    // Why the settings were NOT written, when they were not: carried to the
+    // done card, which must never say "no network was baked in" as if that
+    // had been the owner's choice.
+    let bakeError = null;
     // The auto-update choice (a boolean when the confirm card's checkbox was
     // shown) is a thing to seed by itself: checked or not, the human
     // answered, and the OTA engine reads that answer out of NVS on boot.
@@ -4693,30 +4788,22 @@ async function startFlash(opts) {
           bytes.subarray(0x8000, Math.min(0x8c00, bytes.length)));
         const nvs = entries.find(core.isNvsPart);
         if (!nvs) throw new Error("no settings region in this image");
-        const dials = opts.detect ? core.detectDials(state.catalog, opts.product) : null;
-        const dInts = opts.detect ? core.detectValuesToNvs(opts.detect, dials) : { u8: {}, u32: {} };
-        const reflexes = opts.reflex ? core.reflexDials(state.catalog, opts.product) : null;
-        const rInts = opts.reflex ? core.reflexValuesToNvs(opts.reflex, reflexes) : { u32: {} };
-        // Broker + device id (usb-secrets) → the same NVS keys the native app writes.
-        const prov = opts.mqtt ? core.mqttProvisioningToNvs(opts.mqtt) : { strings: {}, u16: {}, u8: {} };
         // Blob-scheme boards (canary/wap) load their local-API bearer token
         // from NVS before deriving one — so mint it HERE and seed it, and the
         // owner leaves with the credential in hand instead of digging it out
         // of the device's settings page later. Same seed the native app
         // writes (provisioning.rs); shown once on the done card below.
-        const apiToken = opts.product && opts.product.wifi_nvs === "blob" && opts.wifi
+        const apiToken = core.wantsApiToken(opts.product, opts.wifi)
           ? core.mintApiToken(crypto.getRandomValues(new Uint8Array(96)))
           : null;
-        const tokenNvs = apiToken ? core.apiTokenToNvs(apiToken) : { blobs: {} };
-        const nvsImg = core.buildNvsSeedImage(
-          { wifi: opts.wifi || null,
-            wifiScheme: (opts.product && opts.product.wifi_nvs) || "blob",
-            strings: prov.strings, u16: prov.u16, blobs: tokenNvs.blobs,
-            u8: { ...dInts.u8, ...prov.u8 }, u32: { ...dInts.u32, ...rInts.u32 },
-            // The OTA opt-in, seeded into the engine's own namespace
-            // ("securacv_ota"/auto_upd) — null means the checkbox never
-            // appeared (rescue, local file), and nothing is written.
-            autoUpdate }, nvs.size);
+        // One assembly for the bake and for the confirm card's fit check
+        // (core.installSettingsSeed): Wi-Fi, the broker block and device id,
+        // the dials, the auto-update answer and the token minted above.
+        const { prov, seed } = core.installSettingsSeed({
+          catalog: state.catalog, product: opts.product, wifi: opts.wifi, mqtt: opts.mqtt,
+          detect: opts.detect, reflex: opts.reflex, autoUpdate, apiToken,
+        });
+        const nvsImg = core.buildNvsSeedImage(seed, nvs.size);
         wifiFile = { data: core.bytesToBinaryString(nvsImg), address: nvs.offset };
         wifiSsid = opts.wifi ? opts.wifi.ssid : null;
         seededDials = opts.detect || null;
@@ -4731,7 +4818,14 @@ async function startFlash(opts) {
         // receipt (core.MQTT_TLS_RECEIPT).
         bakedBroker = core.brokerTlsReceipt(prov);
       } catch (e) {
-        box.stage("Couldn’t bake the settings (" + String(e.message || e) +
+        // The confirm card already checked that the settings fit their page
+        // (core.settingsSeedProblem), so what lands here is an image with no
+        // settings region to write them into, or one that would not parse.
+        // The install goes on — never block a flash on a convenience — and
+        // the reason goes with it to the done card.
+        bakeError = String(e.message || e);
+        cardNote(`Your settings were not written (${bakeError}). The firmware is still being installed.`);
+        box.stage("Couldn’t bake the settings (" + bakeError +
           ") — continuing; everything is still tunable after boot");
         await sleep(1200);
       }
@@ -4860,7 +4954,7 @@ async function startFlash(opts) {
       });
       saveRoster(state.roster);
     }
-    setPhase(phaseDone({ ...opts, backupName, backupFailed, diff, settings,
+    setPhase(phaseDone({ ...opts, backupName, backupFailed, backupSkipReason, bakeError, diff, settings,
       installSeconds, installSteps: journey.summary(),
       shaHex, shaSigned, sigVerified, sigChecked, bytesWritten: bytes.length,
       wifiSsid, seededDials, seededReflex, provDeviceId: bakedDeviceId,
@@ -5112,9 +5206,12 @@ function phaseDone(opts) {
     // asking. Naming it here (and in the native Flasher's install log, per the
     // two-flashers rule) turns a surprise into an expectation.
     const w = el("p", "muted");
-    w.append(document.createTextNode(
-      `No network was baked in — this Canary asks for WiFi itself on first boot ` +
-      `(its own screen, or the setup network it raises).`));
+    w.append(document.createTextNode(opts.bakeError
+      // Not the owner's choice: they typed settings and the bake failed.
+      ? `Your settings could not be written (${opts.bakeError}) — nothing was baked in; ` +
+        `set Wi-Fi and the broker up on the device (its own screen, or the setup network it raises).`
+      : `No network was baked in — this Canary asks for WiFi itself on first boot ` +
+        `(its own screen, or the setup network it raises).`));
     box.append(w);
     if (wantsSetupKey) {
       // Listening — said out loud, with the live console under it, so a
@@ -5258,6 +5355,9 @@ function phaseDone(opts) {
     box.append(el("p", "fineprint",
       "The safety copy couldn’t be read off this board first — common when a board " +
       "is corrupted, and exactly why the rescue carried on without it."));
+  } else if (opts.backupSkipReason) {
+    box.append(el("p", "fineprint",
+      `No safety copy was saved before this install: ${opts.backupSkipReason}.`));
   }
 
   // What actually changed — the byte-verified answer, region by region.
@@ -5706,8 +5806,21 @@ async function onRestoreFile(ev) {
     setPhase(errorRetry("That file can’t be restored here", new Error(check.reason), phaseConnected));
     return;
   }
-  const buf = await f.arrayBuffer();
-  startFlash({ localBytes: new Uint8Array(buf), label: f.name, isBackup: true, warn: check.warn });
+  const bytes = new Uint8Array(await f.arrayBuffer());
+  // …and it must carry THIS chip's bootloader where the chip's ROM loads it
+  // (core.bootloaderPlacement), as the catalog install and the Advanced
+  // local file already require: a backup taken from a classic ESP32
+  // (bootloader at 0x1000) used to pass here as "a smaller file" and go
+  // onto an S3, which then did not start. Same refusal, same words, as the
+  // desktop Flasher's restore (write_local_image → check_bootloader_offset).
+  const placed = core.bootloaderPlacement(bytes, state.chip);
+  if (!placed.ok) {
+    ev.target.value = ""; // let another file re-fire the picker
+    setPhase(errorRetry("That image wouldn’t start on this board", new Error(placed.reason),
+      phaseConnected));
+    return;
+  }
+  startFlash({ localBytes: bytes, label: f.name, isBackup: true, warn: check.warn });
 }
 
 // ── the health check (triage without changing a byte) ───────────────────────
@@ -5720,11 +5833,13 @@ async function runHealthCheck() {
   if (!(await resyncOnCard(box, "Couldn’t reach the bootloader for the health check"))) return;
   const { esploader } = state.session;
 
+  // No hardware address in the report object at all — it is shown on the
+  // report's own page behind a reveal, from state, and never saved with it.
   const report = {
     generatedAt: new Date().toISOString(),
     chip: state.chipDesc || state.chip,
-    mac: state.mac ? core.formatMac(state.mac) : null,
     flashBytes: state.flashBytes,
+    about: core.aboutBoardGroups(aboutFacts()),
   };
 
   try {
@@ -5861,9 +5976,10 @@ function renderReport(r) {
 
   const facts = el("div", "flash-facts");
   facts.append(fact("Chip", r.chip));
-  if (r.mac) facts.append(fact("ID (MAC)", r.mac));
   if (r.flashBytes) facts.append(fact("Flash", core.formatBytes(r.flashBytes)));
+  if (state.mac) facts.append(macRevealFact());
   box.append(facts);
+  if (Array.isArray(r.about)) box.append(renderAboutBoard(r.about));
 
   if (r.blank) {
     box.append(el("p", "flash-note flash-note-soft",
@@ -6071,15 +6187,32 @@ function renderReport(r) {
   const row = el("div", "flash-row");
   const back = el("button", "primary", "Back to the flasher");
   back.addEventListener("click", () => setPhase(phaseConnected()));
+  // Two saves. The default is the share projection: chip, image and
+  // partition facts, the day, and nothing that describes this one board's
+  // life (counters, crash or update state, the chain head). The second keeps
+  // the rest for the owner's own records and says so — and neither carries
+  // the hardware address, in the file or in its name.
   const save = el("button", "ghost", "Save report (.json)");
+  save.title = core.SHARE_REPORT_NOTE;
   save.addEventListener("click", () => {
-    const blob = new TextEncoder().encode(JSON.stringify(r, null, 2));
-    downloadBytes(blob, `canary-${macStamp()}-report.json`);
+    const blob = new TextEncoder().encode(JSON.stringify(core.reportShareProjection(r, Date.now()), null, 2));
+    downloadBytes(blob, core.reportFileName(nextFileStamp(), false));
+  });
+  const saveFull = el("button", "ghost", "Save full report for your own records");
+  saveFull.title = core.FULL_REPORT_NOTE;
+  saveFull.addEventListener("click", () => {
+    const blob = new TextEncoder().encode(JSON.stringify(core.reportFullProjection(r), null, 2));
+    downloadBytes(blob, core.reportFileName(nextFileStamp(), true));
   });
   const bk = el("button", "ghost", "💾 Save a full backup");
   bk.addEventListener("click", onBackup);
-  row.append(back, save, bk);
+  row.append(back, save, saveFull, bk);
   box.append(row);
+  box.append(el("p", "fineprint",
+    "“Save report” keeps chip, firmware and layout facts — fine to share. The full report " +
+    "also keeps this board’s counters, crash record and update state: it describes this one " +
+    "board, so keep it for your own records rather than posting it. Neither one holds the " +
+    "board’s hardware address."));
   return box;
 }
 
@@ -7212,6 +7345,7 @@ async function onDisconnect(silent) {
   try { if (state.session) await state.session.transport.disconnect(); } catch {}
   state.session = null;
   state.chip = state.mac = state.flashBytes = state.current = null;
+  state.chipFuses = state.bootHeader = undefined;
   state.report = null;
   state.busy = false;
   // A fresh board (non-silent) starts from the top baud again; a silent
@@ -7233,9 +7367,116 @@ function downloadBytes(bytes, name) {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
-function macStamp() {
-  const mac = (state.mac || "").replace(/[^0-9a-fA-F]/g, "").slice(-6).toLowerCase();
-  return mac || "canary";
+// A saved file's name: the local date and a counter (core.fileStamp), never
+// anything of the board's — the hardware address is the station address in
+// every Wi-Fi frame it sends, so even six of its hex digits would name it.
+function nextFileStamp() {
+  state.fileCounter += 1;
+  return core.fileStamp(new Date(), state.fileCounter);
+}
+
+// ── About this board ────────────────────────────────────────────────────────
+// What the flasher read, in the one shape core.aboutBoardGroups draws. The
+// image is undefined until read, false when the read failed (the partition
+// table's, or the descriptor's after it) and null when there is nothing
+// installed — three different answers, never one.
+function aboutFacts() {
+  const cur = state.current;
+  return {
+    chip: state.chip,
+    chipDesc: state.chipDesc,
+    flashBytes: state.flashBytes,
+    fuses: state.chipFuses,
+    image: state.ptRead === "failed" || (cur && cur.readFailed) ? false
+      : cur && !cur.unknown ? {
+        projectName: cur.projectName, version: cur.version, idf: cur.idf,
+        secureVersion: cur.secureVersion, elfSha256Prefix: cur.elfSha256Prefix,
+        // the catalog product the readback resolved, if any (the Firmware
+        // row's Arduino-core test, as the readback line's)
+        productName: cur.productName || null,
+      } : cur ? null : undefined,
+    bootloader: state.bootHeader,
+  };
+}
+
+// The hardware address: no bytes on screen until asked, the whole address on
+// this page only once asked, and no copy button. Every Wi-Fi frame the board
+// sends carries it, so even its tail names the board to anything in range.
+// It reveals the address read with this card, never a later board's.
+function macRevealFact(mac = state.mac) {
+  const f = el("div", "flash-fact flash-fact-reveal");
+  const lab = el("span", "flash-fact-label", "Hardware address");
+  const hd = helpDot("mac");
+  if (hd) lab.append(hd);
+  f.append(lab);
+  const val = el("span", "flash-fact-val");
+  const show = el("button", "ghost small", "Show");
+  show.type = "button";
+  show.setAttribute("aria-label", "Show the hardware address");
+  show.addEventListener("click", () => {
+    val.textContent = "";
+    const addr = el("span", "flash-mono flash-nocopy", mac ? core.formatMac(mac) : "Not reported");
+    val.append(addr, el("span", "fineprint flash-reveal-note", " This stays on this computer."));
+  });
+  val.append(show);
+  f.append(val);
+  return f;
+}
+
+// L2 and L4: every row, grouped by where it came from, folded away until
+// asked for; "Show technical names" adds each row's technical name and the
+// raw field values behind it (allowlisted eFuse fields, never a word).
+const ABOUT_TECH_KEY = "flash.about.technical";
+function renderAboutBoard(groups) {
+  const det = el("details", "flash-about");
+  det.append(el("summary", null, "More about this board"));
+  const techRow = el("label", "flash-about-tech fineprint");
+  const tech = el("input");
+  tech.type = "checkbox";
+  try { tech.checked = localStorage.getItem(ABOUT_TECH_KEY) === "1"; } catch { tech.checked = false; }
+  techRow.append(tech, document.createTextNode(" Show technical names"));
+  const body = el("div", "flash-about-body");
+  const draw = () => {
+    body.textContent = "";
+    for (const g of groups) {
+      const sec = el("div", "flash-about-group");
+      sec.append(el("h4", null, g.title));
+      sec.append(el("p", "fineprint flash-about-source", g.source));
+      for (const r of g.rows) {
+        if (r.reveal) continue; // the hardware address has its own reveal row above
+        const row = el("div", "flash-report-row");
+        const k = el("span", "flash-report-label", r.label);
+        if (tech.checked && r.term) k.append(el("span", "flash-about-term", ` (${r.term})`));
+        row.append(k);
+        const v = el("span", "flash-report-val", r.value);
+        if (tech.checked && r.raw) v.append(el("code", "flash-about-raw", ` ${r.raw}`));
+        row.append(v);
+        sec.append(row);
+      }
+      body.append(sec);
+    }
+  };
+  tech.addEventListener("change", () => {
+    try { localStorage.setItem(ABOUT_TECH_KEY, tech.checked ? "1" : "0"); } catch { /* private mode */ }
+    draw();
+  });
+  draw();
+  const copy = el("button", "ghost small", "Copy these details");
+  copy.type = "button";
+  copy.title = "Chip, image and datasheet facts — never the hardware address.";
+  copy.addEventListener("click", async () => {
+    const text = core.aboutBoardText(groups, "SecuraCV browser flasher");
+    try {
+      await navigator.clipboard.writeText(text);
+      copy.textContent = "Copied ✓";
+    } catch {
+      const ta = el("textarea", "flash-report-ta");
+      ta.value = text; ta.readOnly = true; ta.rows = 10;
+      copy.replaceWith(ta); ta.focus(); ta.select();
+    }
+  });
+  det.append(techRow, body, copy);
+  return det;
 }
 
 function confettiBurst() {

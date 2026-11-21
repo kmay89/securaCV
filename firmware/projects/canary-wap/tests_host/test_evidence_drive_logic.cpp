@@ -247,6 +247,16 @@ int main() {
     CHECK(results == 1);
   }
 
+  // ── A drop installs only while no other installer holds the slot ────────
+  // Before 2.4.20 the drop opened the inactive slot whatever the pull
+  // engine or a Bluetooth session was writing into it.
+  {
+    CHECK(update_install_allowed(true, true));
+    CHECK(!update_install_allowed(false, true));    // the pull engine mid-download
+    CHECK(!update_install_allowed(true, false));    // a Bluetooth session in flight
+    CHECK(!update_install_allowed(false, false));
+  }
+
   printf("test_evidence_drive_logic: %d checks passed\n", checks);
   return 0;
 }

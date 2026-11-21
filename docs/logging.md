@@ -72,8 +72,9 @@ These are *chain* records, not stderr logs, but operators discover them here:
   becomes a detectable missing-heartbeat gap) and gives auditors a health
   timeline.
 - `lifecycle` — `start` on boot, `shutdown_clean` on SIGINT/SIGTERM. A boot
-  that finds a trailing `start` seals a `PowerLoss` failure record
-  (unclean-shutdown proxy).
+  that finds the previous run never sealed its `shutdown_clean` (a trailing
+  `start`, or one retention already pruned behind a checkpoint) seals a
+  `PowerLoss` failure record (unclean-shutdown proxy).
 
 `log_verify` audits these (stale tail, missing heartbeat buckets, timestamp
 regressions) and reports warnings; `log_verify --strict` turns those warnings

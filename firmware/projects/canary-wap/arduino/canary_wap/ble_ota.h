@@ -1,12 +1,22 @@
 /*
  * SecuraCV Canary — BLE OTA over GATT (Ed25519-signed)
  *
- * GATT service that accepts firmware images streamed from a paired phone
- * or trusted client. Each image is verified against an Ed25519 signature
+ * GATT service that accepts firmware images streamed from a bonded phone.
+ * Each image is verified against an Ed25519 signature
  * from the release engineer (see ota_release_key.h) before being written
  * to the inactive OTA partition and made bootable. A bad signature, a
  * SHA-256 mismatch, or an aborted transfer leaves the running firmware
  * untouched.
+ *
+ * Who may write: the control and data characteristics carry WRITE_ENC |
+ * WRITE_AUTHEN and the status characteristic READ_ENC | READ_AUTHEN, the
+ * properties ble_provision's characteristics carry, which ask NimBLE for a
+ * link encrypted with an authenticated key (the bonded Numeric Comparison
+ * pairing; the setup door's Just Works key is unauthenticated). Before
+ * 2.4.20 they were plain WRITE / READ and the image policy was the only
+ * gate. While a session is in flight its DATA and its control writes are
+ * taken from the link whose BEGIN opened it (SessionLink, below). Both are
+ * held by test_ble_ota_policy.cpp; neither has been run on a device.
  *
  * Wire protocol (control characteristic, write):
  *
@@ -51,6 +61,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
 
 #include "ble_ota_policy.h"  // OtaHeader / OtaHeaderV2 wire structs + the policy
 
@@ -72,6 +83,57 @@ static const char* OTA_SERVICE_UUID = "8fc1ced0-b162-4401-9607-c8ac21383e90";
 static const char* OTA_CONTROL_UUID = "8fc1ced1-b162-4401-9607-c8ac21383e90";
 static const char* OTA_DATA_UUID    = "8fc1ced2-b162-4401-9607-c8ac21383e90";
 static const char* OTA_STATUS_UUID  = "8fc1ced3-b162-4401-9607-c8ac21383e90";
+
+// ── The link a session belongs to (pure; test_ble_ota_policy.cpp) ──────────
+//
+// An accepted BEGIN records the connection it arrived on: its handle AND its
+// peer address, since a handle the stack reuses for a later peer is not that
+// link (ble_improv binds its claim the same way). While the session is in
+// flight (receiving or verifying):
+//   - DATA is taken from that link alone, so no other connection can put
+//     bytes into the image;
+//   - a control write (ABORT, a second BEGIN, an unknown command: each ends
+//     the session) is taken from that link alone, so no other connection
+//     can end it. The exception is a session whose link the stack no longer
+//     holds: nothing can finish it, so the next writer may end it, as any
+//     writer could before.
+struct SessionLink {
+  bool     bound       = false;
+  uint16_t conn_handle = 0xFFFF;
+  uint8_t  addr_type   = 0;
+  uint8_t  addr[6]     = {0, 0, 0, 0, 0, 0};
+};
+
+inline void session_link_bind(SessionLink& s, uint16_t conn_handle, uint8_t addr_type,
+                              const uint8_t addr[6]) {
+  s.bound       = true;
+  s.conn_handle = conn_handle;
+  s.addr_type   = addr_type;
+  memcpy(s.addr, addr, sizeof(s.addr));
+}
+
+inline void session_link_release(SessionLink& s) {
+  s = SessionLink();
+}
+
+// Is (conn_handle, addr) the link the session was opened on? Never for an
+// unbound session.
+inline bool session_link_is(const SessionLink& s, uint16_t conn_handle, uint8_t addr_type,
+                            const uint8_t addr[6]) {
+  return s.bound && s.conn_handle == conn_handle && s.addr_type == addr_type &&
+         memcmp(s.addr, addr, sizeof(s.addr)) == 0;
+}
+
+// May this control write be acted on? `session_link_held` is whether the
+// stack still holds the session's link.
+inline bool control_write_allowed(bool in_flight, bool from_session_link, bool session_link_held) {
+  return !in_flight || from_session_link || !session_link_held;
+}
+
+// May this data write be taken into the image?
+inline bool data_write_allowed(bool receiving, bool from_session_link) {
+  return receiving && from_session_link;
+}
 
 // Register the OTA service on `server`. release_pubkey points to a 32-byte
 // Ed25519 public key (typically SECURACV_OTA_RELEASE_PUBKEY from

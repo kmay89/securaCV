@@ -572,7 +572,14 @@ def test_health_and_egress_read_as_the_wap_sent_them(record, monkeypatch):
     sent = _one(record, "running", "health")
     attrs = _attrs(health)
     assert _value(health, "native_value") == "healthy"
-    assert attrs["battery_percent"] == sent["battery"]
+    # On mains the WAP sends a placeholder 100 beside battery_present false
+    # (csi_mqtt.cpp's publish_health), a charge nothing measured. The
+    # integration shows it as unknown, never as a full battery: an absent
+    # battery is omitted, not 100 (device-details §1.4, PR 6, #1971). This
+    # assertion fails on the integration that turned the placeholder into
+    # battery_percent 100, the value this test held before.
+    assert sent["battery"] == 100 and sent["battery_present"] is False
+    assert attrs["battery_percent"] is None, "no battery is unknown, never the placeholder 100"
     assert attrs["battery_present"] is sent["battery_present"] is False
     assert attrs["memory_free_bytes"] == sent["memory_free"]
     assert attrs["uptime_seconds"] == sent["uptime"]
@@ -1213,7 +1220,9 @@ def test_the_health_sensor_reads_only_a_memory_number_as_low_memory(
     assert "memory_free_bytes" in attrs
     assert attrs["memory_free_bytes"] == attribute, body
     assert type(attrs["memory_free_bytes"]) is type(attribute), body
-    assert attrs["battery_percent"] == 100
+    # The unit is on mains (battery_present false): no battery is unknown,
+    # where this held the placeholder 100 before #1971.
+    assert attrs["battery_percent"] is None
     assert _value(memory, "is_on") is memory_on, body
 
 
@@ -1222,10 +1231,10 @@ def test_the_health_sensor_reads_only_a_memory_number_as_low_memory(
 # broker hands the text over, and what the Health sensor reads from it: its
 # state and its battery_percent attribute. The Health sensor reads critical
 # below CRITICAL_BATTERY_THRESHOLD_PERCENT (10) and warning below
-# WARNING_BATTERY_THRESHOLD_PERCENT (25). No reading is not a low battery, so
-# it reads healthy, and since this unit says it has a battery its
-# battery_percent is None, no charge, rather than the 100 nobody sent (sweep
-# HA60; a mains unit still reads 100, test_a_present_battery_with_no_number_shows_no_charge).
+# WARNING_BATTERY_THRESHOLD_PERCENT (25); no reading is the no-battery
+# reading: healthy, and a battery_percent that is unknown (None). Until #1971
+# the attribute was 100 there, as an absent key always was, a charge nobody
+# sent (sweep HA60, closed by it): each no-reading row below held 100.
 _BATTERY_READINGS = [
     # No reading: not a state of charge a unit's uint8_t can hold, a string
     # int() reads only through a sign or its digit separator, or a finite
@@ -1300,7 +1309,8 @@ def test_the_health_sensor_reads_only_a_battery_number_as_a_charge(
     attrs = _attrs(health)
     assert "battery_percent" in attrs
     assert attrs["battery_percent"] == attribute, body
-    assert type(attrs["battery_percent"]) is type(attribute), body
+    # An int for a reading, None for none: never a float, a bool or a string.
+    assert type(attrs["battery_percent"]) is (int if attribute is not None else type(None)), body
     assert attrs["battery_present"] is True
     assert attrs["memory_free_bytes"] == 182000
     assert _value(memory, "is_on") is False, "the battery is not the memory"
@@ -1321,9 +1331,9 @@ def test_the_health_sensor_reads_battery_soc_past_a_battery_with_no_number(recor
         ('"battery_present": true, "battery": true, "battery_soc": 8', "critical", 8),
         ('"battery_present": true, "battery": Infinity, "battery_soc": 50', "healthy", 50),
         ('"battery_present": true, "battery": -1, "battery_soc": 0', "critical", 0),
-        ('"battery": true, "battery_soc": 0', "healthy", 100),
+        ('"battery": true, "battery_soc": 0', "healthy", None),
         ('"battery_present": true, "battery": 50, "battery_soc": 8', "healthy", 50),
-        ('"battery_present": false, "battery": 8, "battery_soc": 8', "healthy", 100),
+        ('"battery_present": false, "battery": 8, "battery_soc": 8', "healthy", None),
         ('"battery_present": true, "battery": 8', "critical", 8),
         # A present battery with no number in either key: no charge (HA60).
         ('"battery_present": true, "battery": 1e400, "battery_soc": 1e400', "healthy", None),
@@ -1354,12 +1364,13 @@ def test_a_present_battery_with_no_number_shows_no_charge(record, monkeypatch, s
     battery_percent() had no reading, so a unit that says it has a battery
     (battery_present true) and sends no number for its charge showed a full
     battery nobody sent. It is now None there, as memory_free_bytes is None
-    for no reading (HA53). A real charge still reads as sent, the canary-wap
+    for no reading (HA53). A real charge still reads as sent; the canary-wap
     on mains (100 with battery_present false, the contract
-    test_health_and_egress_read_as_the_wap_sent_them pins) still reads 100,
-    and so does a health that does not say whether it has a battery. The
-    Health state does not move with the attribute: no reading is not a low
-    battery, so every body here reads healthy, as each did before."""
+    test_health_and_egress_read_as_the_wap_sent_them pins) and a health that
+    does not say whether it has a battery read None too since #1971 (no
+    battery reading is unknown, never 100). The Health state does not move
+    with the attribute: no reading is not a low battery, so every body here
+    reads healthy, as each did before."""
     wap = _Wap(record, monkeypatch).replay("connect", "running")
     health = wap.entity("health_status")
     topic = _topic(record, "health")
@@ -1370,12 +1381,16 @@ def test_a_present_battery_with_no_number_shows_no_charge(record, monkeypatch, s
     rest += ', "memory_free": 182000'
     no_charge = "{" + rest + ', "battery_present": true' + (", " + spelled if spelled else "") + "}"
     # Each body reads otherwise than the one before it.
+    charge = "{" + rest + ', "battery_present": true, "battery": 37}'
     for body, attribute in (
-        ("{" + rest + ', "battery_present": true, "battery": 37}', 37),
+        (charge, 37),
         (no_charge, None),
-        ("{" + rest + ', "battery_present": false, "battery": 100}', 100),
+        ("{" + rest + ', "battery_present": true, "battery": 50}', 50),
+        ("{" + rest + ', "battery_present": false, "battery": 100}', None),
+        (charge, 37),
         (no_charge, None),
-        ("{" + rest + "}", 100),
+        (charge, 37),
+        ("{" + rest + "}", None),
     ):
         wap.broker.publish(topic, body, True)
         assert _value(health, "native_value") == "healthy", body

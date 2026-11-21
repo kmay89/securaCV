@@ -424,6 +424,185 @@ def test_save_with_rtsp_cameras_writes_frigate_config_by_slug(save_env, monkeypa
     assert save_env["options"]["frigate"]["cameras"] == ["front_door"]
 
 
+# The retention the person picks is the witness log's, never a video
+# retention (G3-03). Through the real save path, with the longest choice the
+# wizard offers, the option the app keeps is that number and the Frigate
+# config the wizard writes carries none: no record role, no retain block,
+# recording written off. The old writer switched motion recording on for
+# every camera and kept the footage for this many days.
+def test_save_keeps_the_retention_for_the_log_and_out_of_the_frigate_config(
+    save_env, monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        serve_wizard, "_frigate_config_destination",
+        lambda: (tmp_path / "config.yml", "written"),
+    )
+    result = _bare_handler()._handle_save({
+        "mode": "frigate",
+        "cameras": [{"name": "Front Door", "url": "rtsp://10.0.0.9/s"}],
+        "retention_days": 365,
+    })
+    assert result["ok"] is True
+    assert save_env["options"]["retention_days"] == 365
+    text = (tmp_path / "config.yml").read_text()
+    assert "- record" not in text
+    assert "retain" not in text
+    assert "365" not in text
+    assert "            - detect\n" in text
+    assert "    record:\n      enabled: false\n" in text
+
+
+# "Only Frigate alerts" (reviews mode) makes frigate_bridge subscribe to
+# `<prefix>/reviews` INSTEAD of `<prefix>/events`, and Frigate creates
+# review items only for a camera that records. The config this save writes
+# keeps recording off, so the two together sealed nothing while the done
+# screen promised a first sealed event. On the path where the wizard writes
+# Frigate's config the choice is not accepted: every tracked object is
+# stored instead, and the note the done screen prints says why and how to
+# get alerts-only. The page does not send it there either
+# (test_wizard_setup_flow.test.js); this holds the server to the same rule
+# for any client.
+def test_save_that_writes_the_frigate_config_does_not_accept_alerts_only(
+    save_env, monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        serve_wizard, "_frigate_config_destination",
+        lambda: (tmp_path / "config.yml", "Frigate camera config written."),
+    )
+    result = _bare_handler()._handle_save({
+        "mode": "frigate",
+        "cameras": [{"name": "Front Door", "url": "rtsp://10.0.0.9/s"}],
+        "enable_reviews": True,
+    })
+    assert result["ok"] is True
+    assert save_env["options"]["frigate"]["enable_reviews"] is False
+    assert "    record:\n      enabled: false\n" in (tmp_path / "config.yml").read_text()
+    note = result["frigate_config"]
+    assert note.startswith("Frigate camera config written. ")
+    assert note.endswith(serve_wizard.ALERTS_ONLY_NOT_APPLIED_NOTE)
+    assert "was not applied" in note
+    assert "Frigate creates alerts only for cameras that record" in note
+    assert "frigate.enable_reviews" in note
+
+
+# The same path when an existing legacy config is left alone and nothing is
+# written: the wizard still cannot know recording is on, so the rule and the
+# reason are the same.
+def test_save_on_the_rtsp_path_does_not_accept_alerts_only_when_nothing_is_written(
+    save_env, monkeypatch
+):
+    def _must_not_write(*a, **k):  # pragma: no cover
+        raise AssertionError("no destination, nothing to write")
+
+    monkeypatch.setattr(serve_wizard.WizardHandler, "_write_frigate_config", _must_not_write)
+    monkeypatch.setattr(
+        serve_wizard, "_frigate_config_destination", lambda: (None, "Left untouched.")
+    )
+    result = _bare_handler()._handle_save({
+        "mode": "frigate",
+        "cameras": [{"name": "Front Door", "url": "rtsp://10.0.0.9/s"}],
+        "enable_reviews": True,
+    })
+    assert result["ok"] is True
+    assert save_env["options"]["frigate"]["enable_reviews"] is False
+    assert result["frigate_config"] == (
+        "Left untouched. " + serve_wizard.ALERTS_ONLY_NOT_APPLIED_NOTE
+    )
+
+
+# Where Frigate keeps its own config (the cameras came from it), alerts-only
+# is the person's choice and is stored as asked; and an RTSP save that asks
+# for the default says nothing about alerts.
+def test_save_keeps_alerts_only_where_frigate_owns_its_config(save_env, monkeypatch, tmp_path):
+    result = _bare_handler()._handle_save({
+        "mode": "frigate",
+        "frigate_detected": True,
+        "cameras": [{"name": "front_door"}],
+        "enable_reviews": True,
+    })
+    assert result["ok"] is True
+    assert save_env["options"]["frigate"]["enable_reviews"] is True
+    assert "was not applied" not in result["frigate_config"]
+
+    monkeypatch.setattr(
+        serve_wizard, "_frigate_config_destination",
+        lambda: (tmp_path / "config.yml", "written"),
+    )
+    result = _bare_handler()._handle_save({
+        "mode": "frigate",
+        "cameras": [{"name": "Front Door", "url": "rtsp://10.0.0.9/s"}],
+    })
+    assert result["ok"] is True
+    assert save_env["options"]["frigate"]["enable_reviews"] is False
+    assert result["frigate_config"] == "written"
+
+
+# The choice and the docs say what alerts-only needs, in the words the
+# server's note uses.
+def test_the_page_and_the_docs_say_alerts_only_needs_recording_on_in_frigate():
+    addon = _MODULE_PATH.parent
+    page = " ".join((addon / "wizard" / "index.html").read_text().split())
+    assert (
+        "Needs recording on in Frigate: it creates alerts only for cameras that record."
+        in page
+    )
+    docs = " ".join((addon / "DOCS.md").read_text().split())
+    assert (
+        "or only Frigate alerts — which needs recording on in Frigate (it creates "
+        "alerts only for cameras that record), so it is not offered when the wizard "
+        "writes Frigate's config." in docs
+    )
+    assert (
+        "`frigate.enable_reviews`: seal only Frigate alerts (needs recording on in "
+        "Frigate; with it off, no event is sealed)." in docs
+    )
+
+
+# What the person is told is what the writer does: the camera screen the
+# wizard shows when it will write Frigate's config, and DOCS.md where it
+# describes that path (the prerequisites, and step 2), say the config is
+# detection-only.
+def test_the_page_and_the_docs_say_the_generated_frigate_config_is_detection_only():
+    addon = _MODULE_PATH.parent
+    page = (addon / "wizard" / "index.html").read_text()
+    screen = page[page.index('<div id="rtsp-cameras">'):page.index('<div id="discovered-note"')]
+    screen = " ".join(screen.split())
+    assert "The config it writes is detection-only: recording is off" in screen
+    docs = " ".join((addon / "DOCS.md").read_text().split())
+    assert "writes Frigate's camera config for you — detection-only: recording is off" in docs
+    assert "The config the wizard writes is detection-only — recording off" in docs
+
+
+# The card Home Assistant shows for this app is titled by the integration:
+# its flow_title with the name its Supervisor discovery step sets, which
+# renders "SecuraCV app". The app's own pages name that card (G3-11); they
+# used to send the person looking for one titled "SecuraCV discovered",
+# which nothing renders, and to press "Configure" on it. A discovered card's
+# button reads "Add" (the frontend's ha-config-flow-card renders
+# ui.common.add); "Configure" is the button of an entry that already
+# exists. The wizard's done screen is held to the same title and button in
+# test_wizard_setup_flow.test.js.
+def test_the_docs_name_the_discovery_card_as_home_assistant_renders_it():
+    addon = _MODULE_PATH.parent
+    integration = addon.parent / "custom_components" / "securacv"
+    flow_title = json.loads((integration / "strings.json").read_text())["config"]["flow_title"]
+    assert 'self.context["title_placeholders"] = {"name": "app"}' in (
+        integration / "config_flow.py"
+    ).read_text()
+    title = flow_title.format(name="app")
+    assert title == "SecuraCV app"
+    for name in ("DOCS.md", "README.md"):
+        text = " ".join((addon / name).read_text().split())
+        assert "SecuraCV discovered" not in text, name
+        assert f"the *{title}* card under Discovered" in text, name
+    assert f"the *{title}* card under Discovered: press Add, nothing to type." in " ".join(
+        (addon / "DOCS.md").read_text().split()
+    )
+    assert f"the *{title}* card under Discovered → Add, nothing to type." in " ".join(
+        (addon / "README.md").read_text().split()
+    )
+
+
 def test_frigate_config_camera_names_use_the_shared_slug(monkeypatch):
     written = {}
     monkeypatch.setattr(
@@ -435,7 +614,6 @@ def test_frigate_config_camera_names_use_the_shared_slug(monkeypatch):
         [{"name": "Front  Door", "url": "rtsp://10.0.0.9/a"},
          {"name": "Café", "url": "rtsp://10.0.0.9/b"},
          {"name": "BACK yard!", "url": "rtsp://10.0.0.9/c"}],
-        retention_days=1,
     )
     text = written["text"]
     for slug in ("front__door", "caf_", "back_yard_"):
@@ -752,3 +930,169 @@ def test_digest_automation_skips_when_blueprint_wants_a_device(monkeypatch, tmp_
     result = serve_wizard._setup_digest_automation("08:00")
     assert result["created"] is False
     assert "Blueprints" in result["detail"]
+
+
+# ---------------------------------------------------------------------------
+# "Only Frigate alerts" where Frigate keeps its own config: Frigate creates
+# alerts only for cameras that record, so the wizard reads the config's
+# record setting (a camera's own, else the top-level one; Frigate's default
+# is off) for the cameras SecuraCV seals.
+# ---------------------------------------------------------------------------
+
+FRIGATE_RECORDS_NONE = """\
+mqtt:
+  host: core-mosquitto
+cameras:
+  front_door:
+    ffmpeg:
+      inputs:
+        - path: rtsp://10.0.0.9/s
+          roles: [detect]
+  back_yard:
+    record:
+      enabled: false
+"""
+
+FRIGATE_RECORDS_ONE = """\
+record:
+  enabled: false
+cameras:
+  front_door:
+    record:
+      enabled: true
+  back_yard:
+    detect: {enabled: true}
+"""
+
+FRIGATE_RECORDS_ALL = """\
+record:
+  enabled: yes
+cameras:
+  front_door:
+    detect:
+      enabled: true
+  back_yard:
+    record: {enabled: true}
+"""
+
+
+def test_yaml_value_at_reads_block_and_flow_values():
+    assert serve_wizard.yaml_value_at(FRIGATE_RECORDS_ONE, ("record", "enabled")) == "false"
+    assert serve_wizard.yaml_value_at(FRIGATE_RECORDS_ONE, ("cameras", "front_door", "record", "enabled")) == "true"
+    assert serve_wizard.yaml_value_at(FRIGATE_RECORDS_ALL, ("cameras", "back_yard", "record", "enabled")) == "true"
+    # A key that is a block, a missing key, and a same-named deeper key.
+    assert serve_wizard.yaml_value_at(FRIGATE_RECORDS_ONE, ("cameras",)) is None
+    assert serve_wizard.yaml_value_at(FRIGATE_RECORDS_NONE, ("record", "enabled")) is None
+    assert serve_wizard.yaml_value_at(FRIGATE_RECORDS_NONE, ("enabled",)) is None
+
+
+def _frigate_owns(monkeypatch, tmp_path, text):
+    config = tmp_path / "addon_configs" / "ccab4aaf_frigate" / "config.yml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(serve_wizard, "ADDON_CONFIGS_DIR", tmp_path / "addon_configs")
+    monkeypatch.setattr(serve_wizard, "LEGACY_FRIGATE_CONF", tmp_path / "no-legacy.yml")
+    return config
+
+
+def _save_alerts_only(cameras):
+    return _bare_handler()._handle_save({
+        "mode": "frigate", "frigate_detected": True,
+        "cameras": [{"name": n} for n in cameras], "enable_reviews": True,
+    })
+
+
+def test_alerts_only_is_refused_when_frigate_records_none_of_the_sealed_cameras(save_env, monkeypatch, tmp_path):
+    _frigate_owns(monkeypatch, tmp_path, FRIGATE_RECORDS_NONE)
+    result = _save_alerts_only([])
+    assert result["ok"] is True
+    assert save_env["options"]["frigate"]["enable_reviews"] is False
+    assert result["frigate_config"].endswith(serve_wizard.ALERTS_ONLY_NO_RECORDING_NOTE)
+
+
+def test_alerts_only_names_the_cameras_that_will_seal_nothing(save_env, monkeypatch, tmp_path):
+    _frigate_owns(monkeypatch, tmp_path, FRIGATE_RECORDS_ONE)
+    result = _save_alerts_only([])
+    assert save_env["options"]["frigate"]["enable_reviews"] is True
+    note = result["frigate_config"]
+    assert "nothing is sealed from back_yard" in note and "front_door" not in note.split("nothing is sealed from")[1]
+    # Sealing only the camera that records says nothing more.
+    result = _save_alerts_only(["front_door"])
+    assert save_env["options"]["frigate"]["enable_reviews"] is True
+    assert "nothing is sealed" not in result["frigate_config"]
+    # Sealing only the one that does not record refuses the choice.
+    result = _save_alerts_only(["Back Yard"])
+    assert save_env["options"]["frigate"]["enable_reviews"] is False
+    assert result["frigate_config"].endswith(serve_wizard.ALERTS_ONLY_NO_RECORDING_NOTE)
+
+
+def test_alerts_only_is_kept_when_frigate_records_every_sealed_camera(save_env, monkeypatch, tmp_path):
+    _frigate_owns(monkeypatch, tmp_path, FRIGATE_RECORDS_ALL)
+    result = _save_alerts_only([])
+    assert save_env["options"]["frigate"]["enable_reviews"] is True
+    assert "was not applied" not in result["frigate_config"]
+    assert "nothing is sealed" not in result["frigate_config"]
+
+
+FRIGATE_RECORDS_BY_ANCHOR = """\
+record: &record_on
+  enabled: true
+cameras:
+  front_door:
+    record: *record_on
+  back_yard:
+    record:
+      <<: *record_on
+"""
+
+FRIGATE_RECORDS_BY_TEMPLATE = """\
+cameras:
+  front_door:
+    record:
+      enabled: "{FRIGATE_RECORD}"
+"""
+
+
+def test_a_setting_the_reader_cannot_resolve_keeps_the_persons_choice(save_env, monkeypatch, tmp_path):
+    # An anchor, an alias, a merge key or a value that is not a boolean is
+    # "cannot tell": never read as recording off.
+    for text in (FRIGATE_RECORDS_BY_ANCHOR, FRIGATE_RECORDS_BY_TEMPLATE):
+        config = _frigate_owns(monkeypatch, tmp_path, text)
+        assert serve_wizard.frigate_recording(config, []) is None
+        result = _save_alerts_only([])
+        assert save_env["options"]["frigate"]["enable_reviews"] is True
+        assert "was not applied" not in result["frigate_config"]
+        assert "nothing is sealed" not in result["frigate_config"]
+
+
+
+# Where Frigate keeps its own config the wizard writes nothing to it, but the
+# done screen names the cameras that leave Frigate's per-camera MQTT images on
+# (a retained JPEG of every tracked object on the broker), ahead of any
+# alerts-only note; a config that turns them off everywhere adds nothing.
+def test_save_names_frigate_cameras_that_publish_mqtt_images(save_env, monkeypatch, tmp_path):
+    config = _frigate_owns(monkeypatch, tmp_path, FRIGATE_RECORDS_NONE)
+    result = _bare_handler()._handle_save({
+        "mode": "frigate", "frigate_detected": True, "cameras": [{"name": "front_door"}],
+    })
+    assert result["ok"] is True
+    note = result["frigate_config"]
+    assert note.startswith("Frigate keeps its own camera config — nothing was written to it.")
+    assert "MQTT snapshot images on for front_door, back_yard:" in note
+    assert str(config) in note
+    assert config.read_text(encoding="utf-8") == FRIGATE_RECORDS_NONE  # untouched
+
+    # The alerts-only refusal still ends the note.
+    result = _save_alerts_only([])
+    assert "MQTT snapshot images on for" in result["frigate_config"]
+    assert result["frigate_config"].endswith(serve_wizard.ALERTS_ONLY_NO_RECORDING_NOTE)
+
+    _frigate_owns(monkeypatch, tmp_path, (
+        "cameras:\n"
+        "  front_door:\n    mqtt:\n      enabled: false\n"
+        "  back_yard:\n    mqtt: {enabled: false}\n"
+    ))
+    result = _bare_handler()._handle_save({
+        "mode": "frigate", "frigate_detected": True, "cameras": [{"name": "front_door"}],
+    })
+    assert "MQTT snapshot images" not in result["frigate_config"]

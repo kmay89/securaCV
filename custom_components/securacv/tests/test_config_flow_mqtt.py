@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import json
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 from . import conftest  # noqa: F401  (installs ha stubs at import time)
 from .conftest import run
 
@@ -24,12 +26,17 @@ from homeassistant.helpers.service_info.mqtt import MqttServiceInfo  # noqa: E40
 
 from .. import config_flow  # noqa: E402
 from ..const import DEFAULT_MQTT_PREFIX  # noqa: E402
+from ..kernel_trust import announce_canonical_bytes  # noqa: E402
 
+# First contact offers an announce only when it is signed by the key it
+# names (an unsigned one aborts `announce_signature_invalid`), so the fixture
+# is signed with a fixed key the way the bridge signs its own.
+ANNOUNCE_KEY = Ed25519PrivateKey.from_private_bytes(b"\x07" * 32)
 ANNOUNCE = {
     "v": 1,
     "device_id": "pwk_1a2b3c4d",
     "kernel_version": "2.4.16",
-    "verifying_key": "ab" * 32,
+    "verifying_key": ANNOUNCE_KEY.public_key().public_bytes_raw().hex(),
     "api": {"scheme": "http", "bind": "all", "port": 8799},
     "pairing": "required",
     "mqtt_topic_prefix": "witness",
@@ -38,6 +45,7 @@ ANNOUNCE = {
     "announced_bucket_start": 1760140800,
     "announced_bucket_size": 600,
 }
+ANNOUNCE["sig"] = ANNOUNCE_KEY.sign(announce_canonical_bytes(ANNOUNCE)).hex()
 
 
 def _info(topic: str, payload: str = "online") -> MqttServiceInfo:

@@ -93,6 +93,69 @@ pub struct AnchorPolicy {
     /// `>= 1`, `<= tsas.len()`.
     #[serde(default = "two")]
     pub min_distinct_tsas: u32,
+    /// The largest device-clock-vs-`genTime` offset (whole seconds, either
+    /// way) a clock-provenance record may carry before `log_anchor verify
+    /// --policy` counts it against the policy; `>= 1`. Default: one kernel
+    /// bucket (600 s), the structural threshold `verify` applies without a
+    /// policy. Add this key only once every policy reader is upgraded — an
+    /// older `log_anchor` refuses a policy carrying an unknown key.
+    #[serde(default = "one_bucket")]
+    pub max_clock_offset_s: i64,
+    /// The OpenTimestamps leg (optional, additive): the calendars every
+    /// planned subject is also submitted to, as a nonced commitment, and
+    /// whether `verify --policy` requires a header-confirmed proof. Absent ⇒
+    /// `None` ⇒ the TSA-only behavior, byte for byte. Add this key only once
+    /// every policy reader is upgraded — an older `log_anchor` refuses a
+    /// policy carrying an unknown key (`docs/design/opentimestamps_leg.md`).
+    #[serde(default)]
+    pub ots: Option<OtsPolicy>,
+}
+
+/// The most calendars an `ots` block may declare.
+pub const OTS_MAX_CALENDARS: usize = 8;
+
+/// One OpenTimestamps calendar the operator declares.
+#[derive(Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarEntry {
+    /// `^[A-Za-z0-9_-]{1,32}$`, unique across BOTH rosters (TSA names and
+    /// calendar names).
+    pub name: String,
+    /// The calendar itself (not an aggregator pool): https://, no trailing
+    /// '/', no query or fragment, charset `[A-Za-z0-9._/:-]` — the charset a
+    /// pending attestation may carry, so a stored pending URI matches back to
+    /// this entry by exact string equality.
+    pub url: String,
+    #[serde(default)]
+    pub allow_http: bool,
+}
+
+/// The policy's optional `ots` object.
+#[derive(Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct OtsPolicy {
+    /// 1..=8 entries.
+    pub calendars: Vec<CalendarEntry>,
+    /// `true`: `verify --policy` needs, for every non-empty subject, a proof
+    /// confirmed against a supplied header, and requires `--bitcoin-headers`.
+    #[serde(default)]
+    pub required: bool,
+}
+
+impl OtsPolicy {
+    /// The calendar declared under `name`.
+    pub fn calendar(&self, name: &str) -> Option<&CalendarEntry> {
+        self.calendars.iter().find(|c| c.name == name)
+    }
+
+    /// The calendar whose url is exactly `url` (no normalization).
+    pub fn calendar_for_url(&self, url: &str) -> Option<&CalendarEntry> {
+        self.calendars.iter().find(|c| c.url == url)
+    }
+}
+
+fn one_bucket() -> i64 {
+    crate::clock_provenance::ONE_BUCKET_S
 }
 
 fn all_heads() -> Vec<String> {
@@ -216,6 +279,12 @@ fn validate(policy: &mut AnchorPolicy, prefix: &str) -> Result<()> {
             policy.tsas.len()
         );
     }
+    if policy.max_clock_offset_s < 1 {
+        bail!(
+            "{prefix}max_clock_offset_s must be at least 1 (got {})",
+            policy.max_clock_offset_s
+        );
+    }
     // An explicit empty list would make `anchor-all` request nothing and
     // `verify --policy` vacuously SATISFIED — the two-TSA control turned into
     // a silent no-op by a typo. Refuse it, and refuse a repeated subject (it
@@ -228,11 +297,73 @@ fn validate(policy: &mut AnchorPolicy, prefix: &str) -> Result<()> {
         match AnchorSubject::parse(s) {
             Some(k) if k.is_head() => {}
             _ => bail!(
-                "{prefix}subject '{s}' is not a ledger head (allowed: chain_head, export_receipt_head, break_glass_receipt_head, policy_head)"
+                "{prefix}subject '{s}' is not a ledger head (allowed: chain_head, export_receipt_head, break_glass_receipt_head, policy_head, clock_provenance_head)"
             ),
         }
         if !seen_subjects.insert(s.as_str()) {
             bail!("{prefix}duplicate subject '{s}'");
+        }
+    }
+    if let Some(ots) = &policy.ots {
+        validate_ots(ots, &policy.tsas, prefix)?;
+    }
+    Ok(())
+}
+
+/// Whether a calendar url uses only the characters a pending attestation
+/// may carry (`[A-Za-z0-9._/:-]`).
+fn ots_url_charset_ok(url: &str) -> bool {
+    url.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'/' | b':' | b'-'))
+}
+
+fn validate_ots(ots: &OtsPolicy, tsas: &[TsaEntry], prefix: &str) -> Result<()> {
+    if ots.calendars.is_empty() {
+        bail!("{prefix}ots: at least one calendar is required");
+    }
+    if ots.calendars.len() > OTS_MAX_CALENDARS {
+        bail!("{prefix}ots: at most {OTS_MAX_CALENDARS} calendars");
+    }
+    let mut names: HashSet<&str> = HashSet::new();
+    let mut urls: HashSet<&str> = HashSet::new();
+    for c in &ots.calendars {
+        if !valid_name(&c.name) {
+            bail!(
+                "{prefix}calendar name '{}' is invalid (1-32 characters of A-Z a-z 0-9 _ -)",
+                c.name
+            );
+        }
+        if !names.insert(c.name.as_str()) {
+            bail!("{prefix}duplicate calendar name '{}'", c.name);
+        }
+        if tsas.iter().any(|t| t.name == c.name) {
+            bail!(
+                "{prefix}name '{}' is used by both a TSA and a calendar",
+                c.name
+            );
+        }
+        let scheme_ok =
+            c.url.starts_with("https://") || (c.allow_http && c.url.starts_with("http://"));
+        if !scheme_ok {
+            bail!(
+                "{prefix}calendar '{}': url must start with https:// (set \"allow_http\": true to override)",
+                c.name
+            );
+        }
+        if c.url.ends_with('/') || c.url.contains('?') || c.url.contains('#') {
+            bail!(
+                "{prefix}calendar '{}': url must not end with '/' or carry a query or fragment",
+                c.name
+            );
+        }
+        if !ots_url_charset_ok(&c.url) || c.url.len() > crate::ots::OTS_MAX_URI_LEN {
+            bail!(
+                "{prefix}calendar '{}': url contains a character outside A-Z a-z 0-9 . _ / : - (a pending attestation could not name it)",
+                c.name
+            );
+        }
+        if !urls.insert(c.url.as_str()) {
+            bail!("{prefix}duplicate calendar url '{}'", c.url);
         }
     }
     Ok(())
@@ -494,6 +625,132 @@ pub fn evaluate(
     out
 }
 
+// -------------------- OpenTimestamps coverage --------------------
+
+/// What `log_anchor verify` established about one OpenTimestamps row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OtsRowState {
+    /// A Bitcoin leaf matched the merkle root of a header the verifier
+    /// supplied; `height` is the lowest matching block.
+    Confirmed { height: u64 },
+    /// The proof attests a Bitcoin block whose header was not supplied.
+    Unchecked { height: u64 },
+    /// Not yet in a Bitcoin block.
+    Pending,
+}
+
+/// A row that passed `log_anchor verify`'s structural checks; `Confirmed`
+/// only when the CALLER matched its Bitcoin leaf against a supplied header.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OtsPassed {
+    pub id: i64,
+    pub subject: AnchorSubject,
+    pub hash: [u8; 32],
+    pub bucket_start: u64,
+    pub state: OtsRowState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OtsCoverageVerdict {
+    /// The ledger is empty.
+    Empty,
+    /// The lowest confirmed height of the winning hash, every confirmed row
+    /// over it, and whether it is the ledger's current head (information
+    /// only: `--require-current` does not apply to this leg).
+    Confirmed {
+        hash: [u8; 32],
+        anchor_ids: Vec<i64>,
+        height: u64,
+        is_current: bool,
+    },
+    /// No confirmed row: how many of this subject's rows are pending and how
+    /// many attest a block nobody checked against a header.
+    NotConfirmed { pending: usize, unchecked: usize },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OtsCoverage {
+    pub subject: AnchorSubject,
+    pub head: Option<[u8; 32]>,
+    pub verdict: OtsCoverageVerdict,
+}
+
+/// Per policy subject (order kept): the current head when at least one of
+/// its rows is `Confirmed`, else the newest confirmed hash by
+/// `(bucket_start, id)` with `is_current: false`, else `NotConfirmed`.
+/// Pending never covers and Unchecked never covers; rows labeled with
+/// another kind (sentinel and `digest` rows included) never count.
+pub fn evaluate_ots(
+    policy: &AnchorPolicy,
+    heads: &[(AnchorSubject, Option<[u8; 32]>)],
+    rows: &[OtsPassed],
+) -> Vec<OtsCoverage> {
+    let mut out = Vec::new();
+    for subject in policy.subject_kinds() {
+        let head = heads
+            .iter()
+            .find(|(s, _)| *s == subject)
+            .and_then(|(_, h)| *h);
+        let Some(head) = head else {
+            out.push(OtsCoverage {
+                subject,
+                head: None,
+                verdict: OtsCoverageVerdict::Empty,
+            });
+            continue;
+        };
+        let mine: Vec<&OtsPassed> = rows.iter().filter(|r| r.subject == subject).collect();
+        // hash -> (ids, lowest height, newest (bucket, id))
+        type Confirmed = (Vec<i64>, u64, (u64, i64));
+        let mut confirmed: HashMap<[u8; 32], Confirmed> = HashMap::new();
+        for r in &mine {
+            if let OtsRowState::Confirmed { height } = r.state {
+                let e = confirmed
+                    .entry(r.hash)
+                    .or_insert_with(|| (Vec::new(), height, (r.bucket_start, r.id)));
+                e.0.push(r.id);
+                e.1 = e.1.min(height);
+                e.2 = e.2.max((r.bucket_start, r.id));
+            }
+        }
+        let winner = confirmed.get(&head).map(|g| (head, g)).or_else(|| {
+            confirmed
+                .iter()
+                .max_by_key(|(_, g)| g.2)
+                .map(|(h, g)| (*h, g))
+        });
+        if let Some((hash, (ids, height, _))) = winner {
+            let mut ids = ids.clone();
+            ids.sort_unstable();
+            out.push(OtsCoverage {
+                subject,
+                head: Some(head),
+                verdict: OtsCoverageVerdict::Confirmed {
+                    hash,
+                    anchor_ids: ids,
+                    height: *height,
+                    is_current: hash == head,
+                },
+            });
+            continue;
+        }
+        let pending = mine
+            .iter()
+            .filter(|r| r.state == OtsRowState::Pending)
+            .count();
+        let unchecked = mine
+            .iter()
+            .filter(|r| matches!(r.state, OtsRowState::Unchecked { .. }))
+            .count();
+        out.push(OtsCoverage {
+            subject,
+            head: Some(head),
+            verdict: OtsCoverageVerdict::NotConfirmed { pending, unchecked },
+        });
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -508,7 +765,7 @@ mod tests {
       "allow_http": false,
       "cert_sha256": ["fbf1c838f80923a01badb6030b9d708c5ef1a65b7d23f1f53a6aa274d1b99542"] }
   ],
-  "subjects": ["chain_head", "export_receipt_head", "break_glass_receipt_head", "policy_head"],
+  "subjects": ["chain_head", "export_receipt_head", "break_glass_receipt_head", "policy_head", "clock_provenance_head"],
   "require_roles": ["qualified", "independent"],
   "min_distinct_tsas": 2
 }"#;
@@ -555,6 +812,8 @@ mod tests {
         let d = load_text(&two_tsas("")).unwrap();
         assert_eq!(d.subjects, all_heads());
         assert_eq!(d.require_roles, both_roles());
+        assert_eq!(d.max_clock_offset_s, 600);
+        assert_eq!(p.max_clock_offset_s, 600);
         assert_eq!(d.min_distinct_tsas, 2);
     }
 
@@ -706,7 +965,7 @@ mod tests {
         let err = err_of(&two_tsas(r#","subjects":["chain_head","digest"]"#));
         assert!(
             err.ends_with(
-                "subject 'digest' is not a ledger head (allowed: chain_head, export_receipt_head, break_glass_receipt_head, policy_head)"
+                "subject 'digest' is not a ledger head (allowed: chain_head, export_receipt_head, break_glass_receipt_head, policy_head, clock_provenance_head)"
             ),
             "{err}"
         );
@@ -1122,5 +1381,302 @@ mod tests {
                 distinct: 0,
             }
         );
+    }
+
+    #[test]
+    fn max_clock_offset_s_defaults_to_one_bucket_and_must_be_positive() {
+        let p = load_text(&two_tsas(r#","max_clock_offset_s":30"#)).unwrap();
+        assert_eq!(p.max_clock_offset_s, 30);
+        let err = err_of(&two_tsas(r#","max_clock_offset_s":0"#));
+        assert!(
+            err.contains("max_clock_offset_s must be at least 1 (got 0)"),
+            "{err}"
+        );
+        let err = err_of(&two_tsas(r#","max_clock_offset_s":-5"#));
+        assert!(
+            err.contains("max_clock_offset_s must be at least 1 (got -5)"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn subject_error_lists_all_five_heads() {
+        let err = err_of(&two_tsas(r#","subjects":["clock_provenance_head","nope"]"#));
+        assert!(
+            err.ends_with(
+                "subject 'nope' is not a ledger head (allowed: chain_head, export_receipt_head, \
+                 break_glass_receipt_head, policy_head, clock_provenance_head)"
+            ),
+            "{err}"
+        );
+        let p = load_text(&two_tsas(r#","subjects":["clock_provenance_head"]"#)).unwrap();
+        assert_eq!(p.subject_kinds(), vec![AnchorSubject::ClockProvenanceHead]);
+    }
+
+    // -------------------- the OpenTimestamps block --------------------
+
+    const ALICE: &str = "https://alice.btc.calendar.opentimestamps.org";
+    const BOB: &str = "https://bob.btc.calendar.opentimestamps.org";
+
+    fn with_ots(ots: &str) -> String {
+        two_tsas(&format!(r#","ots":{ots}"#))
+    }
+
+    #[test]
+    fn ots_absent_is_none_example_unchanged() {
+        let p = load_text(EXAMPLE).unwrap();
+        assert!(p.ots.is_none());
+        let p = load_text(&two_tsas("")).unwrap();
+        assert!(p.ots.is_none());
+    }
+
+    #[test]
+    fn ots_block_parses_defaults_required_false() {
+        let p = load_text(&with_ots(&format!(
+            r#"{{"calendars":[{{"name":"alice","url":"{ALICE}"}},{{"name":"bob","url":"{BOB}"}}]}}"#
+        )))
+        .unwrap();
+        let ots = p.ots.unwrap();
+        assert!(!ots.required);
+        assert_eq!(ots.calendars.len(), 2);
+        assert_eq!(ots.calendar("bob").unwrap().url, BOB);
+        assert_eq!(ots.calendar_for_url(ALICE).unwrap().name, "alice");
+        assert!(ots.calendar_for_url(&format!("{ALICE}/")).is_none());
+        assert!(!ots.calendars[0].allow_http);
+        let p = load_text(&with_ots(&format!(
+            r#"{{"calendars":[{{"name":"alice","url":"{ALICE}"}}],"required":true}}"#
+        )))
+        .unwrap();
+        assert!(p.ots.unwrap().required);
+    }
+
+    #[test]
+    fn ots_validation_literals() {
+        let cal = |name: &str, url: &str| format!(r#"{{"name":"{name}","url":"{url}"}}"#);
+        let cases: Vec<(String, String)> = vec![
+            (
+                r#"{"calendars":[]}"#.to_string(),
+                "ots: at least one calendar is required".to_string(),
+            ),
+            (
+                format!(
+                    r#"{{"calendars":[{}]}}"#,
+                    (0..9)
+                        .map(|i| cal(&format!("c{i}"), &format!("https://c{i}.example")))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ),
+                "ots: at most 8 calendars".to_string(),
+            ),
+            (
+                format!(r#"{{"calendars":[{}]}}"#, cal("bad name", ALICE)),
+                "calendar name 'bad name' is invalid (1-32 characters of A-Z a-z 0-9 _ -)"
+                    .to_string(),
+            ),
+            (
+                format!(
+                    r#"{{"calendars":[{},{}]}}"#,
+                    cal("alice", ALICE),
+                    cal("alice", BOB)
+                ),
+                "duplicate calendar name 'alice'".to_string(),
+            ),
+            (
+                format!(r#"{{"calendars":[{}]}}"#, cal("alpha", ALICE)),
+                "name 'alpha' is used by both a TSA and a calendar".to_string(),
+            ),
+            (
+                format!(
+                    r#"{{"calendars":[{}]}}"#,
+                    cal("alice", "http://alice.example")
+                ),
+                "calendar 'alice': url must start with https:// (set \"allow_http\": true to override)"
+                    .to_string(),
+            ),
+            (
+                format!(r#"{{"calendars":[{}]}}"#, cal("alice", &format!("{ALICE}/"))),
+                "calendar 'alice': url must not end with '/' or carry a query or fragment"
+                    .to_string(),
+            ),
+            (
+                format!(r#"{{"calendars":[{}]}}"#, cal("alice", &format!("{ALICE}?x=1"))),
+                "calendar 'alice': url must not end with '/' or carry a query or fragment"
+                    .to_string(),
+            ),
+            (
+                format!(r#"{{"calendars":[{}]}}"#, cal("alice", "https://al ice.example")),
+                "calendar 'alice': url contains a character outside A-Z a-z 0-9 . _ / : - (a pending attestation could not name it)"
+                    .to_string(),
+            ),
+            (
+                format!(
+                    r#"{{"calendars":[{},{}]}}"#,
+                    cal("alice", ALICE),
+                    cal("bob", ALICE)
+                ),
+                format!("duplicate calendar url '{ALICE}'"),
+            ),
+        ];
+        for (ots, want) in cases {
+            let err = err_of(&with_ots(&ots));
+            assert!(err.ends_with(&want), "want …{want}\n got {err}");
+            assert!(err.starts_with("anchor policy "), "{err}");
+        }
+        // http:// is accepted with allow_http.
+        let p = load_text(&with_ots(
+            r#"{"calendars":[{"name":"local","url":"http://127.0.0.1:14788","allow_http":true}]}"#,
+        ))
+        .unwrap();
+        assert!(p.ots.unwrap().calendars[0].allow_http);
+    }
+
+    #[test]
+    fn ots_unknown_field_refused() {
+        let err = err_of(&with_ots(&format!(
+            r#"{{"calendars":[{{"name":"alice","url":"{ALICE}"}}],"min_calendars":2}}"#
+        )));
+        assert!(err.contains("unknown field `min_calendars`"), "{err}");
+        let err = err_of(&with_ots(&format!(
+            r#"{{"calendars":[{{"name":"alice","url":"{ALICE}","role":"qualified"}}]}}"#
+        )));
+        assert!(err.contains("unknown field `role`"), "{err}");
+    }
+
+    fn ots_policy() -> AnchorPolicy {
+        load_text(&two_tsas(&format!(
+            r#","subjects":["chain_head","policy_head"],"ots":{{"calendars":[{{"name":"alice","url":"{ALICE}"}}],"required":true}}"#
+        )))
+        .unwrap()
+    }
+
+    fn passed(
+        id: i64,
+        subject: AnchorSubject,
+        hash: u8,
+        bucket: u64,
+        state: OtsRowState,
+    ) -> OtsPassed {
+        OtsPassed {
+            id,
+            subject,
+            hash: [hash; 32],
+            bucket_start: bucket,
+            state,
+        }
+    }
+
+    #[test]
+    fn evaluate_ots_current_head_wins_newest_confirmed_otherwise() {
+        let p = ots_policy();
+        let heads = [
+            (AnchorSubject::ChainHead, Some([1u8; 32])),
+            (AnchorSubject::PolicyHead, Some([9u8; 32])),
+        ];
+        let rows = vec![
+            // The current chain head, confirmed at two heights: lowest wins.
+            passed(
+                1,
+                AnchorSubject::ChainHead,
+                1,
+                600,
+                OtsRowState::Confirmed { height: 12 },
+            ),
+            passed(
+                2,
+                AnchorSubject::ChainHead,
+                1,
+                600,
+                OtsRowState::Confirmed { height: 10 },
+            ),
+            // An older chain head confirmed in a NEWER bucket: the current head still wins.
+            passed(
+                3,
+                AnchorSubject::ChainHead,
+                2,
+                1200,
+                OtsRowState::Confirmed { height: 11 },
+            ),
+            // Policy head: two historical hashes confirmed, the head itself pending.
+            passed(
+                4,
+                AnchorSubject::PolicyHead,
+                7,
+                600,
+                OtsRowState::Confirmed { height: 5 },
+            ),
+            passed(
+                5,
+                AnchorSubject::PolicyHead,
+                8,
+                1200,
+                OtsRowState::Confirmed { height: 6 },
+            ),
+            passed(6, AnchorSubject::PolicyHead, 9, 1800, OtsRowState::Pending),
+        ];
+        let cov = evaluate_ots(&p, &heads, &rows);
+        assert_eq!(cov.len(), 2);
+        assert_eq!(
+            cov[0].verdict,
+            OtsCoverageVerdict::Confirmed {
+                hash: [1; 32],
+                anchor_ids: vec![1, 2],
+                height: 10,
+                is_current: true
+            }
+        );
+        assert_eq!(
+            cov[1].verdict,
+            OtsCoverageVerdict::Confirmed {
+                hash: [8; 32],
+                anchor_ids: vec![5],
+                height: 6,
+                is_current: false
+            }
+        );
+    }
+
+    #[test]
+    fn evaluate_ots_pending_and_unchecked_never_cover_sentinel_and_digest_rows_ignored() {
+        let p = ots_policy();
+        let sentinel = AnchorSubject::PolicyHead.empty_ledger_sentinel().unwrap();
+        let heads = [
+            (AnchorSubject::ChainHead, Some([1u8; 32])),
+            (AnchorSubject::PolicyHead, None),
+        ];
+        let mut rows = vec![
+            passed(1, AnchorSubject::ChainHead, 1, 600, OtsRowState::Pending),
+            passed(
+                2,
+                AnchorSubject::ChainHead,
+                1,
+                600,
+                OtsRowState::Unchecked { height: 3 },
+            ),
+            passed(3, AnchorSubject::ChainHead, 1, 600, OtsRowState::Pending),
+            // A confirmed DIGEST row over the chain head's hash never counts.
+            passed(
+                4,
+                AnchorSubject::Digest,
+                1,
+                600,
+                OtsRowState::Confirmed { height: 3 },
+            ),
+        ];
+        rows.push(OtsPassed {
+            id: 5,
+            subject: AnchorSubject::Digest,
+            hash: sentinel,
+            bucket_start: 600,
+            state: OtsRowState::Confirmed { height: 3 },
+        });
+        let cov = evaluate_ots(&p, &heads, &rows);
+        assert_eq!(
+            cov[0].verdict,
+            OtsCoverageVerdict::NotConfirmed {
+                pending: 2,
+                unchecked: 1
+            }
+        );
+        assert_eq!(cov[1].verdict, OtsCoverageVerdict::Empty);
     }
 }

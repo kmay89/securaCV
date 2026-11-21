@@ -500,15 +500,31 @@ final class UnsealModel: ObservableObject {
     func importFile(at url: URL) {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        do {
-            let data = try Data(contentsOf: url)
-            Task { await unseal(data: data) }
-        } catch {
-            problem = "Couldn't read \(url.lastPathComponent): \(error.localizedDescription)"
+        // The size first, from the file system: a file larger than any
+        // sealed snapshot can be is refused before a byte is read, so a
+        // huge file cannot take the app's memory with it.
+        if let size = Self.fileSize(of: url), size > Self.maxSealedFileBytes {
+            problem = SnapshotVaultError.ciphertextLengthOutOfRange(size).localizedDescription
+        } else {
+            do {
+                let data = try Data(contentsOf: url)
+                Task { await unseal(data: data) }
+            } catch {
+                problem = "Couldn't read \(url.lastPathComponent): \(error.localizedDescription)"
+            }
         }
         if Self.isOurInboxCopy(url) {
             try? FileManager.default.removeItem(at: url)
         }
+    }
+
+    /// The largest file a sealed snapshot can be: header, the firmware's
+    /// largest ciphertext, tag.
+    static let maxSealedFileBytes = SvltHeader.size + SvltHeader.maxCiphertext + SvltHeader.tagSize
+
+    /// The file's size as the file system reports it, without reading it.
+    nonisolated static func fileSize(of url: URL) -> Int? {
+        try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize
     }
 
     /// True only for a file inside this app's own Documents/Inbox — the

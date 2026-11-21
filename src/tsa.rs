@@ -424,6 +424,11 @@ pub enum AnchorSubject {
     BreakGlassReceiptHead,
     /// Head of the policy-change history.
     PolicyHead,
+    /// Head of the clock-provenance ledger (device clock vs TSA `genTime`,
+    /// one device-signed record per anchor row; `src/clock_provenance.rs`).
+    /// Appended last: the order of the kinds before it is part of
+    /// `anchor-all`'s request order and `classify_hash`'s search order.
+    ClockProvenanceHead,
 }
 
 /// Domain prefix of the per-subject empty-ledger sentinel digest.
@@ -431,11 +436,12 @@ const EMPTY_LEDGER_SENTINEL_PREFIX: &[u8] = b"securacv:anchor:empty-ledger:v1:";
 
 impl AnchorSubject {
     /// Every head kind, in the order `anchor-all` and `classify_hash` use.
-    pub const HEADS: [AnchorSubject; 4] = [
+    pub const HEADS: [AnchorSubject; 5] = [
         AnchorSubject::ChainHead,
         AnchorSubject::ExportReceiptHead,
         AnchorSubject::BreakGlassReceiptHead,
         AnchorSubject::PolicyHead,
+        AnchorSubject::ClockProvenanceHead,
     ];
 
     /// The stored literal.
@@ -446,6 +452,7 @@ impl AnchorSubject {
             AnchorSubject::ExportReceiptHead => "export_receipt_head",
             AnchorSubject::BreakGlassReceiptHead => "break_glass_receipt_head",
             AnchorSubject::PolicyHead => "policy_head",
+            AnchorSubject::ClockProvenanceHead => "clock_provenance_head",
         }
     }
 
@@ -457,6 +464,7 @@ impl AnchorSubject {
             "export_receipt_head" => Some(AnchorSubject::ExportReceiptHead),
             "break_glass_receipt_head" => Some(AnchorSubject::BreakGlassReceiptHead),
             "policy_head" => Some(AnchorSubject::PolicyHead),
+            "clock_provenance_head" => Some(AnchorSubject::ClockProvenanceHead),
             _ => None,
         }
     }
@@ -481,6 +489,7 @@ impl AnchorSubject {
             AnchorSubject::ExportReceiptHead => Some("export_receipts"),
             AnchorSubject::BreakGlassReceiptHead => Some("break_glass_receipts"),
             AnchorSubject::PolicyHead => Some("policy_change_history"),
+            AnchorSubject::ClockProvenanceHead => Some("clock_provenance"),
         }
     }
 
@@ -493,6 +502,7 @@ impl AnchorSubject {
             AnchorSubject::ExportReceiptHead => "export-receipt chain",
             AnchorSubject::BreakGlassReceiptHead => "break-glass receipt chain",
             AnchorSubject::PolicyHead => "policy-change history",
+            AnchorSubject::ClockProvenanceHead => "clock-provenance ledger",
         }
     }
 
@@ -504,6 +514,7 @@ impl AnchorSubject {
             AnchorSubject::ExportReceiptHead => "in export-receipt chain history",
             AnchorSubject::BreakGlassReceiptHead => "in break-glass receipt chain history",
             AnchorSubject::PolicyHead => "in policy-change history",
+            AnchorSubject::ClockProvenanceHead => "in clock-provenance ledger history",
         }
     }
 
@@ -520,6 +531,9 @@ impl AnchorSubject {
                 "anchored hash is not in break-glass receipt chain history"
             }
             AnchorSubject::PolicyHead => "anchored hash is not in policy-change history",
+            AnchorSubject::ClockProvenanceHead => {
+                "anchored hash is not in clock-provenance ledger history"
+            }
         }
     }
 
@@ -896,8 +910,8 @@ pub struct AnchorRecord {
     pub id: i64,
     pub created_bucket: TimeBucket,
     /// What was anchored: an `AnchorSubject` literal (`chain_head`, `digest`,
-    /// `export_receipt_head`, `break_glass_receipt_head`, `policy_head`), or
-    /// unknown text from an older writer (treated as a digest anchor).
+    /// `export_receipt_head`, `break_glass_receipt_head`, `policy_head`,
+    /// `clock_provenance_head`), or unknown text from an older writer (treated as a digest anchor).
     pub subject: String,
     pub subject_hash: [u8; 32],
     pub tsa_url: String,
@@ -1070,15 +1084,33 @@ fn anchor_select_sql(conn: &Connection) -> Result<String> {
 type RawAnchorRow = [RawValue; 12];
 
 /// One stored value by storage class. `BadText` is TEXT that is not UTF-8;
-/// no column accepts it.
+/// no column accepts it. Shared with the `ots_anchors` reader
+/// (`crate::ots::list_ots_anchors_lenient`).
 #[derive(Clone, Debug, PartialEq)]
-enum RawValue {
+pub(crate) enum RawValue {
     Null,
     Integer(i64),
     Real,
     Text(String),
     Blob(Vec<u8>),
     BadText,
+}
+
+/// Column `i` of `row` by storage class, never typed: TEXT that is not UTF-8
+/// stays TEXT (`BadText`), so the row reports the column instead of failing
+/// the whole read (rusqlite 0.41 made `ValueRef` to `Value` fallible there).
+pub(crate) fn raw_value(row: &rusqlite::Row<'_>, i: usize) -> rusqlite::Result<RawValue> {
+    use rusqlite::types::ValueRef;
+    Ok(match row.get_ref(i)? {
+        ValueRef::Null => RawValue::Null,
+        ValueRef::Integer(v) => RawValue::Integer(v),
+        ValueRef::Real(_) => RawValue::Real,
+        ValueRef::Blob(b) => RawValue::Blob(b.to_vec()),
+        ValueRef::Text(t) => match std::str::from_utf8(t) {
+            Ok(s) => RawValue::Text(s.to_owned()),
+            Err(_) => RawValue::BadText,
+        },
+    })
 }
 
 /// The anchor columns in [`anchor_select_sql`] order, for the per-column
@@ -1191,24 +1223,14 @@ fn decode_anchor_row(raw: &RawAnchorRow) -> std::result::Result<AnchorRecord, St
 /// genuine SQLite errors — propagate. A row whose `id` itself is not an
 /// INTEGER is reported under id `-1`.
 pub fn list_anchors_lenient(conn: &Connection) -> Result<Vec<(i64, Result<AnchorRecord>)>> {
-    use rusqlite::types::ValueRef;
     let sql = anchor_select_sql(conn)?;
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], |row| {
         let mut raw: RawAnchorRow = std::array::from_fn(|_| RawValue::Null);
         for (i, slot) in raw.iter_mut().enumerate() {
-            *slot = match row.get_ref(i)? {
-                ValueRef::Null => RawValue::Null,
-                ValueRef::Integer(v) => RawValue::Integer(v),
-                ValueRef::Real(_) => RawValue::Real,
-                ValueRef::Blob(b) => RawValue::Blob(b.to_vec()),
-                // TEXT that is not UTF-8 stays TEXT: the row reports the
-                // column instead of failing the whole read.
-                ValueRef::Text(t) => match std::str::from_utf8(t) {
-                    Ok(s) => RawValue::Text(s.to_owned()),
-                    Err(_) => RawValue::BadText,
-                },
-            };
+            // TEXT that is not UTF-8 stays TEXT: the row reports the
+            // column instead of failing the whole read.
+            *slot = raw_value(row, i)?;
         }
         Ok(raw)
     })?;
@@ -1235,6 +1257,34 @@ pub fn list_anchors(conn: &Connection) -> Result<Vec<AnchorRecord>> {
         .into_iter()
         .map(|(_, row)| row)
         .collect()
+}
+
+/// `(id, token_der)` of every anchor row with `id > after_id`, in id order,
+/// for the clock-provenance poll. The token column is read as the `Value`
+/// SQLite holds: `Some` for a BLOB (or TEXT, as bytes), `None` for anything
+/// else — a row whose token is not bytes gets no clock record, and the poll
+/// still moves past it. `Ok(vec![])` when the table is absent.
+pub fn anchor_tokens_after(
+    conn: &Connection,
+    after_id: i64,
+) -> Result<Vec<(i64, Option<Vec<u8>>)>> {
+    use rusqlite::types::ValueRef;
+    if !table_exists(conn, "tsa_anchors")? {
+        return Ok(Vec::new());
+    }
+    let mut stmt =
+        conn.prepare("SELECT id, token_der FROM tsa_anchors WHERE id > ?1 ORDER BY id ASC")?;
+    let rows = stmt.query_map([after_id], |row| {
+        let id: i64 = row.get(0)?;
+        let token = match row.get_ref(1)? {
+            ValueRef::Blob(b) => Some(b.to_vec()),
+            ValueRef::Text(t) => Some(t.to_vec()),
+            _ => None,
+        };
+        Ok((id, token))
+    })?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
 }
 
 fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
@@ -1351,8 +1401,8 @@ pub fn hash_in_ledger(
 }
 
 /// Which ledger a hash belongs to (chain head first, then the export-receipt,
-/// break-glass receipt and policy-change ledgers), tolerating missing
-/// tables. Sentinel hashes are never classified as heads: they are in no
+/// break-glass receipt, policy-change and clock-provenance ledgers),
+/// tolerating missing tables. Sentinel hashes are never classified as heads: they are in no
 /// ledger by construction.
 pub fn classify_hash(conn: &Connection, hash: &[u8; 32]) -> Result<Option<HashLocation>> {
     for subject in AnchorSubject::HEADS {
@@ -1726,6 +1776,7 @@ mod tests {
             AnchorSubject::ExportReceiptHead,
             AnchorSubject::BreakGlassReceiptHead,
             AnchorSubject::PolicyHead,
+            AnchorSubject::ClockProvenanceHead,
         ] {
             assert_eq!(AnchorSubject::parse(kind.as_str()), Some(kind));
             assert_eq!(kind.to_string(), kind.as_str());
@@ -1811,6 +1862,95 @@ mod tests {
         assert_eq!(AnchorSubject::Digest.empty_ledger_sentinel(), None);
         assert_eq!(AnchorSubject::sentinel_owner(&fixture_digest()), None);
         assert_eq!(AnchorSubject::sentinel_owner(&[0u8; 32]), None);
+    }
+
+    #[test]
+    fn clock_provenance_head_is_the_fifth_subject() {
+        assert_eq!(AnchorSubject::HEADS.len(), 5);
+        assert_eq!(
+            AnchorSubject::HEADS[4],
+            AnchorSubject::ClockProvenanceHead,
+            "appended last: the request and classify order of the first four is unchanged"
+        );
+        let kind = AnchorSubject::ClockProvenanceHead;
+        assert_eq!(kind.as_str(), "clock_provenance_head");
+        assert_eq!(kind.table(), Some("clock_provenance"));
+        assert_eq!(kind.ledger_short(), "clock-provenance ledger");
+        assert_eq!(
+            kind.membership_label(),
+            "in clock-provenance ledger history"
+        );
+        assert_eq!(
+            kind.not_in_history_label(),
+            "anchored hash is not in clock-provenance ledger history"
+        );
+        let sentinel = kind.empty_ledger_sentinel().unwrap();
+        assert_eq!(AnchorSubject::sentinel_owner(&sentinel), Some(kind));
+
+        // The generic `id, entry_hash` readers work on the new table: an
+        // absent table has no head, a live row is a head and a member.
+        let conn = Connection::open_in_memory().unwrap();
+        assert_eq!(ledger_head(&conn, kind).unwrap(), None);
+        conn.execute_batch(
+            "CREATE TABLE clock_provenance (id INTEGER PRIMARY KEY AUTOINCREMENT, \
+             entry_hash BLOB NOT NULL)",
+        )
+        .unwrap();
+        assert_eq!(ledger_head(&conn, kind).unwrap(), None);
+        let head = [0x5au8; 32];
+        conn.execute(
+            "INSERT INTO clock_provenance(entry_hash) VALUES (?1)",
+            [head.as_slice()],
+        )
+        .unwrap();
+        assert_eq!(ledger_head(&conn, kind).unwrap(), Some(head));
+        assert_eq!(ledger_position(&conn, kind, &head).unwrap(), Some(1));
+        let located = classify_hash(&conn, &head).unwrap().expect("classified");
+        assert_eq!(located.subject, kind);
+        assert_eq!(
+            classify_hash(&conn, &sentinel).unwrap().map(|l| l.subject),
+            None
+        );
+    }
+
+    #[test]
+    fn anchor_tokens_after_is_tolerant() {
+        let conn = Connection::open_in_memory().unwrap();
+        // No table: no rows, no error.
+        assert!(anchor_tokens_after(&conn, 0).unwrap().is_empty());
+        ensure_anchor_table(&conn).unwrap();
+        assert!(anchor_tokens_after(&conn, 0).unwrap().is_empty());
+        let der = fixture_token_der();
+        let insert = |token: rusqlite::types::Value| {
+            conn.execute(
+                "INSERT INTO tsa_anchors(created_bucket_start, created_bucket_size, subject, \
+                 subject_hash, tsa_url, gen_time, token_der) \
+                 VALUES (0, 600, 'digest', ?1, '(offline)', 'x', ?2)",
+                rusqlite::params![vec![0u8; 32], token],
+            )
+            .unwrap();
+        };
+        insert(rusqlite::types::Value::Blob(der.clone()));
+        insert(rusqlite::types::Value::Text("not der".to_string()));
+        insert(rusqlite::types::Value::Integer(42));
+        insert(rusqlite::types::Value::Blob(der.clone()));
+        let rows = anchor_tokens_after(&conn, 0).unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                (1, Some(der.clone())),
+                (2, Some(b"not der".to_vec())),
+                (3, None),
+                (4, Some(der.clone())),
+            ]
+        );
+        // Strictly after the cursor, in id order.
+        let after = anchor_tokens_after(&conn, 2).unwrap();
+        assert_eq!(
+            after.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            vec![3, 4]
+        );
+        assert!(anchor_tokens_after(&conn, 4).unwrap().is_empty());
     }
 
     #[test]

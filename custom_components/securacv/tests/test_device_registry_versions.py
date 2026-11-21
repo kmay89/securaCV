@@ -224,6 +224,43 @@ def test_the_flagship_shows_the_version_its_status_carries() -> None:
     assert _device(hass, "flag01").sw_version == "2.4.17"
 
 
+def test_the_flagships_status_never_moves_its_liveness() -> None:
+    """The flagship's liveness is its availability topic (retained
+    ``online``, ``offline`` as its last will); its status, every 30 s,
+    names its witness state (``"state": "NOFIX"``) and no liveness. Read as
+    offline, that status took the device and every entity on it down thirty
+    seconds after each connect. It registers the device and moves nothing."""
+    hass = _hass()
+    entry = _mqtt_entry(hass)
+    flagship = FAMILIES["canary"]
+    assert "online" not in flagship["status"] and "status" not in flagship["status"]
+
+    _publish(hass, "flag01", "availability", "online")
+    record = entry.runtime_data.devices["flag01"]
+    assert record["online"] is True
+    for _ in range(3):
+        _publish(hass, "flag01", "status", flagship["status"])
+        _publish(hass, "flag01", "health", flagship["health"])
+        assert record["online"] is True
+    assert _device(hass, "flag01").sw_version == flagship["health"]["firmware_version"]
+
+    _publish(hass, "flag01", "availability", "offline")
+    assert record["online"] is False
+    _publish(hass, "flag01", "status", flagship["status"])
+    assert record["online"] is False, "nor does a status bring it back"
+
+
+@pytest.mark.parametrize("family", sorted(set(FAMILIES) - {"canary"}))
+def test_every_other_family_says_it_is_online_on_its_status(family: str) -> None:
+    """The families with no availability topic carry their liveness on
+    status, and it is still read from there."""
+    hass = _hass()
+    entry = _mqtt_entry(hass)
+    device_id = f"{family.replace('-', '')}01"
+    _publish(hass, device_id, "status", FAMILIES[family]["status"])
+    assert entry.runtime_data.devices[device_id]["online"] is True
+
+
 def test_an_update_keeps_the_board_and_the_address() -> None:
     """A publish that leaves a fact out says nothing about it: an update's
     status that names only its new version keeps the board and the address

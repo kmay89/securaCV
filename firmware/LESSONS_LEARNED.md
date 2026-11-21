@@ -5566,6 +5566,258 @@
   and `a_re_pair_into_another_opera_keeps_the_joiners_other_members`.
 - **Date learned:** 2026-11
 
+## The 2.4.20 audit: one owner for a fact, one door for a field
+
+### A status word outside the liveness vocabulary is no verdict (flagship read offline 30 s after connect)
+- **What happened:** Every Canary on `firmware/canary` went unavailable in
+  Home Assistant thirty seconds after it connected, with every entity on it,
+  until the next reconnect, when the cycle repeated. Its availability said
+  online; its first periodic status publish took it down.
+- **Root cause:** The integration read the status topic as a liveness verdict
+  with two outcomes: a word in the online vocabulary, or offline. The
+  flagship's status carries its witness state there (`"state":"NOFIX"`,
+  `STAT`, `MOVE`), and its liveness on the availability last will. A reader
+  with no third answer turned "this payload says nothing about liveness" into
+  "offline". The fixtures that fed status through the handler were the WAP's
+  (`{"online":true}`) and bare words, so no test fed the flagship's own
+  payload.
+- **Fix:** `voice.status_verdict` / `json_status_online` return True, False or
+  None; a None verdict moves nothing (the entry's status handler and the
+  Online sensor both skip it), so liveness stays what the last will said.
+- **Regression check:** `test_the_flagships_status_never_moves_its_liveness`
+  and `test_every_other_family_says_it_is_online_on_its_status`
+  (test_device_registry_versions.py) feed each family's real status fixture
+  through the real handler;
+  `test_a_flagship_stays_online_through_its_periodic_status` in both lanes.
+  When firmware puts a new word in `status`/`state`, add the family's fixture
+  before shipping.
+- **Date learned:** 2026-11
+
+### A field two clients fill differently needs one resolver at the door, and the store needs its own gate (canary-display, G1-13)
+- **What happened:** The display's first-boot portal takes a `tz` field on
+  `/join`. Its own page sends a POSIX rule from the picker; the iPhone sends
+  its IANA zone name (`Europe/Berlin`). `handle_join` checked only that the
+  field was printable, and `tz_set_manual` stored whatever it was handed as a
+  human's final choice. newlib cannot parse an IANA name, so every display set
+  up from the iPhone ran on UTC, and because the rule was marked final
+  `tz_auto_tick` never looked the zone up again.
+- **Root cause:** The canary-wap's join already resolved the same field
+  through `tz_rule::resolve` (the entry "A plausibility check is not a
+  grammar"); the display's join predated the shared header and kept a
+  printable-bytes check. The setter trusted its callers, so the web page's
+  `/api/tz` could store an unparseable rule too.
+- **Fix:** `handle_join` resolves the field with
+  `tz_rule::resolve(posix_valid(tz) ? tz : nullptr, tz, rule)`: a valid rule
+  is kept, a known IANA name is mapped, anything else keeps the compiled seed
+  and leaves the learner armed. `tz_set_manual` refuses a rule that fails
+  `tz_rule::posix_valid`.
+- **Regression check:** `firmware/tests_host/test_tz_rule.cpp`
+  (`test_display_join_field`): the expression on IANA names, picker rules and
+  garbage; every rule the portal's picker offers passes the gate;
+  `provision.cpp` and `tz_auto.cpp` are read for the wiring, since neither
+  compiles on a host.
+- **Date learned:** 2026-11
+
+### A fact a decision needs after a restart cannot live in RAM (Wi-Fi setup rule, G3-01)
+- **What happened:** `wifi_should_open_setup` opens setup for a link that has
+  never been online and keeps failing for a fixable reason. "Ever online" was
+  a RAM flag. A whole-house power blip restarts the router and every Canary
+  together (the normal multi-device boot); the Canaries are up in 3 s, the
+  router beacons again 90 s later. Every Sense, Vision and Sentinel raised its
+  setup network about 37 s after boot, and every display dropped its dashboard
+  into the setup wizard. The same happened after the five-minute outage
+  reboot.
+- **Root cause:** One flag served two decisions with opposite needs. The
+  reboot rule needs it to reset on a restart (at most one reboot per
+  association). The setup rule needs it to survive one. The fault model had
+  written the hole down; nothing closed it.
+- **Fix:** A joined bit per saved network (`wifi_store::FLAG_JOINED`, in the
+  byte the ring blob always carried, so no format bump), set by `add()` and
+  `note_result(ok)` and left clear by `import_legacy()` so a seeded pair that
+  was never proven still opens setup. The supervisors hand the setup rule
+  `s_ever_online || any_joined(ring)` and keep the RAM flag alone for the
+  reboot rule. The bit is written to NVS on the first join of a network that
+  lacked it, not only when `last_good` moves.
+- **Regression check:** `firmware/tests_host/test_wifi_store.cpp` (the bit is
+  set only by a join, moves and leaves with its network, survives
+  serialize/parse; a pre-2.4.20 blob reads as never joined) and
+  `test_wifi_join_policy.cpp`
+  (`a_reboot_with_a_joined_ring_never_opens_setup`,
+  `a_seeded_ring_that_never_joined_still_opens_setup`, and both supervisors'
+  source read for the wiring).
+- **Date learned:** 2026-11
+
+### A health probe judged at the first chance judges the environment, not the image (OTA boot probe, G3-02)
+- **What happened:** On the Sense, Sentinel, Vision and display the required
+  "Wi-Fi associated" probe ran in `setup()`, right after the single bounded
+  boot join (30 s). One missed association on a new image's first boot (a
+  congested band, an auth timeout, a router that was itself restarting) failed
+  the probe and reverted a good image; with auto-update on, the next daily
+  check installed it again, and each cycle cost a full slot write.
+- **Root cause:** The probe was placed where the flagship's used to be, before
+  the retry policy had run once. The 60 s confirm dwell was already the health
+  gate; the probe in front of it had no tolerance at all.
+- **Fix:** `ota_boot_validate()` is called from `loop()` and does its work
+  once, at a bounded healthy gate: the first pass with the station link up, or
+  90 s after the first pass. The engine already supported the probe after
+  `init()` (host-tested in both orders). An image that cannot join still fails
+  when the gate closes.
+- **Regression check:**
+  `firmware/projects/canary-display/tests_host/test_ota_mgr_cut.cpp` cuts each
+  product's `ota_boot_validate()` out of its `ota_mgr.cpp`
+  (`firmware/tests_host/cut_functions.awk`) and drives it over a stand-in
+  radio, clock and engine (no verdict on the first pass with the link down,
+  one probe when it comes up, the 90 s bound, the `millis()` wrap), and reads
+  each `main.cpp` for the one call, in `loop()`.
+- **Date learned:** 2026-11
+
+### The layer that retried must not overwrite the reason the layer below recorded (OTA manifest fetch, G2-11)
+- **What happened:** A manifest the device received and refused (bad or
+  missing signature, another product, a v1 after a v2, an over-long field)
+  made `ota_fetch_manifest` fetch it twice more, then set
+  `SECURACV_OTA_ERR_MANIFEST_FETCH`. Every UI told the owner to check their
+  network; the true reason was only in the serial log.
+- **Root cause:** `ota_fetch_manifest_once` returned the parser's `ESP_FAIL`
+  unchanged, so the retry loop could not tell "unreachable" from "answered and
+  refused", and its one error code replaced the parser's.
+- **Fix:** A distinct return (`ESP_ERR_INVALID_RESPONSE`) for a 200 body the
+  parser refused; the loop returns it at once and sets `MANIFEST_FETCH` only
+  for transport and HTTP-status failures. A transport error can never carry
+  that code.
+- **Regression check:** `common/ota/test_ota_logic.cpp`
+  (`test_friendly_strings`): the sentence for each refusal is not the
+  unreachable sentence. The fetch loop is ESP-only and is not host-tested.
+- **Date learned:** 2026-11
+
+### A fix that names one copy leaves its siblings: grep the function, not the file (release summary cut, G2-14)
+- **What happened:** The release summary for Home Assistant's update entity
+  was cut at a byte count. A multibyte character across the boundary left half
+  a UTF-8 sequence, and Home Assistant refused the whole retained payload, so
+  that release never appeared. The finding named the canary-wap and the
+  display. `copy_json_safe` is the same function in the Sense, Sentinel and
+  Vision `ota_mgr.cpp` as well.
+- **Root cause:** A cap on bytes applied to text. The canary-wap's JSON
+  sanitizer had already learned to keep UTF-8 well-formed (F301, F302); the
+  four per-product copies of this helper had not, and no sync check covers the
+  function across products.
+- **Fix:** The copy stops before a lead byte whose whole sequence would not
+  fit, in all four files.
+- **Regression check:**
+  `firmware/projects/canary-display/tests_host/test_ota_mgr_cut.cpp` runs each
+  product's own function on two-, three- and four-byte characters at every
+  offset of the boundary and requires valid UTF-8, a prefix of the input, and
+  the last boundary that fits.
+- **Date learned:** 2026-11
+
+### 2026-11-15 — canary-wap OTA routes and the landing session (2
+2026-11-15 — canary-wap OTA routes and the landing session (2.4.20). F361
+moved the two reboot routes to the bearer but left POST /api/ota/install and
+/api/ota/config on api_auth_check(). The landing page mints that session for
+any LAN host, so any of them could restart the unit through an install or
+re-point the update server. A route that restarts the unit or chooses where
+code comes from is a bearer route. When one route of a family moves, grep the
+family (ota/*, reboot, safe-mode) and move it whole. The docs-claims pins that
+held the old gate moved with it.
+
+### 2026-11-15 — canary-wap Wi-Fi scan state (2
+2026-11-15 — canary-wap Wi-Fi scan state (2.4.20). The scan paths marked
+WIFI_PROV_SCANNING from any state and restored IDLE on any unit with
+credentials. wifi_check_connection() watches only CONNECTING and CONNECTED, so
+one unauthenticated /api/wifi/scan?force=1 left a joined unit blind to link
+loss until a reboot. A side activity must never overwrite the state another
+state machine watches: leave a held link's state alone, and restore from the
+live radio, not from configuration.
+
+### 2026-11-15 — canary-wap BLE OTA (2
+2026-11-15 — canary-wap BLE OTA (2.4.20). The docs, ble_improv.h and
+bluetooth_channel.cpp all said the OTA characteristics were *_AUTHEN, but the
+code created them plain WRITE/READ, and neither write handler looked at the
+link: any connected central could ABORT a session or write into its image. A
+security property stated in comments needs a test that reads the code
+(test_ble_ota_policy now reads ble_ota.cpp's createCharacteristic properties).
+A session opened on one link is bound to that link's handle and address.
+
+### 2026-11-15 — canary-wap pair links (2
+2026-11-15 — canary-wap pair links (2.4.20). The landing fallback and
+/api/pair/token hardcoded http://192.168.4.1, the SoftAP address, which a unit
+on its owner's network no longer answers. A link a device hands out names the
+address the request came in under (its Host, validated, read before the first
+send purges headers) or is relative, never a setup-time constant.
+
+### 2026-11-15 — canary-wap TLS pin lifecycle (2
+2026-11-15 — canary-wap TLS pin lifecycle (2.4.20). init_tls_cert() served a
+certificate whose NVS store failed, and the pairing QR asked its own test
+(g_tls_enabled && fp) instead of tls_after_setup(), so it could pin a
+certificate the next boot replaces. When one predicate guards a value that
+gets handed out, every site that hands it out asks that predicate
+(test_receipt_grant had to cut tls_after_setup with the QR handler).
+
+### 2026-11-15 — canary-wap release_summary (2
+2026-11-15 — canary-wap release_summary (2.4.20). strncpy at 160 bytes split a
+multibyte character, and Home Assistant refused the retained update payload as
+invalid UTF-8. Any byte-length cut of user or release text headed for JSON or
+MQTT must end on a character boundary: back off over the continuation bytes
+and drop a lead byte whose sequence did not fit.
+
+### 2026-11-15 — canary-wap OTA slot exclusion (2
+2026-11-15 — canary-wap OTA slot exclusion (2.4.20). BLE OTA and the pull
+engine checked each other, but the USB drop-zone installer checked neither,
+and its esp_ota_begin could erase the inactive slot under a download. Every
+installer that opens the inactive slot must check every other, from both sides
+(the drop refuses while one is busy; ota_can_install defers while a drop-zone
+is open). When a new installer is added, grep esp_ota_begin.
+
+### 2026-11-16 — kernel hap_bridge: the bytes behind the message that opens a session (0.9.3)
+- **What happened:** The HomeKit bridge moved a whole socket read into its plaintext buffer before Pair Verify finished. It armed the session on M3, promoted it after writing M4, and then kept parsing the rest of that same buffer as plaintext. A host on the path that appended a plaintext `POST /pairings` ADD_PAIRING to the controller's M3 segment got an admin pairing of its own, with the verified controller's rights.
+- **Root cause:** The switch from plaintext to encrypted happened between two requests in one buffer. Only bytes read after the switch were decrypted; bytes already buffered kept the old mode.
+- **Fix:** When the session is promoted, the leftover buffered bytes go back in front of the undecrypted buffer and are opened as frames. Anything that does not authenticate ends the connection.
+- **Regression check:** `plaintext_after_m3_in_the_same_read_does_not_run_as_the_controller` in `src/bridge/hap/server.rs` feeds M3 and the injected request in one read, and asserts no new pairing and a closed connection. Any stream that upgrades mid-buffer (STARTTLS-style) needs the same test: the bytes behind the upgrade message, in the same read.
+- **Date learned:** 2026-11
+
+### 2026-11-16 — kernel hap_bridge: a torn-down session left its authority behind (0.9.3)
+- **What happened:** After a frame failed to authenticate, the bridge dropped only the session. The socket stayed open in plaintext and Pair Verify still held the controller it had verified. A bare plaintext M1 from an on-path host then got session keys from its own Diffie-Hellman under that controller's admin rights, with no M3 from anyone.
+- **Root cause:** A teardown cleared the keys but not the identity that had authorized them. A new handshake also inherited the previous one's verified state instead of starting clean.
+- **Fix:** Every M1 starts Pair Verify from a fresh state. A failed frame ends the connection (session, pending session, Pair Verify and buffers dropped, and the socket shut down), never a fall-back to plaintext on the same stream.
+- **Regression check:** `a_new_m1_forgets_the_controller_the_last_exchange_verified` (`src/bridge/hap/pairing.rs`) and `a_corrupt_frame_then_a_bare_m1_does_not_reopen_the_session` (`src/bridge/hap/server.rs`).
+- **Date learned:** 2026-11
+
+### 2026-11-16 — canary-display roster eviction
+2026-11-16 — canary-display roster eviction (audit A2-09, second review). upsert() learned to evict a pseudo witness so a real identity could take its slot. That gave the eviction power to every on_* ingest by default, including the unauthenticated mDNS browse. Any LAN host announcing role=witness could then push beacon-heard Canaries off a hub-less glass, and they never came back, because a pseudo witness only takes a free slot. A seat function that can displace a row must take the caller's trust as an argument (may_evict), and every unauthenticated caller must pass false. Pin one unauthenticated caller against a full roster in the host test (test_fleet_beacon_model.cpp).
+
+### 2026-11-16 — canary-vision beacon detection opt-in
+2026-11-16 — canary-vision beacon detection (audit A2-07). The fleet beacon carried live person presence and confidence in cleartext on BLE, ESP-NOW and LAN multicast by default. The code called this 'ungated on purpose', so that every band said the same thing. Matching every band is not consent: a field any passive listener can read must be an owner opt-in, off by default. Gate the input, not only the bytes. While the owner has not opted in, a detection edge must not move the beacon generation either, or the timing of an off-schedule frame still reveals the edge (test_vision_beacon_payload.cpp).
+
+### 2026-11-16 — canary-wap factory reset scope (after 2.4.20)
+2026-11-16 — canary-wap factory reset scope (audit A2-18). The 10 s hold cleared Wi-Fi, the broker, the name and the first-boot flag, and nothing else. Two other owner choices lived in NVS and the hold never reached them: the camera vault's recipient key and triggers (main namespace, which vault_snapshot::init() re-adopts every boot) and the OTA manifest override ("securacv_ota"). So a unit handed to a new owner kept sealing frames to the previous owner's key and polling their server, while the FAQ called the hold a factory reset. Every NVS key that holds an owner's recipient, server or armed trigger belongs either in the hold's cleared list or in its comment's Kept list with the reason. When a feature adds such a key, grep factory_reset_by_hold and decide, and add its clear to recovery_kit.test.js's walk row.
+
+### 2026-11-16 — recovery_kit.test.js call walk blind spot
+2026-11-16 — recovery_kit.test.js call walk blind spot (audit A2-18). sketchCallWalk found calls with /(?:^|[^\w.>:])name\s*\(/g. matchAll consumed the boundary character, and the `(` of `if (` had already been consumed by the match on `if`, so a call written as `if (f(...))` was never walked. Every "nothing the hold reaches names X" row was blind to such a callee: log_health's attention check, and the hold's own new OTA erase. A static call walker must look behind for the boundary ((?<![\w.>:])), not consume it. A row that pins a callee should also assert that the walk reaches it, so the walker's reach is tested, not assumed.
+
+### 2026-11-16 — iOS display settings write token (iOS 0.9.3)
+2026-11-16 — iOS display settings write token (iOS 0.9.3). Every display's write guard (glass_web.cpp write_blocked()) answers 403 {"err":"csrf"} to a POST /api/set without this boot's token in X-CSRF-Token, whoever sends it. The device's own mirror page sent the token. The iPhone app's NightlightAPI.set sent a bare POST, so no setting written from the phone saved on any display. One of its three callers (NightlightSection) used `try?` and dropped the refusal silently, and the other two showed only a generic failure. A client of a guarded device route must send what the guard reads. Its tests should drive the real request through a stub that refuses without it (GlassSettingsTests' GlassWriteStubProtocol). A per-boot token is read right before the write and never cached, and a csrf refusal is retried once after a fresh read.
+
+### 2026-11-16 — Pinning a lib_deps range changes a string other gates match literally
+Turning a PlatformIO lib_deps range into an exact pin changes a string that other gates match literally. canary-local/tests/onboard.test.js selected the LVGL 8.4 envs by 'lvgl/lvgl@^8.4.0' and went red on 'lvgl/lvgl@8.4.0'. One of its assertions would have kept passing vacuously, because it negates a lookup of the old string. Before pinning, grep every test and script for the old spec string and update each reader in the same change. check_route_security.py's fixtures still carry the old ranges; they are fixtures keyed by owner/name and do not need to change.
+
+### 2026-11-16 — A new advisory check's first run is a triage, not a red to silence (core-2 WebServer, GHSA-8cmm)
+- **What happened:** The first run of `scripts/check_firmware_advisories.py` flagged 18 advisories against the pinned cores. Most sat in code no image links, and the quick way to green was a `REVIEWED` line each. Reading every match against the code, then having a second reader try to break each verdict, found two that reach shipped firmware: GHSA-8cmm-3887-r32j on every core-2 build that compiles Arduino WebServer (canary-vision, the core-2 displays), and GHSA-g764-gwc3-75m5 on every core-3 product that runs a SoftAP.
+- **Root cause:** A version matcher says what is in range, not what is reached, so its first run mixes real exposure with code we never link. And the advisory's own proof used an upload route, which made it look like something a handler could guard. It is not: 2.0.17's `handleClient()` runs `_parseRequest()`, which hands any POST/PUT/PATCH/DELETE with a multipart `Content-Type`, to any URI, to `_parseForm()` and its client-sized stack array before any route handler is called, so our Host, Origin and CSRF checks never ran first.
+- **Fix:** Triage each match against the code, with an adversarial second read, before writing a verdict; a verdict names the API or library not linked, or the fix and its test. A parser bug in a library is mitigated in the library or by another server, never in a handler: the core-2 WebServer builds link `firmware/third_party/WebServer-2.0.17-securacv` with upstream's boundary fix backported, and the core-3 line moved to 3.3.11 / ESP-IDF 5.5.5.
+- **Regression check:** `scripts/tests/test_check_firmware_advisories.py` (`Reviewed`: every entry is a well-formed GHSA id citing a file or a version, and a cited repository file exists); `scripts/tests/test_vendored_webserver_core2.py`; `firmware/tests_host/test_webserver_boundary.cpp` under AddressSanitizer.
+- **Date learned:** 2026-11
+
+### 2026-11-17 — a pioarduino release can require a newer PlatformIO than the tree pins
+2026-11-17 — core-3 pin move (fw 2.4.21). The core-3 line moved to pioarduino
+55.03.312-1 (arduino-esp32 3.3.12) and every PlatformIO core-3 build failed with
+`IncompatiblePlatform: ... depends on PlatformIO Core >=6.2.0`: that release's
+platform.json declares `"engines": {"platformio": ">=6.2.0"}`, and this tree pins
+PlatformIO 6.1.19 (setup-platformio, and check_route_security.py's reader). The
+Arduino-CLI rows compiled fine, which hid it until the PlatformIO jobs ran. Before
+moving `[platform_core3]`, read the release's platform.json `engines` field
+(raw.githubusercontent.com/pioarduino/platform-espressif32/<tag>/platform.json)
+against the pinned PlatformIO; 55.03.311 (3.3.11, same ESP-IDF 5.5.5) still
+accepts >=6.1.19, so 3.3.12 waits on a PlatformIO 6.2 bump.
+
 ## How to Add an Entry
 
 When you encounter a bug, regression, or hard-won lesson:

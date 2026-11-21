@@ -49,6 +49,13 @@ struct Witness: Identifiable, Codable, Hashable, Sendable {
     /// The Canary answered 403 to this phone's token, so the app stopped
     /// polling it (RefusedPairings). Pair it again or remove it.
     var pairingRefused: Bool = false
+    /// On first sight the Canary's address served a key whose fingerprint is
+    /// not the one its pairing receipt carried (`pubkey_fp`), so the app
+    /// pinned nothing and marks the row failed.
+    var keyMismatch: Bool = false
+    /// Listed (the paired-device list syncs through iCloud) but this device
+    /// holds no token for it, so it is never polled here.
+    var tokenMissing: Bool = false
 
     // Trust
     var badge: TrustBadge = .unknown
@@ -272,7 +279,9 @@ extension Witness {
     /// A stable, human one-liner for the row subtitle.
     var statusLine: String {
         if tamper { return tamperKind.isEmpty ? "Tamper detected" : tamperKind }
+        if keyMismatch { return "Its key does not match its pairing receipt" }
         if badge == .failed { return "Signature did not verify" }
+        if tokenMissing { return "Not yet paired on this device" }
         if link.isDark { return "Gone dark" }
         if pairingRefused { return "Needs pairing again" }
         if !lastEvent.isEmpty { return lastEvent }

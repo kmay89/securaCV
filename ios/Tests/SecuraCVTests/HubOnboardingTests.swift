@@ -138,4 +138,78 @@ final class HubOnboardingTests: XCTestCase {
                        "Fill in your account in SecuraCV and this phone finishes it.")
         XCTAssertFalse(HubWalkthrough.readyNoticeThreadID.isEmpty, "the tap routes to the walkthrough by thread")
     }
+
+    // MARK: - the watch outlives the screen (G1-14, G1-16)
+
+    @MainActor
+    func testARecordedWatchResumesWithItsClockAndTheDraftsStayOnTheRunner() {
+        defer { HubSetupRunner.forgetRecordedWatch() }
+        let started = Date().addingTimeInterval(-12 * 60)
+        UserDefaults.standard.set(started, forKey: HubSetupRunner.watchStartedKey)
+        UserDefaults.standard.set("10.0.0.5", forKey: HubSetupRunner.watchHostKey)
+        let runner = HubSetupRunner()
+        runner.draftUsername = "owner"
+        runner.resumeAfterRelaunch()
+        XCTAssertEqual(runner.watchStartedAt, started, "the 25-minute clock counts from the power-on, not the relaunch")
+        XCTAssertEqual(runner.draftTypedHost, "10.0.0.5")
+        XCTAssertEqual(runner.draftUsername, "owner", "the typed account lives on the runner, not the screen")
+        if case .watching = runner.phase {} else { XCTFail("the watch is running again: \(runner.phase)") }
+        XCTAssertFalse(runner.discovery.isBrowsing, "no browse without the discovery consent")
+        runner.cancelWatching()
+        XCTAssertNil(UserDefaults.standard.object(forKey: HubSetupRunner.watchStartedKey), "a stopped watch is not resumed")
+        XCTAssertEqual(runner.phase, .idle)
+    }
+
+    @MainActor
+    func testAnOldRecordedWatchIsDropped() {
+        defer { HubSetupRunner.forgetRecordedWatch() }
+        UserDefaults.standard.set(Date().addingTimeInterval(-HubSetupRunner.resumeWithin - 60),
+                                  forKey: HubSetupRunner.watchStartedKey)
+        let runner = HubSetupRunner()
+        runner.resumeAfterRelaunch()
+        XCTAssertEqual(runner.phase, .idle)
+        XCTAssertNil(UserDefaults.standard.object(forKey: HubSetupRunner.watchStartedKey))
+    }
+
+    @MainActor
+    func testARotationAfterAFinishedHubReturnsTheRunnerToTheStart() {
+        // Set up → Rotate broker login on a runner that already finished in
+        // this app session: `.done` offers no Start or Finish, so the runner
+        // is reset; a watch or a run in progress honors the rotation itself.
+        XCTAssertTrue(HubSetupRunner.resetsForRotation(phase: .done, rotationRequested: true))
+        XCTAssertFalse(HubSetupRunner.resetsForRotation(phase: .done, rotationRequested: false))
+        XCTAssertFalse(HubSetupRunner.resetsForRotation(phase: .watching(.offline), rotationRequested: true))
+        XCTAssertFalse(HubSetupRunner.resetsForRotation(phase: .provisioning, rotationRequested: true))
+        XCTAssertFalse(HubSetupRunner.resetsForRotation(phase: .idle, rotationRequested: true))
+
+        defer { HubSetupRunner.forgetRecordedWatch() }
+        UserDefaults.standard.set(Date().addingTimeInterval(-60), forKey: HubSetupRunner.watchStartedKey)
+        let runner = HubSetupRunner()
+        runner.draftUsername = "owner"
+        runner.resumeAfterRelaunch()
+        runner.reset()
+        XCTAssertEqual(runner.phase, .idle, "the walkthrough can run again")
+        XCTAssertNil(runner.watchStartedAt)
+        XCTAssertNil(runner.hubURL)
+        XCTAssertTrue(runner.steps.isEmpty)
+        XCTAssertTrue(runner.log.isEmpty)
+        XCTAssertNil(runner.onboardOutcome)
+        XCTAssertNil(UserDefaults.standard.object(forKey: HubSetupRunner.watchStartedKey))
+        XCTAssertEqual(runner.draftUsername, "owner", "the typed drafts are kept")
+    }
+
+    func testOpeningTheWalkthroughStartsNoWatch() throws {
+        // The Local Network alert follows "Start watching", never the open.
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/SecuraCV/Views/HubSetupView.swift")
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: url.path), "ios checkout not visible from the test host")
+        let view = try String(contentsOf: url, encoding: .utf8)
+        let start = try XCTUnwrap(view.range(of: ".onAppear {"))
+        let after = view[start.upperBound...]
+        let end = try XCTUnwrap(after.range(of: "\n        }\n"))
+        XCTAssertFalse(after[..<end.lowerBound].contains("startWatching"), "opening the screen starts nothing")
+        XCTAssertFalse(view.contains(".onDisappear"), "leaving the screen does not stop the watch")
+        XCTAssertFalse(view.contains("HubSetupRunner()"), "the runner is the store's, not the screen's")
+    }
 }

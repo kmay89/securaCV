@@ -552,6 +552,57 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # ── third-party license notices ───────────────────────────────────────────────
+  # The installers carry several hundred Rust crates and programs this project
+  # did not write (espflash), and their licenses
+  # ask that the notice travel with the binary. This job writes
+  # THIRD_PARTY_LICENSES.html (.github/scripts/third_party_notices.sh: every
+  # crate in the app's Cargo.lock for the targets that ship, by
+  # desktop-lab/about.toml, whose accepted list is deny.toml's, then each bundled
+  # program's license file at the ref this release pins), and finalize
+  # attaches it to the release beside the installers. Attached, not bundled:
+  # tauri-build checks `bundle.resources` on disk in every build, so a file
+  # only a release run writes cannot be one. It runs on every run of this
+  # workflow, build-only ones included, so a crate under a license nobody
+  # accepted turns a smoke run red before a release is cut. Its own job, on
+  # Linux: the notices are the same for every platform.
+  notices:
+    name: Third-party license notices
+    runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      # Pinned, and the cache below is keyed on it (CI.md "Rust": a pinned
+      # tool keys the cache on its version). Bump deliberately.
+      CARGO_ABOUT_VERSION: "0.9.3"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: stable
+      - name: Cache the cargo-about binary
+        id: tool
+        uses: actions/cache@v6
+        with:
+          path: ~/.cargo/bin/cargo-about
+          key: cargo-about-${{ env.CARGO_ABOUT_VERSION }}-${{ runner.os }}
+      - name: Install cargo-about
+        if: steps.tool.outputs.cache-hit != 'true'
+        # cargo-about builds its binary only with the `cli` feature: without
+        # it, `cargo install` compiles the library, warns, and installs nothing.
+        run: cargo install cargo-about --version "$CARGO_ABOUT_VERSION" --locked --features cli
+      - name: Write THIRD_PARTY_LICENSES.html
+        run: bash .github/scripts/third_party_notices.sh lab "$RUNNER_TEMP/notices/THIRD_PARTY_LICENSES.html"
+      - name: Upload the notices as a workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: third-party-licenses
+          path: ${{ runner.temp }}/notices/THIRD_PARTY_LICENSES.html
+          if-no-files-found: error
+          retention-days: 14
+
   # ── one authoritative writer for the DRAFT's updater manifest ───────────────
   # Same single-writer shape as the Flasher's finalize job: the matrix jobs
   # each write latest.json with asset-id URLs that die on any re-upload, so
@@ -564,7 +615,7 @@ jobs:
   # desktop-lab-updater-pointer.yml picks up the `release: published` event.
   finalize:
     name: Finalize draft updater manifest (stable URLs + notes)
-    needs: build
+    needs: [build, notices]
     if: github.ref_type == 'tag' || inputs.publish
     runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 10
@@ -589,6 +640,30 @@ jobs:
           fi
           echo "tag=${tag}" >> "$GITHUB_OUTPUT"
           echo "version=${tag#app-v}" >> "$GITHUB_OUTPUT"
+
+      # The notices job's file, attached beside the installers before anything
+      # else here runs: a release that cannot carry its notices stops before
+      # its updater manifest is finalized.
+      - name: Download the third-party notices
+        uses: actions/download-artifact@v8
+        with:
+          name: third-party-licenses
+          path: ${{ runner.temp }}/notices
+      - name: Attach THIRD_PARTY_LICENSES.html to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          file="$RUNNER_TEMP/notices/THIRD_PARTY_LICENSES.html"
+          [ -s "$file" ] || { echo "::error::the notices artifact is missing or empty"; exit 1; }
+          ok=0
+          for i in 1 2 3 4 5; do
+            if gh release upload "$TAG" "$file" --clobber; then ok=1; break; fi
+            echo "THIRD_PARTY_LICENSES.html upload failed (attempt $i) — retrying in $((i*6))s"; sleep $((i*6))
+          done
+          [ "$ok" -eq 1 ] || { echo "::error::could not upload THIRD_PARTY_LICENSES.html after retries"; exit 1; }
 
       - name: Rewrite latest.json with stable URLs, fresh signatures, and notes
         shell: bash
@@ -677,3 +752,23 @@ jobs:
             echo "installs only after you say yes."
           } > "$body"
           gh release edit "$TAG" --draft --notes-file "$body"
+
+      # "Update everything" reads the commit this draft records to tell a
+      # current draft from a stale one: a draft built before the Lab last
+      # changed is rebuilt, not offered for publishing. tauri-action records
+      # the commit only when it CREATES the draft; a rebuild finds the draft
+      # by tag and replaces its assets, so without this step a rebuilt draft
+      # would still name the old commit (and GitHub cuts the tag there when
+      # the draft is published). Last on purpose: the draft names this commit
+      # only once both platforms built from it and the manifest and body were
+      # written. A tag push needs none of it: the tag is the record.
+      - name: Record the commit this draft was built from
+        if: github.ref_type != 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --draft --target "$GITHUB_SHA"
+          echo "Draft ${TAG} records ${GITHUB_SHA}."

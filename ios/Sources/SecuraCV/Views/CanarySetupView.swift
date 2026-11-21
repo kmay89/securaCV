@@ -163,7 +163,9 @@ struct CanaryFamilySetupView: View {
             // no network here, and the typed fields may be a different one.
             if let ssid = portal.handedSSID,
                HouseholdWiFiStore.shouldRemember(toggleOn: remember, joined: true, ssid: ssid) {
-                try? HouseholdWiFiStore.save(HouseholdWiFi(ssid: ssid, password: homePassword, savedAt: Date()))
+                // An open network has no password: never keep a hidden one with it.
+                try? HouseholdWiFiStore.save(HouseholdWiFi(ssid: ssid, password: isOpen(ssid) ? "" : homePassword,
+                                                           savedAt: Date()))
                 remembered = HouseholdWiFiStore.load()
             }
             startWatchClock()
@@ -198,8 +200,11 @@ struct CanaryFamilySetupView: View {
         (portalChoice.isEmpty ? homeSSID : portalChoice).trimmingCharacters(in: .whitespaces)
     }
 
-    private var chosenIsOpen: Bool {
-        portal.networks.first(where: { $0.ssid == effectiveSSID }).map { !$0.secure } ?? false
+    private var chosenIsOpen: Bool { isOpen(effectiveSSID) }
+
+    /// The Canary listed this network as open (no password field is shown).
+    private func isOpen(_ ssid: String) -> Bool {
+        portal.networks.first(where: { $0.ssid == ssid }).map { !$0.secure } ?? false
     }
 
     /// Every path that asks for Wi-Fi opens with the remembered one.
@@ -324,7 +329,9 @@ struct CanaryFamilySetupView: View {
             wifiFields
             Button {
                 let h = effectiveSSID
-                let p = homePassword
+                // An open network takes no password: a hidden one left from
+                // an earlier pick never goes with it.
+                let p = chosenIsOpen ? "" : homePassword
                 Task { await portal.hand(homeSSID: h, homePassword: p) }
             } label: {
                 Label("Join \(effectiveSSID.isEmpty ? "my Wi-Fi" : effectiveSSID)", systemImage: "wifi")
@@ -505,11 +512,18 @@ struct CanaryFamilySetupView: View {
         // the consent tap started only the Bluetooth scan, so iOS's Local
         // Network prompt comes here, with its reason on the screen.
         if store.discoveryConsent != true {
+            // A display has no Bluetooth door: its tap raises only the
+            // Local Network alert, never the Bluetooth one.
             Button("Enable discovery to watch for it") {
-                store.setDiscoveryConsent(true)
+                store.setDiscoveryConsent(true, startBluetooth: family != .display)
                 store.startLocalNetworkDiscoveryIfConsented()
             }
             .buttonStyle(.bordered)
+            Text(family == .display
+                 ? "iOS asks for Local Network so this phone can see it on your Wi-Fi."
+                 : "iOS asks for Bluetooth and Local Network so this phone can find it and see it on your Wi-Fi.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         } else if !seen.isEmpty {
             ForEach(seen) { d in discoveredRow(d, mine: true) }
             Text("It's on the Fleet tab now.").font(.caption).foregroundStyle(.secondary)

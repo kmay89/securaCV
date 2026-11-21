@@ -212,6 +212,16 @@ struct WallView: View {
             Text(headline(fleet))
                 .font(.title2)
                 .foregroundStyle(.secondary)
+            if stale == nil, Self.hubListsOnlyItself(fleet) {
+                // A hub's roll-call is its own row alone until its owner
+                // opts into the full one (the route takes no token), and the
+                // same single row is what an add-on with MQTT publishing off
+                // serves. Say which setting, here, or the one tile reads as
+                // "no Canaries" forever (tvos/discovery/DISCOVERY.md).
+                Text(Self.hubListsOnlyItselfFootnote)
+                    .font(.footnote)
+                    .foregroundStyle(.tertiary)
+            }
 
             if let stale {
                 // The whole point of the stale state: say so, in the loudest
@@ -252,6 +262,17 @@ struct WallView: View {
                     tone: .warning,
                     title: "Your hub refused this Apple TV's pairing",
                     detail: "Its viewer token was revoked, or the hub lost its viewer-token file. Until you pair again (Settings → Verification), this screen shows the fleet's own report, not a check of its own."
+                )
+            } else if model.standing == .pairedNoLog {
+                // A paired TV whose hub answers the roll-call but has served
+                // no sealed log to its token for several cycles running: the
+                // check this TV was paired to make did not happen. News, not
+                // an alarm about the record — and never the calm self-report
+                // below, which is exactly what a quiet downgrade looks like.
+                StatusBanner(
+                    tone: .warning,
+                    title: "Paired, but your hub served no sealed record this cycle",
+                    detail: "This screen shows the fleet's own report, not a check of its own. Your hub answered the roll-call but not GET /api/sealed-log for this Apple TV's token (nothing came back, or what came back was not a sealed record) for \(WallModel.noLogCyclesBeforeSaid) checks in a row — a kernel started without its viewer-token path, a proxy in front of it, or another host answering at its address all read this way."
                 )
             } else if offlineBanner, !offlineNames(fleet).isEmpty {
                 // The one banner that is a CHOICE (settings → Attention): a
@@ -368,6 +389,23 @@ struct WallView: View {
         }
     }
 
+    /// The roll-call is the kernel's own row and nothing else: exactly one
+    /// device, and that one is software (`DeviceNaming.isSoftware`, the
+    /// kernel's `witness-kernel` product). A lone Canary fronting its own
+    /// fleet is one row too, but hardware, and gets no footnote. Internal,
+    /// not private, so the condition is provable without a render.
+    static func hubListsOnlyItself(_ fleet: FleetSnapshot) -> Bool {
+        guard fleet.devices.count == 1, let only = fleet.devices.first else { return false }
+        return DeviceNaming.isSoftware(published: only.product)
+    }
+
+    /// The one sentence under the headline when `hubListsOnlyItself`. It
+    /// names the add-on's option; the sidecar's `SECURACV_FLEET_ROLLCALL=1`
+    /// and a host kernel's `api.fleet_rollcall` set the same switch
+    /// (tvos/README.md).
+    static let hubListsOnlyItselfFootnote =
+        "Your hub lists only itself. Turn on its full roll-call (fleet_rollcall: full) and keep MQTT publishing on to see your Canaries here."
+
     /// The devices that are dark right now, for the opt-in banner. Chain
     /// trouble is excluded — those devices already own the louder banner.
     private func offlineNames(_ fleet: FleetSnapshot) -> [String] {
@@ -454,14 +492,17 @@ struct WallView: View {
     /// it can never say more than the banner above it: "verified" only
     /// against the pinned key and only when a signature was checked,
     /// "nothing sealed to check" for a pinned walk of an empty tail, "not
-    /// pinned" for a walk against the log's own key, and a refused pairing
-    /// or a changed key in the trouble color.
+    /// pinned" for a walk against the log's own key, and a refused pairing,
+    /// a paired hub serving no record, or a changed key in the trouble
+    /// color.
     private var footerVerdict: (text: String, trouble: Bool)? {
         switch model.standing {
         case .keyChanged:
             return (text: "signing key changed since pairing", trouble: true)
         case .unauthorized:
             return (text: "pairing refused by the hub", trouble: true)
+        case .pairedNoLog:
+            return (text: "paired · no sealed record served", trouble: true)
         case .verified:
             guard let report = model.report else { return nil }
             return (text: "verified · \(report.verified) entries", trouble: false)

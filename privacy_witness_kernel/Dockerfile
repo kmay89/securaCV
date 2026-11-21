@@ -11,29 +11,37 @@
 # supervise the kernel, the bridges and the panel, and run.sh is the one
 # setup step that runs before them (cont-init).
 ARG TARGETARCH
-ARG ALPINE_VERSION=3.18
-# Every base is pinned by digest, the way the root Dockerfile pins its own:
-# a tag is a pointer a registry can move, a digest is the image that was
-# reviewed. Digests resolved 2026-11-06 from the registries' manifest HEAD
-# (`docker buildx imagetools inspect <image>` prints the same ones); move
-# them together with ALPINE_VERSION.
-ARG ALPINE_DIGEST=sha256:de0eb0b3f2a47ba1eb89389859a9bd88b28e82f5826b6969ad604979713c2d4f
+# Every base is pinned by tag and by digest, the way the root Dockerfile
+# pins its own: a tag is a pointer a registry can move, a digest is the image
+# that was reviewed. Both are written out on each FROM line (no ARG carries
+# the release or a digest), so an update is an edit to those four lines and
+# nothing else, which is the form Dependabot's docker updater rewrites.
+# Digests resolved 2026-11-15 from the registries' manifest HEAD
+# (`docker buildx imagetools inspect <image>` prints the same ones). Move all
+# four lines to one Alpine release in one change.
+#
+# Alpine 3.22 is the oldest release Home Assistant still builds its base
+# images for. Its security support ends 2027-05-01
+# (https://alpinelinux.org/releases/); move to a later release before then.
 
-# The runtime base, one stage per arch. Alpine 3.18 == GStreamer 1.22,
-# SQLite 3.41, Python 3.11 — move ALPINE_VERSION and these two tags together.
-FROM ghcr.io/home-assistant/amd64-base:3.18@sha256:5bca760fc27a3cd3356bffe9de74ae075c6e798bdd63815c1c10eae9aa1d1023 AS runtime-amd64
-FROM ghcr.io/home-assistant/aarch64-base:3.18@sha256:e605a9a2979f7251a4cdd757f427940662cbb3e32cb9f935b1f38c8f3724fb76 AS runtime-arm64
+# The runtime base, one stage per arch. Alpine 3.22 == GStreamer 1.26,
+# SQLite 3.49, Python 3.12, jq 1.8.2 (and, in the base, bashio 0.19.0 and
+# s6-overlay 3.2). pwk-wizard-tests.yml tests on that Python and that jq:
+# move its two pins when these tags move.
+FROM ghcr.io/home-assistant/amd64-base:3.22@sha256:1967b25b597a43fa46ce3eef5267b525e946d559d0b397c60af717dde15a2696 AS runtime-amd64
+FROM ghcr.io/home-assistant/aarch64-base:3.22@sha256:5f647e139079ca3d004d4e8e90495c1f77e97dcf533d0db4d62656ad66d8de1f AS runtime-arm64
 
 # Builder: pinned to the SAME Alpine release as the runtime base.
-# Alpine 3.18's own Rust is too old (1.71) for this crate's dependencies, so we
-# install a current stable toolchain via rustup (which targets musl on Alpine).
+# Alpine 3.22's own Rust (1.87) is older than the toolchain pinned below
+# (RUST_TOOLCHAIN), so we install that one via rustup (which targets musl on
+# Alpine).
 #
 # cargo-chef splits dependency compilation from the application build: the expensive
 # "cook" step is keyed only on Cargo.toml/Cargo.lock, so a source-only change reuses
 # the cached dependency layer (and, with the buildx GHA cache wired in
 # .github/workflows/addon-image.yml, across CI runs too) — only the crate itself is
 # then recompiled.
-FROM docker.io/library/alpine:${ALPINE_VERSION}@${ALPINE_DIGEST} AS chef
+FROM docker.io/library/alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f AS chef
 # TARGETARCH is provided automatically by buildx (amd64 / arm64); a stage
 # re-declares it to read it.
 ARG TARGETARCH
@@ -128,7 +136,7 @@ RUN cargo build --release --features rtsp-gstreamer
 # equal the app's (config.yaml): this layer refuses a mismatch, as
 # scripts/lint_version_sync.sh and the pwk-wizard-tests job do before any
 # image is built.
-FROM docker.io/library/alpine:${ALPINE_VERSION}@${ALPINE_DIGEST} AS carry
+FROM docker.io/library/alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f AS carry
 COPY custom_components/securacv /carry/integration/securacv
 COPY docs/blueprints/ /carry/blueprints/
 COPY privacy_witness_kernel/config.yaml /carry/config.yaml
@@ -154,8 +162,10 @@ RUN if [ -z "${TARGETARCH}" ]; then \
     fi
 
 # Install runtime dependencies. Note: libcrypto.so.3 (needed by the SQLCipher-linked
-# binaries) is already provided by the base image's pinned libcrypto3/libssl3, so we must
-# NOT pull the `openssl` metapackage here — it wants a newer revision and breaks that pin.
+# binaries) comes from libcrypto3, which the base image already holds as a dependency of
+# its curl (and of the curl named below). The `openssl` package is only the command-line
+# tool; nothing in the image needs it (run_lib.sh falls back to python3 for the one
+# random it would draw with it), so it stays out.
 RUN apk add --no-cache \
     gstreamer \
     gst-plugins-base \
@@ -179,6 +189,7 @@ COPY --from=builder /build/target/release/export_events /usr/local/bin/
 COPY --from=builder /build/target/release/export_verify /usr/local/bin/
 COPY --from=builder /build/target/release/log_anchor /usr/local/bin/
 COPY --from=builder /build/target/release/court_export /usr/local/bin/
+COPY --from=builder /build/target/release/handoff_sidecar /usr/local/bin/
 
 # The carried integration and blueprints (read by run.sh / serve_wizard.py)
 COPY --from=carry /carry/integration /usr/share/securacv/integration

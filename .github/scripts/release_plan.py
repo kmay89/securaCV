@@ -23,11 +23,16 @@ The rule, per target (it began life as the firmware-only button
     exists                           → DRAFT_PENDING (built, waiting for a
                                        human to publish it; another build would
                                        re-cut the same tag and spend runners)
+  * …and that draft was built from a commit this target has changed since
+                                     → RELEASE (rebuild it: publishing it
+                                       would ship an older tree under the
+                                       version the source now carries)
 
 "Published" is read from git TAGS. A draft release has no tag — GitHub creates
 it when the draft is published — so drafts are passed in separately (the
-workflow lists them from the releases API) and are never mistaken for a
-release. A stale draft below the published version changes nothing.
+workflow lists them from the releases API, each with the commit it records)
+and are never mistaken for a release. A stale draft below the published
+version changes nothing.
 
 and for the un-versioned Pages target:
 
@@ -157,10 +162,15 @@ def decide(
     gate_enabled: bool = True,
     selected: bool = True,
     draft_pending: bool = False,
+    draft_sha: str | None = None,
+    draft_stale: bool = False,
 ) -> Decision:
     """Decide one target. Pure — every input is explicit, so it is testable.
 
     `draft_pending`: a draft release of exactly `source_version` exists.
+    `draft_sha`: the commit that draft records it was built from, when it
+    records one. `draft_stale`: this target's watched paths changed since
+    that commit (never true without a `draft_sha`).
     """
     name = target["name"]
     label = target.get("label", name)
@@ -251,14 +261,36 @@ def decide(
         # it as RELEASE and dispatched the same build again — macOS and Linux
         # runners spent re-cutting a draft that only needed publishing.
         how = target.get("draft_publish") or "the repository's Releases page"
+        draft_tag = f"{target['tag_prefix']}{source_version}"
+        if draft_sha and draft_stale:
+            # The draft holds an older tree than the one this version now
+            # names. Reporting it as "waiting to be published" is how a stale
+            # build ships under the current version; rebuild it instead. The
+            # build reuses the draft and replaces its assets, and the release
+            # workflow's last step records the new commit, so the next press
+            # sees a current draft.
+            return make(
+                RELEASE,
+                f"The draft {draft_tag} was built from {draft_sha[:9]} and this "
+                f"target changed since (or that commit could not be compared) — "
+                f"rebuilding it. The draft is refreshed in place: publish it "
+                f"with {how} after {workflow or 'the release workflow'} "
+                f"finishes, not before.",
+                source_version,
+            )
+        checked = (
+            f"It was built from {draft_sha[:9]} and this target is unchanged since."
+            if draft_sha
+            else "This draft does not record the commit it was built from, so it "
+            "was not compared with the tree: if this target changed after it was "
+            "built, use force to rebuild it before publishing."
+        )
         return make(
             DRAFT_PENDING,
             f"{source_version} is already built as a draft release "
-            f"({target['tag_prefix']}{source_version}) and is waiting to be "
+            f"({draft_tag}) and is waiting to be "
             f"published — publish it with {how}. Nothing dispatched: another "
-            f"build would re-cut the same draft. (A draft is not re-checked "
-            f"against the tree: if this target changed after the draft was "
-            f"built, use force to rebuild it before publishing.)",
+            f"build would re-cut the same draft. {checked}",
         )
 
     if latest_version is None:
@@ -373,6 +405,33 @@ def paths_changed(since_ref: str, paths: list[str], repo_root: str = REPO_ROOT) 
     return True  # git couldn't answer (unknown ref) — assume changed
 
 
+_COMMIT_ID = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
+
+
+def draft_commits(drafts: Iterable[Any] | None) -> dict[str, str | None]:
+    """Draft tag name → the commit that draft records, or None for none.
+
+    Two shapes are accepted, because the workflow has emitted both: a bare
+    tag name (before drafts carried their commit) and `{"tag": …, "sha": …}`,
+    where `sha` is the releases API's `target_commitish`. Only a full commit
+    id counts: for a draft made by hand that field is a branch name, which
+    says nothing about the tree its assets were built from, and the value
+    ends up on a `git diff` command line. When two drafts share a tag the
+    first listed wins (the API lists newest first, which is also the one the
+    release tooling picks up by tag).
+    """
+    out: dict[str, str | None] = {}
+    for item in drafts or ():
+        if isinstance(item, str):
+            out.setdefault(item, None)
+        elif isinstance(item, dict) and isinstance(item.get("tag"), str):
+            sha = item.get("sha")
+            out.setdefault(item["tag"], sha if isinstance(sha, str) and _COMMIT_ID.fullmatch(sha) else None)
+        else:
+            raise ValueError(f"not a draft tag name or a {{tag, sha}} object: {item!r}")
+    return out
+
+
 def build_plan(
     targets: list[dict[str, Any]],
     published_tags: list[str],
@@ -387,7 +446,7 @@ def build_plan(
 ) -> list[Decision]:
     force = force or set()
     gates = gates or {}
-    drafts = set(draft_tags or ())
+    drafts = draft_commits(draft_tags)
     decisions = []
 
     for target in targets:
@@ -406,10 +465,20 @@ def build_plan(
 
         gate_var = target.get("gate_var")
         gate_enabled = gates.get(gate_var, False) if gate_var else True
-        draft_pending = (
-            source_version is not None
-            and bool(target.get("tag_prefix"))
-            and f"{target['tag_prefix']}{source_version}" in drafts
+        draft_tag = (
+            f"{target['tag_prefix']}{source_version}"
+            if source_version is not None and target.get("tag_prefix")
+            else None
+        )
+        draft_pending = draft_tag in drafts
+        draft_sha = drafts.get(draft_tag) if draft_pending else None
+        # Only a draft that records its commit can be held against the tree;
+        # paths_changed is conservative, so a commit it cannot find reads as
+        # changed and the draft is rebuilt rather than trusted.
+        draft_stale = bool(
+            draft_sha
+            and selected
+            and paths_changed(draft_sha, target.get("watch") or [], repo_root)
         )
 
         decisions.append(
@@ -423,6 +492,8 @@ def build_plan(
                 gate_enabled=gate_enabled,
                 selected=selected,
                 draft_pending=draft_pending,
+                draft_sha=draft_sha,
+                draft_stale=draft_stale,
             )
         )
     return decisions
@@ -457,8 +528,9 @@ def main(argv: list[str]) -> int:
     """Emit the plan as JSON.
 
     Reads the published tag list from stdin (a JSON array), and the draft
-    releases' tag names from --drafts-file (a JSON array), so the GitHub API
-    calls stay in the workflow and this stays a pure, offline-testable function.
+    releases from --drafts-file (a JSON array of `{tag, sha}` objects, or of
+    bare tag names), so the GitHub API calls stay in the workflow and this
+    stays a pure, offline-testable function.
     """
     import argparse
 
@@ -471,17 +543,26 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--drafts-file",
         default="",
-        help="JSON array of the tag names of unpublished DRAFT releases (they have no git tag)",
+        help="JSON array of the unpublished DRAFT releases (they have no git tag): "
+        "{tag, sha} objects, or bare tag names",
     )
     args = parser.parse_args(argv)
 
     published_tags = json.load(sys.stdin) if not sys.stdin.isatty() else []
-    draft_tags: list[str] = []
+    draft_tags: list[Any] = []
     if args.drafts_file:
         with open(args.drafts_file, encoding="utf-8") as handle:
             loaded = json.load(handle)
-        if not isinstance(loaded, list) or not all(isinstance(t, str) for t in loaded):
-            print(f"release_plan: {args.drafts_file} is not a JSON array of tag names", file=sys.stderr)
+        try:
+            if not isinstance(loaded, list):
+                raise ValueError("not a list")
+            draft_commits(loaded)
+        except ValueError as err:
+            print(
+                f"release_plan: {args.drafts_file} is not a JSON array of draft "
+                f"tag names or {{tag, sha}} objects ({err})",
+                file=sys.stderr,
+            )
             return 2
         draft_tags = loaded
     targets = load_catalog()

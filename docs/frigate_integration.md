@@ -20,7 +20,7 @@ with a recognizable sentinel in every discarded field, are replayed in CI by
 | Mode | Subscribes to | Frigate | Seals |
 |------|---------------|---------|-------|
 | **Events** (default) | `<prefix>/events` | every version | every tracked object, at its `new` message — one claim per camera, object class and ten-minute window |
-| **Alerts** (`enable_reviews` / `--enable-reviews`) | `<prefix>/reviews` **instead of** `<prefix>/events` | 0.14+ | only review items of severity `alert`, once each, at the message that made them an alert — one claim per camera and window, confidence 1.0 |
+| **Alerts** (`enable_reviews` / `--enable-reviews`) | `<prefix>/reviews` **instead of** `<prefix>/events` | 0.14+ | only review items of severity `alert`, once each, at the message that made them an alert — one claim per camera and window, confidence 1.0. Needs recording on in Frigate: Frigate creates review items only for cameras that record, so with recording off no event is sealed |
 
 The topic prefix follows Frigate's `mqtt.topic_prefix` (default `frigate`) —
 set `frigate.topic_prefix` (app) or `FRIGATE_TOPIC_PREFIX` (Docker sidecar) if
@@ -63,7 +63,12 @@ is generated once, shown once, and kept in the app's own data
 configuration-only backup does not carry it; save it somewhere safe). You
 choose the retention (7 / 30 / 365
 days), what to seal (every tracked object, or only Frigate alerts) and the
-daily digest. Manual YAML is only needed for an external broker or
+daily digest. The Frigate config the wizard writes (when it finds none) is
+detection-only: recording is off and snapshots are not turned on; enable
+either in Frigate if you want footage. It also turns each camera's MQTT
+images off ([below](#trust-boundary)). "Only Frigate alerts" needs
+recording on in Frigate and is not offered when the wizard writes
+Frigate's config. Manual YAML is only needed for an external broker or
 non-default Frigate topics:
 
 ```yaml
@@ -102,7 +107,7 @@ verify_interval_hours: 1
 
 The done screen's **Install the integration and restart Home Assistant**
 button installs the carried integration on your click. After the restart,
-**Settings → Devices & Services → SecuraCV discovered → Configure** (nothing
+**Settings → Devices & Services → the SecuraCV app card under Discovered → Add** (nothing
 to type), then **Settings → Dashboards → Add dashboard → SecuraCV**. Walk
 past a camera: the first event reads **Sealed ✓** within a minute,
 **Verified ✓** after the integration's next chain check. The entities,
@@ -204,7 +209,7 @@ $ docker exec securacv pair
 SecuraCV pairing code: 483921   (valid 10 minutes, 5 attempts)
 Kernel key fingerprint: ab12cd34   (Home Assistant shows the same fingerprint before it pairs)
 Kernel URL to confirm in Home Assistant: http://<this docker host>:8799
-In Home Assistant: Settings → Devices & Services → the discovered "SecuraCV sidecar" card → Configure → enter the code.
+In Home Assistant: Settings → Devices & Services → the "SecuraCV sidecar" card under Discovered → Add → enter the code.
 ```
 
 That is the whole card, printed once on that terminal; the daemon's log never
@@ -418,6 +423,11 @@ name typed with a space no longer silently drops every event of that camera.
 
 Zone ids keep their own rule (`zone:` + lowercase letters, digits, `_` and
 `-`), so existing `zone:…` ids do not move.
+A zone or camera name with letters outside ASCII (`Küche`) now yields
+`zone:k_che`: every character outside `a-z`, `0-9`, `_` and `-` becomes
+`_`. Before 0.9.1 such a name produced an id the kernel refused, and each
+of its events was sealed as a `GapMissingData` record instead. Names that
+differ only in replaced characters share one zone id.
 
 ## Events mode and alerts mode
 
@@ -451,8 +461,9 @@ and through broker outages:
   60 s, connects to nothing and seals nothing, while `witness_api` keeps
   serving so the record can be read and exported. Appending onto an
   untrusted tail would launder the tampering.
-- **Lifecycle records.** `start` at boot — a trailing `start` from the
-  previous run seals a `PowerLoss` record first — and `shutdown_clean` on
+- **Lifecycle records.** `start` at boot — a previous run that never sealed
+  its `shutdown_clean` (a trailing `start`, or one retention has already
+  pruned) seals a `PowerLoss` record first — and `shutdown_clean` on
   SIGTERM/SIGINT. s6 and `docker stop` deliver SIGTERM, so a restart no
   longer looks like a power cut.
 - **Heartbeats.** One per ten-minute bucket, checked every 300 s, plus one
@@ -595,7 +606,17 @@ Frigate publishes (0.17):                 SecuraCV seals:
 ### Trust Boundary
 
 The frigate_bridge is classified as an **external tool** per `kernel/architecture.md` §3.3:
-- It cannot access raw media (Frigate doesn't publish it to MQTT)
+- It receives no raw media: it subscribes only to Frigate's event topic
+  (`<prefix>/events`, or `<prefix>/reviews` in alerts mode) and discards the
+  `thumbnail` / `snapshot` fields at parse. Frigate itself does publish images
+  over MQTT: unless a camera sets `mqtt: enabled: false`, it puts a cropped
+  JPEG of every object it tracks on `frigate/<camera>/<label>/snapshot` as a
+  retained message, which the broker keeps, whatever `snapshots.enabled`
+  says. The config the setup wizard writes, the hub plan's curated config
+  (`homeassistant/frigate/config.yaml`) and the Docker stack's
+  (`integrations/ha_frigate_mqtt/frigate.yml`) set it under every camera; a
+  camera you add by hand needs it too, and where Frigate keeps its own config
+  the setup wizard names any camera that leaves it on.
 - It cannot bypass Contract Enforcement (`append_event_checked` validates all events)
 - It cannot access the sealed log directly for reads (uses the kernel API); it appends through the kernel library and owns the chain's housekeeping because no `witnessd` runs in Frigate mode
 
@@ -791,6 +812,10 @@ cameras:
           roles: [detect]
     detect:
       enabled: true
+    # No JPEG of each tracked object on the broker (on unless a camera says
+    # off; `snapshots` below does not cover it). Events still flow.
+    mqtt:
+      enabled: false
 
 # Minimal recording - just for real-time viewing
 record:
@@ -894,14 +919,29 @@ Connection** form instead, or keep the default prefix.
 
 ## Security Considerations
 
-### Why `--allow-remote-mqtt` is Safe in HA
+### What `--allow-remote-mqtt` trusts in HA
 
-The `--allow-remote-mqtt` flag is needed because HA runs services in separate containers. This is safe because:
+The `--allow-remote-mqtt` flag is needed because HA runs services in separate
+containers: the bridge reaches `core-mosquitto` over the hub's container
+network, not over loopback. What that leaves in place, and what it does not:
 
-1. **No raw media flows through MQTT** - Only sanitized event metadata
-2. **Events are still validated** - Contract Enforcer rejects non-conforming events
-3. **HA network is trusted** - All containers run on the same host
-4. **No new attack surface** - The data received is already public to any HA addon
+1. **No raw media reaches the bridge** - it reads only Frigate's event topic
+   and keeps sanitized metadata. Frigate's per-camera MQTT images are a
+   separate topic, off in the configs the [trust boundary](#trust-boundary)
+   names.
+2. **Events are still validated** - Contract Enforcer rejects non-conforming
+   events.
+3. **The broker is not a closed room** - by default the Mosquitto app
+   listens on port 1883 to your whole LAN, not only to the hub's containers,
+   and MQTT names no publisher. On the app's 7.x line every login it accepts
+   can read and publish every topic: its authentication plugin answers each
+   access check before the access-control list its documentation describes
+   is consulted
+   ([home-assistant/addons#4721](https://github.com/home-assistant/addons/issues/4721)).
+   So any broker login, including the one login every Canary from the hub
+   plan shares, can publish to Frigate's event topic, and the bridge seals
+   what arrives there like an event from Frigate. Treat each broker login
+   like a house key.
 
 ### What the sidecar puts on your network
 

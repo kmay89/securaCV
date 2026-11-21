@@ -21,6 +21,7 @@
 #include <esp_system.h>
 #include <SD.h>
 #include "log_level.h"
+#include "build_config.h"     // HARDWARE_CHIP_NAME, HW_HAS_PSRAM: the target's names
 #include "hardware_state.h"
 #include "device_pseudonym.h"
 
@@ -286,9 +287,11 @@ void init() {
   g_sys_metrics.chip_revision = ESP.getChipRevision();
   g_sys_metrics.chip_cores = ESP.getChipCores();
 
-  // Get chip model (use snprintf for guaranteed null-termination)
+  // Get chip model (use snprintf for guaranteed null-termination). No model
+  // read is empty, so every reader says "cannot say": it used to read
+  // "ESP32-S3", the S3's name on the C3 build too.
   const char* model = ESP.getChipModel();
-  snprintf(g_sys_metrics.chip_model, sizeof(g_sys_metrics.chip_model), "%s", model ? model : "ESP32-S3");
+  snprintf(g_sys_metrics.chip_model, sizeof(g_sys_metrics.chip_model), "%s", model ? model : "");
 
   // Get heap info
   g_sys_metrics.heap_total = ESP.getHeapSize();
@@ -641,7 +644,7 @@ void print_status() {
 
   Serial.println();
   Serial.println("================================================================================");
-  Serial.println("                        SYSTEM MONITOR - ESP32-S3                              ");
+  Serial.println("                        SYSTEM MONITOR - " HARDWARE_CHIP_NAME);
   Serial.println("================================================================================");
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -650,7 +653,9 @@ void print_status() {
   Serial.println();
   Serial.println("--- DEVICE INFORMATION --------------------------------------------------------");
 
-  Serial.printf("  Chip Model     : %s (rev %u)\n", g_sys_metrics.chip_model, g_sys_metrics.chip_revision);
+  Serial.printf("  Chip Model     : %s (rev %u)\n",
+                g_sys_metrics.chip_model[0] ? g_sys_metrics.chip_model : "not reported",
+                g_sys_metrics.chip_revision);
   Serial.printf("  CPU            : %u cores @ %u MHz\n", g_sys_metrics.chip_cores, g_sys_metrics.cpu_freq_mhz);
   Serial.printf("  Flash Size     : %s\n", format_bytes(g_sys_metrics.flash_size, buf1, sizeof(buf1)));
   Serial.printf("  SDK Version    : %s\n", ESP.getSdkVersion());
@@ -780,9 +785,11 @@ void print_status() {
   Serial.println();
   Serial.println("--- NOTES ---------------------------------------------------------------------");
   Serial.println("  * Temperature is chip internal (die temp), typically 10-20C above ambient");
-  Serial.println("  * ESP32-S3 has NO built-in humidity sensor");
+  Serial.println("  * The " HARDWARE_CHIP_NAME " has NO built-in humidity sensor");
   Serial.println("  * For humidity, add external sensor: DHT22, BME280, SHT31, etc.");
+#if HW_HAS_PSRAM
   Serial.println("  * PSRAM extends available RAM via external SPI chip (8MB on XIAO Sense)");
+#endif
   Serial.println();
   Serial.println("================================================================================");
   Serial.println();

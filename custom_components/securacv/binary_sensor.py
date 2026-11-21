@@ -80,7 +80,7 @@ from . import (
     unsigned_trust_attrs,
     valid_device_id,
 )
-from .voice import json_status_online, status_online
+from .voice import json_status_online, status_verdict
 from .mqtt_payload import CreatingEcho, creating_payload
 from .health_metrics import (
     canary_sd_replace_recommended,
@@ -660,11 +660,15 @@ class SecuraCVCanaryOnlineSensor(SecuraCVCanaryBinarySensorBase):
         canary-wap publishes JSON with an `online` boolean
         (`{"online":true,"device_type":"canary-wap",…}` / `{"online":false}`,
         csi_mqtt.cpp), and reading it as a bare word rendered every live WAP
-        permanently offline — then the bare-word dialect.
+        permanently offline — then the bare-word dialect. A payload that
+        says neither online nor offline (the flagship's status names its
+        witness state, `"state":"NOFIX"`) is no verdict and moves nothing:
+        written as off, it turned this sensor off thirty seconds after
+        every connect.
         """
         data = parse_mqtt_json(msg.payload)
         if data is not None:
-            self._attr_is_on = json_status_online(data)
+            verdict = json_status_online(data)
         else:
             if not mqtt_payload_within_cap(msg.payload):
                 return
@@ -674,7 +678,10 @@ class SecuraCVCanaryOnlineSensor(SecuraCVCanaryBinarySensorBase):
                 )
             except UnicodeDecodeError:
                 return
-            self._attr_is_on = status_online(payload)
+            verdict = status_verdict(payload)
+        if verdict is None:
+            return
+        self._attr_is_on = verdict
         self.async_write_ha_state()
 
 
@@ -1210,6 +1217,13 @@ class SecuraCVCanaryOccupancySensor(SecuraCVCanaryProjectedSensorBase):
     presence (canary-sense's topics.h builds `securacv/<id>/state` and its own
     HA discovery reads `value_json.presence`). A snapshot without the field
     leaves the sensor alone rather than asserting "nobody is there".
+
+    Trust on the state path: the `presence` bool this reads sits outside the
+    firmware's signature (the signed word is `presence_state`), and this
+    entity runs no verifier, so a state publish stamps the unsigned slice
+    (`verified: false`, `trust_reason: unsigned`), never the device's last
+    events verdict. Otherwise a forged retained state, sent right after a
+    good signed event, would read `verified: true`.
     """
 
     _attr_device_class = BinarySensorDeviceClass.OCCUPANCY
@@ -1245,7 +1259,9 @@ class SecuraCVCanaryOccupancySensor(SecuraCVCanaryProjectedSensorBase):
             self._cancel_clear()
             self._cancel_clear = None
         self._attr_is_on = bool(present)
-        self._stamp_trust()
+        self._attr_extra_state_attributes = unsigned_trust_attrs(
+            self.hass, self._entry, self._device_id
+        )
         self.async_write_ha_state()
 
 

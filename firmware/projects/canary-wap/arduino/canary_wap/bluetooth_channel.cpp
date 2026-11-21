@@ -2434,7 +2434,8 @@ static void stop_advertising() {
 // with no dashboard open, yielding an UNAUTHENTICATED key that every
 // *_AUTHEN characteristic on this server (console, OTA, witness export,
 // ble_provision) still refuses; only the Improv service's *_ENC
-// characteristics accept it. Shut: today's bonded Numeric Comparison,
+// characteristics accept it. (ble_ota's three characteristics are *_AUTHEN
+// since 2.4.20; before it they were plain WRITE / READ.) Shut: today's bonded Numeric Comparison,
 // DISPLAY_YESNO, restored. These are ble_hs_cfg fields the host reads at
 // the START of a pairing, so the swap is applied between procedures only. The
 // decision is provisioning_logic::security_profile_for's (host-tested):

@@ -5,6 +5,10 @@
 # reachability analysis in SECURITY.md under "Known dependency advisories"
 # explaining why securaCV never executes the vulnerable path. If a fix
 # becomes reachable, drop the entry here and take the bump instead.
+#
+# deny.toml's `[advisories] ignore` is the same list, for a local
+# `cargo deny check`: the two must move together, and
+# scripts/check_advisory_ignores.py (in audit.yml) fails when they differ.
 
 [advisories]
 ignore = [

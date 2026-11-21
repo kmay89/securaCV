@@ -269,6 +269,12 @@ struct NearbySetupSheet: View {
     /// The first encrypted write has gone out, so iOS's Pair sheet has had
     /// its moment; no later row asks for it.
     @State private var pairAsked = false
+    /// The link was re-made while the person typed, and the dropped one had
+    /// not been paired (encrypted): the next encrypted write raises iOS's
+    /// Pair sheet, so the screen says so. `declinedBeforeReconnect` carries
+    /// the old link's declined pairing to the replacement's empty-list hint.
+    @State private var reconnectedUnpaired = false
+    @State private var declinedBeforeReconnect = false
     @State private var showingScanner = false
     @State private var cameraDenied = false
     @State private var scanNote: String?
@@ -301,6 +307,8 @@ struct NearbySetupSheet: View {
         case joining
         /// Joined; spending a WAP's claim over the home Wi-Fi for its key.
         case claiming
+        /// Joined; asking before the hub's broker login goes to this Canary.
+        case confirmHub
         /// Joined; handing a Sense or Vision the hub this phone knows.
         case handingOverHub
         case done
@@ -377,9 +385,27 @@ struct NearbySetupSheet: View {
                     Section {
                         HStack { ProgressView(); Text("Collecting its pairing key over your Wi-Fi — a few seconds.") }
                     }
+                case .confirmHub:
+                    Section {
+                        Text("Give \(canary.title) (\(canary.displayName)) your hub's login?")
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let client, client.canIdentify {
+                            Button("Blink it") { client.identify() }
+                        }
+                        Button("Hand it over") { Task { await confirmHub(true) } }
+                        Button("Not now") { Task { await confirmHub(false) } }
+                    } footer: {
+                        Text("This phone sends your hub's address and the broker login your Canaries share over this Bluetooth link. The phone cannot prove which device is on the other end, so hand it over only to the Canary in front of you.")
+                    }
                 case .handingOverHub:
                     Section {
-                        HStack { ProgressView(); Text("Handing it your hub (\(hubHost ?? "")) — a few seconds.") }
+                        // hubHost is set only once a hand-over is under way: a
+                        // declined one, or one with nothing to hand, is finishing.
+                        HStack {
+                            ProgressView()
+                            Text(hubHost.map { "Handing it your hub (\($0)) — a few seconds." }
+                                 ?? "Finishing setup — a few seconds.")
+                        }
                     }
                 case .done:
                     doneSection
@@ -408,6 +434,10 @@ struct NearbySetupSheet: View {
                 guard stage == .choose else { return }
                 await keepLinkAlive()
             }
+            // The remembered password belongs to the remembered network:
+            // pick another and the field clears, pick it back and it returns.
+            .onChange(of: chosenSSID) { _, _ in matchPassword() }
+            .onChange(of: typedSSID) { _, _ in matchPassword() }
             .onDisappear {
                 autoJoinTask?.cancel()
                 store.ble.endSetup()
@@ -430,7 +460,7 @@ struct NearbySetupSheet: View {
         case .choose, .aboutToJoin: return "Your Wi-Fi"
         case .sending, .joining: return "Joining"
         case .claiming: return "Its pairing key"
-        case .handingOverHub: return "Your hub"
+        case .confirmHub, .handingOverHub: return "Your hub"
         case .done: return "All set"
         case .failed: return "Not yet"
         }
@@ -442,7 +472,9 @@ struct NearbySetupSheet: View {
         let what = autoJoined
             ? "Handing over \(effectiveSSID), the Wi-Fi this phone remembered"
             : "Handing over your Wi-Fi"
-        return pairAsked ? what + "…" : what + " — tap Pair when iOS asks."
+        // Keyed on THIS link: a link re-made while the password was typed
+        // asks for Pair again, whatever the dropped one did.
+        return client?.linkEncrypted == true ? what + "…" : what + " — tap Pair when iOS asks."
     }
 
     private var joiningLine: String {
@@ -462,6 +494,17 @@ struct NearbySetupSheet: View {
         networks.first(where: { $0.ssid == effectiveSSID })?.isOpen ?? false
     }
 
+    /// CanarySetupView.matchPassword's twin: the remembered password
+    /// follows the remembered network, and only it.
+    private func matchPassword() {
+        guard let remembered else { return }
+        if effectiveSSID == remembered.ssid {
+            if password.isEmpty { password = remembered.password }
+        } else if password == remembered.password {
+            password = ""
+        }
+    }
+
     /// The remembered network is on the Canary's list — the one case the
     /// picker opens with a selection.
     private var rememberedListed: Bool {
@@ -474,9 +517,13 @@ struct NearbySetupSheet: View {
     private var preflightHints: [String] {
         var out: [String] = []
         if networks.isEmpty,
-           let hint = NearbySetupLogic.emptyListHint(pairingDeclined: client?.pairingDeclined == true,
+           let hint = NearbySetupLogic.emptyListHint(pairingDeclined: client?.pairingDeclined == true
+                                                          || (declinedBeforeReconnect && client?.linkEncrypted != true),
                                                       canScan: client?.canScanWiFi == true) {
             out.append(hint)
+        }
+        if reconnectedUnpaired, client?.linkEncrypted != true {
+            out.append(NearbySetupLogic.reconnectedNote)
         }
         let listed = networks.map(\.ssid)
         if let hint = SetupPortal.notListedHint(ssid: effectiveSSID, listed: listed) {
@@ -682,6 +729,12 @@ struct NearbySetupSheet: View {
                 }
             }
             Text("It's on the Fleet tab now.").font(.caption).foregroundStyle(.secondary)
+        } else if paired {
+            // Its receipt just came over this Wi-Fi: it is on the network,
+            // whether or not its mDNS announcement has been heard yet.
+            Text("It answered over your Wi-Fi. It's on the Fleet tab now.")
+                .font(.footnote).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         } else if let advice = store.localNetworkAdvice {
             if pairNote == MagicPairPlan.Copy.localNetworkOff {
                 // The pairing note above already names the switch and
@@ -702,6 +755,9 @@ struct NearbySetupSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
         } else {
             ListeningRow(text: "Watching this network for it — it announces itself within a minute.", advice: nil)
+                // The row is the browse's consumer (CanarySetupView's
+                // "Watch it appear" row does the same).
+                .onAppear { store.startLocalNetworkDiscoveryIfConsented() }
         }
     }
 
@@ -763,15 +819,18 @@ struct NearbySetupSheet: View {
     private func send() async {
         guard let client else { return }
         let ssid = effectiveSSID
+        // An open network takes no password: one left in the hidden field
+        // from an earlier pick never goes with it.
+        let pass = chosenIsOpen ? "" : password
         joinVerdict = nil
         stage = .sending
-        let outcome = await client.provision(ssid: ssid, password: password)
+        let outcome = await client.provision(ssid: ssid, password: pass)
         pairAsked = true   // whatever happened, the first encrypted write is behind us
         verdict = outcome
         switch outcome {
         case .joined:
             if HouseholdWiFiStore.shouldRemember(toggleOn: remember, joined: true, ssid: ssid) {
-                try? HouseholdWiFiStore.save(HouseholdWiFi(ssid: ssid, password: password, savedAt: Date()))
+                try? HouseholdWiFiStore.save(HouseholdWiFi(ssid: ssid, password: pass, savedAt: Date()))
             }
             // A WAP hands the link that provisioned a one-time CLAIM — never
             // its bearer token — and the phone spends it over the home Wi-Fi
@@ -783,14 +842,15 @@ struct NearbySetupSheet: View {
                 claimReadAt = Date()
             }
             // A Sense or Vision takes the hub this phone knows over the same
-            // lingering link. Then let the link go: everything after this
-            // is Wi-Fi.
+            // lingering link — after the person confirms it, when a broker
+            // login would go with it. Then let the link go: everything
+            // after this is Wi-Fi.
+            if hubLoginWouldCross(client) {
+                stage = .confirmHub
+                return
+            }
             await handOverHub(client)
-            store.ble.endSetup()
-            await pair()
-            stage = .done
-            startWatchClock()
-            Task { await store.refreshOnce() }
+            await finishJoin()
         case .failed(let why):
             if client.recoverAfterFailedJoin() {
                 // The Canary refused the join but kept its door open on this
@@ -803,6 +863,41 @@ struct NearbySetupSheet: View {
                 stage = .failed(why)
             }
         }
+    }
+
+    /// After the join (and the hub step): let the link go, pair, and show
+    /// the done card.
+    private func finishJoin() async {
+        store.ble.endSetup()
+        await pair()
+        stage = .done
+        // The done card watches the network for it: this is the browse's
+        // consumer, and the moment iOS's Local Network prompt belongs to.
+        store.startLocalNetworkDiscoveryIfConsented()
+        startWatchClock()
+        Task { await store.refreshOnce() }
+    }
+
+    /// True when handOverHub would write the hub's broker login to this
+    /// Canary: the same guards it applies, plus a login this phone keeps.
+    /// The link is unauthenticated, so that write waits for the person.
+    private func hubLoginWouldCross(_ client: ImprovClient) -> Bool {
+        guard canary.family == .sense || canary.family == .vision, client.offersHubHandoff,
+              let host = HubStore.load()?.baseURL.host, !host.isEmpty else { return false }
+        return HubSecretStore.brokerLogin() != nil
+    }
+
+    /// The person's answer to the confirm step: hand the hub over, or keep
+    /// the login on this phone and say how to connect the Canary later.
+    private func confirmHub(_ give: Bool) async {
+        guard stage == .confirmHub, let client else { return }
+        stage = .handingOverHub
+        if give {
+            await handOverHub(client)
+        } else {
+            hubHandoff = .declined
+        }
+        await finishJoin()
     }
 
     /// Hand a Sense or Vision the hub this phone knows — host from the hub
@@ -879,14 +974,21 @@ struct NearbySetupSheet: View {
         }
     }
 
-    /// Re-make the link without a word on screen. False when the Canary is
-    /// not around to connect to (the Join button then says so when tapped).
+    /// Re-make the link. Silent only when the dropped link had been paired
+    /// (iOS's Pair sheet is already behind the person); otherwise the list
+    /// is not asked for by itself — that write would raise the Pair sheet
+    /// with nothing on screen — and a line says Pair comes next. False when
+    /// the Canary is not around to connect to (the Join button then says so
+    /// when tapped).
     private func reconnectWhileChoosing() async -> Bool {
+        let wasEncrypted = client?.linkEncrypted == true
+        if client?.pairingDeclined == true { declinedBeforeReconnect = true }
         store.ble.endSetup()
         guard let c = store.ble.beginSetup(canary.peripheralID) else { return false }
         client = c
         guard await c.waitUntilReady(), stage == .choose else { return false }
-        if networks.isEmpty, c.canScanWiFi {
+        if !wasEncrypted { reconnectedUnpaired = true }
+        if networks.isEmpty, c.canScanWiFi, wasEncrypted {
             networks = await c.scanNetworks()
         }
         return true
@@ -984,7 +1086,8 @@ struct NearbySetupSheet: View {
             guard let receipt else { return }
             let ref = PairedDeviceRef(id: receipt.deviceID, name: canary.title, deviceType: .wap,
                                       baseURL: receipt.baseURL, pairedAt: Date(),
-                                      tlsCertFingerprint: receipt.tlsCertFingerprint)
+                                      tlsCertFingerprint: receipt.tlsCertFingerprint,
+                                      pubkeyFingerprint: receipt.pubkeyFingerprint)
             store.devices.add(ref, token: receipt.token)
             paired = true
             pairNote = nil
@@ -1020,6 +1123,7 @@ struct NearbySetupSheet: View {
         }
         await pair()
         stage = .done
+        store.startLocalNetworkDiscoveryIfConsented()
         Task { await store.refreshOnce() }
     }
 
@@ -1060,6 +1164,8 @@ struct NearbySetupSheet: View {
         joinVerdict = nil
         autoJoined = false
         pairAsked = false
+        reconnectedUnpaired = false
+        declinedBeforeReconnect = false
         scanNote = nil
         paired = false
         pairNote = nil
@@ -1138,6 +1244,10 @@ enum NearbySetupLogic {
         return listed.contains(ssid) ? (ssid, "") : ("", ssid)
     }
 
+    /// A link re-made while the person typed, whose dropped link was never
+    /// paired: the next step raises iOS's Pair sheet.
+    static let reconnectedNote = "The Bluetooth link dropped and was made again. Tap Pair when iOS asks on the next step."
+
     /// Why the list is empty, and the way back — for a Canary that can
     /// list networks (one that cannot has nothing to retry, and no hint).
     static func emptyListHint(pairingDeclined: Bool, canScan: Bool) -> String? {
@@ -1182,6 +1292,8 @@ enum NearbySetupLogic {
         case unsendable(host: String)
         /// Written; this is the Canary's answer (`.unknown` for none in time).
         case answered(ImprovWire.HubHandoffStatus, host: String)
+        /// The person chose not to hand the broker login to this Canary.
+        case declined
 
         /// The one ending that needs nothing more from the person.
         var settled: Bool {
@@ -1198,18 +1310,24 @@ enum NearbySetupLogic {
             return "Its hub link could not be handed over (an older firmware) — flash it once with the Flasher's MQTT fields."
         case .noHub:
             return "No hub on this phone yet. Set one up from Set up; then tap this Canary's BOOT button once and it takes the hub from this phone."
+        case .declined:
+            return "Its hub was not handed over. To connect it, copy the hub login from Set up into the Flasher's MQTT fields."
         case .unsendable(let host):
             return "Its hub link could not be handed over — the address of your hub (\(host)) or its login is longer than the Canary's door takes. Flash it once with the Flasher's MQTT fields."
         case .answered(let status, let host):
             switch status {
             case .stored:
-                return "It reports to your hub at \(host)."
+                // `stored` says the Canary kept the address and login, not
+                // that the broker took it: say only that.
+                return "It took your hub's address (\(host)); it shows under your hub once it connects."
             case .loginRefused:
                 return "Your hub refused its login — open Set up → Your hub to re-mint the Canary login."
             case .rejected:
                 return "The Canary didn't take the hub this phone handed it (\(host)) — flash it once with the Flasher's MQTT fields."
             case .none:
-                return "The Canary says it kept no hub — tap its BOOT button once and this phone hands it over again."
+                // ImprovClient resolves a byte that stayed 0 as `.unknown`;
+                // should a `.none` arrive, it is the same: no answer.
+                return "This phone handed it your hub (\(host)), but the Canary gave no answer — if it doesn't report there, tap its BOOT button once and this phone hands it over again."
             case .unknown:
                 return "This phone handed it your hub (\(host)), but the Canary gave no answer in time — if it doesn't report there, tap its BOOT button once and this phone hands it over again."
             }
@@ -1222,8 +1340,9 @@ enum NearbySetupLogic {
         [emptyListHint(pairingDeclined: true, canScan: true)!,
          emptyListHint(pairingDeclined: false, canScan: true)!,
          retryVerdict(ssid: "Home"),
+         reconnectedNote,
          cameraDeniedNote,
-         hubEnding(.notOffered), hubEnding(.noHub), hubEnding(.unsendable(host: "h")),
+         hubEnding(.notOffered), hubEnding(.noHub), hubEnding(.unsendable(host: "h")), hubEnding(.declined),
          hubEnding(.answered(.stored, host: "h")), hubEnding(.answered(.loginRefused, host: "h")),
          hubEnding(.answered(.rejected, host: "h")), hubEnding(.answered(.none, host: "h")),
          hubEnding(.answered(.unknown, host: "h"))]

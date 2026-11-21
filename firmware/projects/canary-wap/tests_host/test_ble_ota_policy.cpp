@@ -9,13 +9,17 @@
 // path's own. Last, the step after the install: a standalone unit (no home
 // Wi-Fi, which a Bluetooth install does not need) driven through the
 // engine's confirm dwell with the sketch's health signal
-// (provisioning_logic::ota_confirm_link_healthy) keeps the update.
+// (provisioning_logic::ota_confirm_link_healthy) keeps the update. And who
+// may drive a session (ble_ota.h): the link a BEGIN opened it on, held to
+// its handle and its address, and the service's characteristics, read from
+// ble_ota.cpp, asking for an authenticated link.
 //
 // Build (the tests_host Makefile, which firmware.yml runs): g++ -std=c++17
 // -Wall -Wextra -Werror -DSECURACV_OTA_HOST_BUILD, with the sketch dir on
 // the include path, this file plus the sketch's securacv_ota.cpp, -lcrypto.
 
 #include "ble_ota_policy.h"
+#include "ble_ota.h"
 #include "provisioning_logic.h"
 
 #include <openssl/evp.h>
@@ -23,6 +27,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <string>
 
 static int tests_run = 0;
@@ -561,6 +567,131 @@ static void test_standalone_keeps_ble_update() {
   CHECK(securacv_ota_dwell_tick(&idle, 100000, true, WAP_DWELL_MS, true) == SECURACV_OTA_DWELL_IDLE);
 }
 
+// ── Who may drive a session ─────────────────────────────────────────────────
+//
+// Before, the three characteristics were plain WRITE / READ and neither
+// write handler looked at the link: any connected central, bonded or not,
+// could ABORT a session in flight (or end it with a second BEGIN, or an
+// unknown command), and could write into its image. The docs and the setup
+// door's header said the opposite.
+
+static void test_session_link() {
+  const uint8_t phone[6] = {0x10, 0x20, 0x30, 0x40, 0x50, 0x60};
+  const uint8_t other[6] = {0x10, 0x20, 0x30, 0x40, 0x50, 0x61};
+  SessionLink link;
+  // No session: no link is the session's.
+  CHECK(!session_link_is(link, 1, 0, phone));
+  CHECK(!session_link_is(link, 0xFFFF, 0, link.addr));
+
+  session_link_bind(link, 1, 1, phone);
+  CHECK(session_link_is(link, 1, 1, phone));
+  // A handle the stack reused for another peer is not that link ...
+  CHECK(!session_link_is(link, 1, 1, other));
+  // ... nor is the same peer on another connection, or its address under
+  // another address type.
+  CHECK(!session_link_is(link, 2, 1, phone));
+  CHECK(!session_link_is(link, 1, 0, phone));
+
+  session_link_release(link);
+  CHECK(!session_link_is(link, 1, 1, phone));
+  CHECK(!link.bound && link.conn_handle == 0xFFFF);
+
+  // Control writes (ABORT, BEGIN, anything else). No session in flight:
+  // any link the characteristic's properties let through may write.
+  CHECK(control_write_allowed(false, false, false));
+  CHECK(control_write_allowed(false, false, true));
+  // In flight: the session's own link may ...
+  CHECK(control_write_allowed(true, true, true));
+  // ... and no other link, while the stack still holds the session's ...
+  CHECK(!control_write_allowed(true, false, true));
+  // ... but a session whose link is gone can be ended by the next writer,
+  // or nothing could ever end it.
+  CHECK(control_write_allowed(true, false, false));
+
+  // Data: only while receiving, only from the session's link.
+  CHECK(data_write_allowed(true, true));
+  CHECK(!data_write_allowed(true, false));
+  CHECK(!data_write_allowed(false, true));
+  CHECK(!data_write_allowed(false, false));
+}
+
+// The sketch beside this test, read from the tests_host directory (the
+// Makefile's) or the repo root.
+static std::string sketch_file(const char* name) {
+  for (const char* dir : {"../arduino/canary_wap/", "firmware/projects/canary-wap/arduino/canary_wap/"}) {
+    std::ifstream in(std::string(dir) + name, std::ios::binary);
+    if (in) return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  }
+  return std::string();
+}
+
+// The text of `g_<what> = g_service->createCharacteristic( ... );`.
+static std::string characteristic_block(const std::string& src, const char* what) {
+  const std::string head = std::string("g_") + what + " = g_service->createCharacteristic(";
+  const size_t a = src.find(head);
+  CHECK(a != std::string::npos);
+  const size_t b = src.find(");", a);
+  CHECK(b != std::string::npos);
+  return src.substr(a, b - a);
+}
+
+static bool has(const std::string& text, const char* needle) {
+  return text.find(needle) != std::string::npos;
+}
+
+static void test_the_service_asks_for_an_authenticated_link() {
+  const std::string src = sketch_file("ble_ota.cpp");
+  CHECK(!src.empty());
+
+  // The properties: an encrypted link with an authenticated key to write
+  // control or data, and to read status.
+  const std::string control = characteristic_block(src, "control");
+  CHECK(has(control, "OTA_CONTROL_UUID"));
+  CHECK(has(control, "NIMBLE_PROPERTY::WRITE_ENC") && has(control, "NIMBLE_PROPERTY::WRITE_AUTHEN"));
+  const std::string data = characteristic_block(src, "data");
+  CHECK(has(data, "OTA_DATA_UUID"));
+  CHECK(has(data, "NIMBLE_PROPERTY::WRITE_ENC") && has(data, "NIMBLE_PROPERTY::WRITE_AUTHEN"));
+  CHECK(has(data, "NIMBLE_PROPERTY::WRITE_NR"));   // the unacknowledged path stays
+  const std::string status = characteristic_block(src, "status");
+  CHECK(has(status, "OTA_STATUS_UUID"));
+  CHECK(has(status, "NIMBLE_PROPERTY::READ_ENC") && has(status, "NIMBLE_PROPERTY::READ_AUTHEN"));
+
+  // The handlers read the link: neither drops its connection argument, the
+  // control handler asks the rule before it reads a command, the data
+  // handler before it takes a byte, an accepted BEGIN binds the link before
+  // the session is receiving, and every way a session ends releases it.
+  CHECK(!has(src, "NimBLEConnInfo& /*info*/"));
+  const size_t ctl = src.find("class ControlCallbacks");
+  const size_t dat = src.find("class DataCallbacks");
+  CHECK(ctl != std::string::npos && dat != std::string::npos && ctl < dat);
+  const std::string control_cb = src.substr(ctl, dat - ctl);
+  const size_t asked = control_cb.find("if (!control_write_allowed(in_flight, mine, held)) return;");
+  CHECK(asked != std::string::npos && asked < control_cb.find("uint8_t cmd = (uint8_t)val[0];"));
+  const size_t bound = control_cb.find("session_link_bind(g_session_link, info.getConnHandle(), addr.type, addr.val);");
+  CHECK(bound != std::string::npos && bound < control_cb.find("g_state = OTA_RECEIVING;"));
+  const std::string data_cb = src.substr(dat);
+  const size_t first = data_cb.find("if (!data_write_allowed(g_state == OTA_RECEIVING, from_session_link(info))) return;");
+  CHECK(first != std::string::npos && first < data_cb.find("c->getValue()"));
+  const size_t abort_fn = src.find("static void abort_ota(const char* reason) {");
+  CHECK(abort_fn != std::string::npos);
+  CHECK(has(src.substr(abort_fn, 200), "session_link_release(g_session_link);"));
+
+  // The one client in this repository is the companion page, by these
+  // UUIDs. It reads the console snapshot, which already asks for an
+  // authenticated link, before it looks for this service: the properties
+  // above ask nothing of it that its link has not met.
+  const std::string pwa = sketch_file("companion_pwa.h");
+  CHECK(!pwa.empty());
+  for (const char* uuid : {OTA_SERVICE_UUID, OTA_CONTROL_UUID, OTA_DATA_UUID, OTA_STATUS_UUID}) {
+    CHECK(has(pwa, uuid));
+  }
+  const size_t snapshot_read = pwa.find("const value = await snapshotChar.readValue();");
+  const size_t ota_found = pwa.find("await server.getPrimaryService(SVC_OTA);");
+  CHECK(snapshot_read != std::string::npos && ota_found != std::string::npos && snapshot_read < ota_found);
+  const std::string console = sketch_file("ble_console.cpp");
+  CHECK(has(console, "NIMBLE_PROPERTY::READ_ENC") && has(console, "NIMBLE_PROPERTY::READ_AUTHEN"));
+}
+
 int main() {
   test_layout();
   test_canonical_fixture();
@@ -573,6 +704,8 @@ int main() {
   test_decide_gates();
   test_reason_strings();
   test_standalone_keeps_ble_update();
+  test_session_link();
+  test_the_service_asks_for_an_authenticated_link();
   printf("ALL %d BLE OTA POLICY CHECKS PASSED\n", tests_run);
   return 0;
 }

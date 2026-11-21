@@ -45,7 +45,10 @@ JoinFailure wifi_last_failure();
 
 // True once the device has failed to associate enough times, with a failure a
 // human could actually fix (wrong password, or an SSID this radio can't see),
-// AND has never been online since power-on.
+// AND has not been online since power-on, AND no saved network has ever
+// joined (the ring's joined bit, persisted with it — a power cut that
+// restarts the glass while the router is still booting is not a credential
+// problem).
 //
 // This is the case the onboarding wizard used to miss entirely: it only ran
 // when credentials were *placeholders*. Credentials that were SET BUT WRONG

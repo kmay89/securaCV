@@ -18,7 +18,8 @@
 #   2. Worn-out cell — battery_health_pct (cycle-fade estimate) dropped below
 #                      the threshold: plan a replacement cell.
 #   3. Recovered     — battery back to healthy or charging again: clears the
-#                      persistent notification.
+#                      persistent notification (a Canary with a battery only;
+#                      a mains Canary recovering from low memory sends none).
 
 blueprint:
   name: "SecuraCV — Canary battery health"
@@ -127,8 +128,8 @@ action:
   - choose:
       # Low battery — only when the degradation is the battery's (the Health
       # sensor also goes critical on low memory, a different runbook), and
-      # only on a charge the unit sent: battery_percent is none for a battery
-      # that sent no number (sweep HA60), and no reading is not a low battery.
+      # only on a charge that was read: battery_percent is unknown when a
+      # battery reports no number, and battery_pct would read that as 0.
       - conditions:
           - condition: trigger
             id: low
@@ -192,12 +193,17 @@ action:
                 resets on reboot.
 
       # Recovered — clears the low-battery notification once power is back.
-      # It names a charge only when the unit sent one: battery_percent is none
-      # for a battery that sent no number (sweep HA60), which `| int(0)` would
-      # print as 0%.
+      # Only on a Canary with a battery whose charge was read: the Health
+      # sensor also leaves "warning" when low memory clears, and a Canary on
+      # mains, or a battery that reports no number, has no battery_percent,
+      # so the push would name a charge nothing measured.
       - conditions:
           - condition: trigger
             id: recovered
+          - condition: template
+            value_template: >-
+              {{ state_attr(health_sensor, 'battery_present') == true
+                 and state_attr(health_sensor, 'battery_percent') is number }}
         sequence:
           - service: persistent_notification.dismiss
             data:
@@ -205,8 +211,7 @@ action:
           - service: "{{ notify_target }}"
             data:
               title: "SecuraCV — {{ device_name }} battery recovered"
-              message: >-
-                {% if state_attr(health_sensor, 'battery_percent') is number %}Battery back to {{ battery_pct }}%{% else %}Back to healthy, with no charge reading{% endif %} ({{ charge_state }}) at {{ now().strftime('%H:%M') }}.
+              message: "Battery back to {{ battery_pct }}% ({{ charge_state }}) at {{ now().strftime('%H:%M') }}."
               data:
                 tag: "securacv-battery-low"
                 group: "securacv-power"

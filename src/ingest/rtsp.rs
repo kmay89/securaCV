@@ -198,6 +198,9 @@ impl RtspSource {
 #[derive(Clone, Debug)]
 pub struct RtspStats {
     pub frames_captured: u64,
+    /// The source URL with any embedded credentials redacted
+    /// (`rtsp://***@host/...`): stats are for logs and summaries, never for
+    /// reconnecting.
     pub url: String,
 }
 
@@ -225,7 +228,10 @@ impl SyntheticRtspSource {
     ///
     /// Synthetic sources are always "connected".
     fn connect(&mut self) -> Result<()> {
-        log::info!("RtspSource: connected to {} (synthetic)", self.config.url);
+        log::info!(
+            "RtspSource: connected to {} (synthetic)",
+            super::redact_url_userinfo(&self.config.url)
+        );
         Ok(())
     }
 
@@ -273,7 +279,7 @@ impl SyntheticRtspSource {
     fn stats(&self) -> RtspStats {
         RtspStats {
             frames_captured: self.frame_count,
-            url: self.config.url.clone(),
+            url: super::redact_url_userinfo(&self.config.url),
         }
     }
 }
@@ -293,6 +299,13 @@ struct GstreamerRtspSource {
     last_error: Option<String>,
 }
 
+/// The whole pipeline, with no camera-supplied text in it. The URL is set on
+/// the element named `src` after parsing (see `GstreamerRtspSource::new`).
+#[cfg(any(feature = "rtsp-gstreamer", test))]
+const RTSP_PIPELINE_DESCRIPTION: &str =
+    "rtspsrc name=src latency=0 ! decodebin ! videoconvert ! video/x-raw,format=RGB ! \
+     appsink name=appsink sync=false max-buffers=1 drop=true";
+
 #[cfg(feature = "rtsp-gstreamer")]
 impl GstreamerRtspSource {
     /// Create a new GStreamer RTSP source.
@@ -304,15 +317,18 @@ impl GstreamerRtspSource {
     fn new(config: RtspConfig) -> Result<Self> {
         gstreamer::init().context("initialize gstreamer")?;
 
-        let pipeline_description = format!(
-            "rtspsrc location={} latency=0 ! decodebin ! videoconvert ! video/x-raw,format=RGB ! \
-             appsink name=appsink sync=false max-buffers=1 drop=true",
-            config.url
-        );
-        let pipeline = gstreamer::parse::launch(&pipeline_description)
+        // The description is a constant: the camera URL never passes through
+        // the launch parser, where a space or a `!` in it would be read as
+        // pipeline syntax (more elements, other properties). It is set as a
+        // property value on the named source instead.
+        let pipeline = gstreamer::parse::launch(RTSP_PIPELINE_DESCRIPTION)
             .context("build RTSP pipeline")?
             .downcast::<gstreamer::Pipeline>()
             .map_err(|_| anyhow::anyhow!("RTSP pipeline is not a Pipeline"))?;
+        pipeline
+            .by_name("src")
+            .context("rtspsrc element missing from pipeline")?
+            .set_property("location", config.url.as_str());
 
         let appsink = pipeline
             .by_name("appsink")
@@ -344,7 +360,10 @@ impl GstreamerRtspSource {
             .set_state(gstreamer::State::Playing)
             .context("set RTSP pipeline to Playing")?;
         self.connected_at = Some(Instant::now());
-        log::info!("RtspSource: connected to {}", self.config.url);
+        log::info!(
+            "RtspSource: connected to {}",
+            super::redact_url_userinfo(&self.config.url)
+        );
         Ok(())
     }
 
@@ -384,7 +403,7 @@ impl GstreamerRtspSource {
     fn stats(&self) -> RtspStats {
         RtspStats {
             frames_captured: self.frame_count,
-            url: self.config.url.clone(),
+            url: super::redact_url_userinfo(&self.config.url),
         }
     }
 
@@ -477,6 +496,28 @@ mod tests {
             backend: RtspBackendPreference::Auto,
             transport: None,
         }
+    }
+
+    #[test]
+    fn rtsp_stats_never_carry_the_url_credentials() -> Result<()> {
+        // The stats feed witnessd's periodic summary line: a camera URL's
+        // embedded credentials must not ride along into the log.
+        let mut config = stub_config();
+        config.url = "stub://admin:S3cret@camera.local:554/stream".to_string();
+        let mut source = RtspSource::new(config)?;
+        source.connect()?;
+        let stats = source.stats();
+        assert_eq!(stats.url, "stub://***@camera.local:554/stream");
+        Ok(())
+    }
+
+    /// The camera URL is set as a property, never spliced into the launch
+    /// description: the description names the source and carries no location.
+    #[test]
+    fn pipeline_description_carries_no_camera_text() {
+        assert!(RTSP_PIPELINE_DESCRIPTION.starts_with("rtspsrc name=src "));
+        assert!(!RTSP_PIPELINE_DESCRIPTION.contains("location"));
+        assert!(!RTSP_PIPELINE_DESCRIPTION.contains('{'));
     }
 
     #[test]

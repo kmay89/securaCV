@@ -64,6 +64,7 @@ import os
 import secrets
 import shutil
 import sys
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -81,6 +82,9 @@ DEFAULT_BASE_URL = os.environ.get("SUPERVISOR_URL", "http://supervisor")
 # are looked for: the hub's own filesystem. Tests point it at a temp tree, and
 # so would a runner that mounts the hub's ssl folder somewhere other than /ssl.
 DEFAULT_FILES_ROOT = Path("/")
+# The MQTT flow's add-on path, retried while Mosquitto restarts under it.
+ADDON_FLOW_ATTEMPTS = 4
+ADDON_FLOW_RETRY_S = 5.0
 
 
 def under_root(root: Path, path: str) -> Path:
@@ -345,16 +349,14 @@ def plan_actions(
                     kind="core_config_entry",
                     label=f"{handler} integration",
                     already=have,
-                    # Best-effort ON PURPOSE. Home Assistant may answer this
-                    # manually-started flow with a form asking for broker
-                    # credentials — the Mosquitto add-on authenticates against
-                    # HA users, and a hand-started flow doesn't inherit the
-                    # add-on discovery that would supply them. Treating that as
-                    # fatal would abort provisioning BEFORE Frigate and the
-                    # witness kernel install, which is strictly worse than not
-                    # attempting the connect at all. So: try it, and if Home
-                    # Assistant wants more than the plan can supply, say so and
-                    # keep going.
+                    # Best-effort ON PURPOSE. The flow is answered through the
+                    # Mosquitto add-on's own discovery (create_config_entry),
+                    # but a broker that never comes back, or a Home Assistant
+                    # that answers some other way, must not abort provisioning
+                    # BEFORE Frigate and the witness kernel install, which is
+                    # strictly worse than not attempting the connect at all.
+                    # So: try it, and if it does not finish, say so and keep
+                    # going.
                     optional=True,
                     reason="Home Assistant is already connected to it" if have else "",
                     handler=handler,
@@ -647,17 +649,46 @@ class SupervisorClient:
 
         Home Assistant has no "just make me this entry" endpoint — an
         integration is set up by walking its config flow, the same steps the
-        browser dialog walks. Two calls: POST the handler to open a flow, then
-        POST the answers to the flow id it returns.
+        browser dialog walks. POST the handler to open a flow, then answer it.
+
+        On a Supervisor host the MQTT flow opens as a MENU ("addon" or
+        "broker"). Answering "addon" is what the browser's "Use the add-on"
+        click does: Home Assistant asks the Supervisor for the Mosquitto
+        add-on's discovery record and signs in with the service credentials
+        the add-on handed over there — no password is typed, minted or
+        committed. Only a flow that opens without that menu gets the plain
+        broker form (``data``).
         """
         flow = self._req("POST", "/core/api/config/config_entries/flow",
                          {"handler": handler, "show_advanced_options": False})
         if not isinstance(flow, dict):
             raise SupervisorError(f"{handler}: unexpected config-flow response")
+        attempt = 0
+        while (isinstance(flow, dict) and flow.get("type") == "menu"
+               and "addon" in (flow.get("menu_options") or []) and flow.get("flow_id")):
+            result = self._req("POST", f"/core/api/config/config_entries/flow/{flow['flow_id']}",
+                               {"next_step_id": "addon"})
+            attempt += 1
+            # The add-on path aborts with addon_connection_failed while the
+            # broker is still coming back from the mqtt-login restart: a short
+            # wait and a fresh flow is the whole fix, a few times over.
+            if (isinstance(result, dict) and result.get("type") == "abort"
+                    and result.get("reason") == "addon_connection_failed"
+                    and attempt < ADDON_FLOW_ATTEMPTS):
+                time.sleep(ADDON_FLOW_RETRY_S)
+                flow = self._req("POST", "/core/api/config/config_entries/flow",
+                                 {"handler": handler, "show_advanced_options": False})
+                continue
+            if isinstance(result, dict) and (
+                    result.get("type") == "create_entry"
+                    or (result.get("type") == "abort"
+                        and result.get("reason") in ("single_instance_allowed", "already_configured"))):
+                return
+            self._raise_unfinished(handler, result)
+        if not isinstance(flow, dict):
+            raise SupervisorError(f"{handler}: unexpected config-flow response")
         # Two shapes that both mean "nothing left to do":
-        #   create_entry — the flow self-completed (discovery already supplied
-        #                  everything, which is the happy path on a hub where
-        #                  the Mosquitto add-on was found automatically);
+        #   create_entry — the flow self-completed;
         #   abort        — usually single_instance_allowed / already_configured,
         #                  i.e. Home Assistant is ALREADY connected. Treating
         #                  that as an error would fail a correctly-provisioned
@@ -675,18 +706,29 @@ class SupervisorClient:
                 f"{handler}: Home Assistant did not return a config flow to answer "
                 f"(got {flow.get('reason') or flow.get('type') or 'nothing'})"
             )
+        # The fallback for a flow with no add-on menu: the broker form.
         result = self._req("POST", f"/core/api/config/config_entries/flow/{flow_id}", data)
-        if isinstance(result, dict) and result.get("type") == "form":
-            errs = result.get("errors") or {}
-            raise SupervisorError(
-                f"{handler}: Home Assistant wants more than the plan supplies "
-                f"(step {result.get('step_id')!r}"
-                + (f", {errs}" if errs else "")
-                + "). The Mosquitto add-on authenticates against Home Assistant "
-                "users, and a hand-started flow does not inherit the add-on "
-                "discovery that supplies them — so finish MQTT in Settings > "
-                "Devices & Services. Everything else in this plan still applied."
-            )
+        if isinstance(result, dict) and result.get("type") != "create_entry":
+            self._raise_unfinished(handler, result)
+
+    @staticmethod
+    def _raise_unfinished(handler: str, result: object) -> None:
+        """Say why a config flow did not end in an entry, and what to do."""
+        r = result if isinstance(result, dict) else {}
+        kind = r.get("type") or "nothing"
+        if kind == "abort":
+            detail = f"it stopped: {r.get('reason') or 'no reason given'}"
+        elif kind == "form":
+            errs = r.get("errors") or {}
+            detail = f"it asked for step {r.get('step_id')!r}" + (f", {errs}" if errs else "")
+        else:
+            detail = f"it answered {kind!r}"
+        raise SupervisorError(
+            f"{handler}: Home Assistant did not finish connecting through the "
+            f"Mosquitto add-on's discovery ({detail}). Finish MQTT in Settings > "
+            "Devices & Services (Add on the MQTT card, then Submit). Everything else in this "
+            "plan still applied."
+        )
 
     def start_addon(self, slug: str) -> None:
         self._req("POST", f"/addons/{slug}/start")
@@ -701,8 +743,27 @@ class SupervisorClient:
         self._req("POST", f"/addons/{slug}/restart")
 
 
-def observe(client: SupervisorClient, seed: dict, files_root: Path = DEFAULT_FILES_ROOT) -> dict:
-    """Snapshot the hub so plan_actions can decide what still needs doing."""
+# Why a run without Home Assistant's API leaves an integration for a click.
+# The HAOS host console borrows Core's own Supervisor token (host_provision.sh),
+# and the Supervisor's proxy to Core (`/core/api/...`) admits only an APP's
+# token with Home Assistant API access, so every config-entry call from there
+# is refused. Saying so is better than a lookup and a flow that cannot pass.
+NO_CORE_API_REASON = (
+    "this run cannot reach Home Assistant's API (the host console uses Core's "
+    "own Supervisor token, which the Supervisor's proxy to Home Assistant refuses)"
+)
+
+
+def observe(
+    client: SupervisorClient,
+    seed: dict,
+    files_root: Path = DEFAULT_FILES_ROOT,
+    core_api: bool = True,
+) -> dict:
+    """Snapshot the hub so plan_actions can decide what still needs doing.
+
+    `core_api=False` (the host console's run) skips the integration lookup:
+    the call cannot be authorized there, so its answer would say nothing."""
     check_plan_paths(seed)
     dests = [s["dest"] for s in seed.get("steps", []) if s.get("dest")]
     # Files a step REQUIRES (and never writes): present if they exist under
@@ -731,7 +792,7 @@ def observe(client: SupervisorClient, seed: dict, files_root: Path = DEFAULT_FIL
     # connect step would re-run on every pass and pile up duplicate entries —
     # the executor's whole contract is that a second run is a no-op.
     wants_entries = any(s.get("core_config_entry") for s in seed.get("steps", []))
-    config_entries = client.get_config_entry_domains() if wants_entries else set()
+    config_entries = client.get_config_entry_domains() if wants_entries and core_api else set()
 
     return {
         "repositories": client.get_repositories(),
@@ -785,6 +846,7 @@ def execute(
     client: SupervisorClient,
     assets_root: Path,
     files_root: Path = DEFAULT_FILES_ROOT,
+    core_api: bool = True,
 ) -> list[str]:
     """Perform the plan, narrating as it goes. Fail-closed: on the first error,
     stop and say so — re-running is safe because every action is idempotent.
@@ -802,6 +864,15 @@ def execute(
         for a in s.actions:
             if a.already:
                 print(f"    - skip: {describe(a, client.base)}  ({a.reason})")
+                continue
+            if a.kind == "core_config_entry" and not core_api:
+                # Never attempted: from here the call is refused before Home
+                # Assistant sees it. An integration step is optional, so it is
+                # left for a click and reported like any optional step that
+                # did not finish.
+                print(f"    - leave for you: {describe(a, client.base)}")
+                print(f"      ({NO_CORE_API_REASON})")
+                incomplete.append(a.label)
                 continue
             print(f"    - {describe(a, client.base)}")
             try:
@@ -931,7 +1002,20 @@ def _perform(
             )
         os.makedirs(os.path.dirname(a.dest), exist_ok=True)
         # cp -L semantics: dereference so a symlinked source lands as real bytes.
-        shutil.copyfile(src, a.dest, follow_symlinks=True)
+        # Written beside the destination, then renamed over it: a copy cut off
+        # mid-write (a full card, a dropped session) must leave no config.yml,
+        # because the next run's never_overwrite skip would adopt a truncated
+        # one as the owner's own edits.
+        tmp = a.dest + ".tmp"
+        try:
+            shutil.copyfile(src, tmp, follow_symlinks=True)
+            os.replace(tmp, a.dest)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass
+            raise
     else:  # pragma: no cover - guarded by the dataclass kinds above
         raise SupervisorError(f"unknown action kind {a.kind!r}")
 
@@ -967,6 +1051,13 @@ def main(argv: list[str] | None = None) -> int:
         help="in --dry-run, query the real hub so already-done steps show as skips (needs a token)",
     )
     ap.add_argument("--format", choices=["text", "json"], default="text", help="dry-run output format")
+    ap.add_argument(
+        "--no-core-api",
+        dest="core_api",
+        action="store_false",
+        help="this run's token cannot reach Home Assistant's API (the HAOS host console borrows "
+        "Core's own token): leave integration steps for a click instead of attempting them",
+    )
     ap.add_argument(
         "--with",
         dest="features",
@@ -1019,7 +1110,7 @@ def main(argv: list[str] | None = None) -> int:
             if not args.token:
                 print("--observe needs a token (SUPERVISOR_TOKEN) to query the hub", file=sys.stderr)
                 return 2
-            observed = observe(SupervisorClient(args.base_url, args.token), seed, args.files_root)
+            observed = observe(SupervisorClient(args.base_url, args.token), seed, args.files_root, args.core_api)
         steps = plan_actions(seed, observed, features)
         if args.format == "json":
             print(steps_to_json(steps))
@@ -1038,12 +1129,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     client = SupervisorClient(args.base_url, args.token)
     try:
-        observed = observe(client, seed, args.files_root)
+        observed = observe(client, seed, args.files_root, args.core_api)
     except SupervisorError as e:
         print(f"hub_seed_apply.py: cannot reach the hub: {e}", file=sys.stderr)
         return 1
     steps = plan_actions(seed, observed, features)
-    incomplete = execute(steps, client, Path(args.assets_root), args.files_root)
+    incomplete = execute(steps, client, Path(args.assets_root), args.files_root, args.core_api)
     todo, done = counts(steps)
     print(f"\nHub provisioned: {done} step-action(s) were already in place, {todo} applied.")
     if incomplete:

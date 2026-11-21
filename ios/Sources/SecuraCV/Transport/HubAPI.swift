@@ -47,7 +47,9 @@ final class HubAPI {
         config.timeoutIntervalForResource = 900   // an add-on install pulls an image
         config.waitsForConnectivity = false
         config.httpAdditionalHeaders = ["User-Agent": "SecuraCV-iPhone"]
-        self.session = URLSession(configuration: config)
+        // Never follow a redirect: the owner's password and the session
+        // token stay on this network (RefuseRedirects).
+        self.session = URLSession(configuration: config, delegate: RefuseRedirects.shared, delegateQueue: nil)
     }
 
     // MARK: - the probe
@@ -59,7 +61,7 @@ final class HubAPI {
         config.timeoutIntervalForRequest = 5
         config.timeoutIntervalForResource = 5
         config.waitsForConnectivity = false
-        let quick = URLSession(configuration: config)
+        let quick = URLSession(configuration: config, delegate: RefuseRedirects.shared, delegateQueue: nil)
         var request = URLRequest(url: base.appendingPathComponent("api/onboarding"))
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         do {

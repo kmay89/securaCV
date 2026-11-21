@@ -85,6 +85,40 @@ For structured security testing — what's in scope, what a tester is handed,
 what is explicitly out of bounds, and what counts as a finding —
 see [`docs/security/PENTEST_SCOPE.md`](docs/security/PENTEST_SCOPE.md).
 
+### The website is in scope too
+
+`securacv.com` names this file as its policy
+(`/.well-known/security.txt`), because the website's own repository is not
+public and a policy nobody can open is not a policy. Report a website issue
+through the same two private channels above. The site is static — no
+accounts, no credentials, no server-side code — so the interesting surface is
+content injection, its Content Security Policy and its response headers; the
+same applies to the in-browser Lab this repository publishes on GitHub Pages
+(`canary-local/`).
+
+## Supported versions
+
+Only the newest release of each train receives security fixes. There are no
+maintenance branches and no backports: a fix ships as the next release of the
+train it is in, and every earlier release of that train stops being supported
+when it does. That is what the release tooling does, stated plainly; it is not
+a long-term-support promise, and there is no end-of-life date to wait for
+other than "a newer release exists". A dev or rc prerelease is never a
+supported version. The fix window for anything exploitable is the one under
+[What to expect back](#what-to-expect-back).
+
+| Train (its tags) | Supported | How a fix reaches you |
+|---|---|---|
+| **Canary firmware**, every product (`fw-v*`) | The newest stable release | Signed OTA. Every Canary checks once a day; you install from Home Assistant's Firmware update entity or the device's own dashboard, or the daily check installs it when Auto Update is on (both flashers ask at flash time, on by default; the engine's own default is off). A Canary with Auto Update off stays where it is until you install. Either flasher also puts the newest release on a board over USB. |
+| **Kernel, Home Assistant app (add-on) and integration**, one shared version | The newest version | The app: a new image version, which the Supervisor offers as an update. The integration: a release of the [HACS mirror](https://github.com/kmay89/securacv-homeassistant), which HACS offers. The kernel has no release of its own yet ([why](docs/RELEASE_BUTTONS.md#the-kernel-not-released-yet)); it reaches you inside the app image, or as a build from `main`. |
+| **SecuraCV Flasher** (`flasher-v*`) | The newest release | The app's own updater offers it; or download it from the repository's Releases. |
+| **SecuraCV Lab** (`app-v*`) | The newest release | The app checks at launch and every few hours, shows what changed, and installs only after you say yes. |
+| **iPhone, iPad and Apple Watch app** (`ios-v*`) | The newest build | Through Apple: TestFlight or the App Store, whichever you installed it from. |
+| **Witness Wall for Apple TV** (`tvos-v*`) | The newest build | Through Apple, the same way, once a build is in the store ([`tvos/README.md`](tvos/README.md) says where that stands). |
+
+How each train is cut, and what stops a release, is
+[`docs/RELEASE_BUTTONS.md`](docs/RELEASE_BUTTONS.md).
+
 ## Known dependency advisories
 
 Transitive dependencies occasionally carry published advisories that are
@@ -245,22 +279,27 @@ ignore entries are gone. This section is retained as an audit record; remove ent
 corresponding Dependabot alerts are closed, or — for Group 3 — once an
 upstream fix lets the ignore go.
 
-### Group 5 — SQLite WAL page-size read (RUSTSEC-2026-0459, Medium) — NOT YET FIXABLE in the SQLCipher build
+### Group 5 — SQLite WAL page-size read (RUSTSEC-2026-0459 and RUSTSEC-2026-0502, Medium) — FIXED in kernel 0.9.1 (`rusqlite` 0.43)
 
 - **Bug:** CVE-2026-119375. SQLite before 3.54.0 can return uninitialized
   page-cache memory when a process opens a database together with a sibling
   `-wal` file whose page size differs from the database's. A crafted pair of
   files makes ordinary queries return stale bytes from the process's memory.
   The vector is local and the victim has to open the files. CVSS 4.0: 6.8.
-- **Where it comes from:** `rusqlite`'s `bundled-sqlcipher` feature, which
-  the kernel needs for its encrypted database. `libsqlite3-sys` 0.39.1
-  builds SQLCipher from `sqlcipher-src`, pinned to `=419.0.6`, which carries
-  SQLite 3.53.4. The plain bundled SQLite in the same release is 3.54.1 and
-  fixed; the SQLCipher build is not.
-- **What `cargo audit` shows, and what it does not:** the advisory is keyed
-  on the crate version (`patched >= 0.39.0`), so the audit has passed since
-  the `rusqlite` 0.41 upgrade. That pass says the crate version is new
-  enough. It does not say this build is fixed, and it is not.
+- **Where it came from:** `rusqlite`'s `bundled-sqlcipher` feature, which
+  the kernel needs for its encrypted database. Through kernel 0.9.0,
+  `libsqlite3-sys` 0.39.1 built SQLCipher from `sqlcipher-src`, pinned to
+  `=419.0.6`, which carries SQLite 3.53.4. The plain bundled SQLite in the
+  same release was 3.54.1 and fixed; the SQLCipher build was not.
+- **What `cargo audit` shows, and what it does not:** two advisories carry
+  this bug. RUSTSEC-2026-0459 is keyed on `libsqlite3-sys`
+  (`patched >= 0.39.0`), so it has passed since the `rusqlite` 0.41 upgrade.
+  That pass says the crate version is new enough. It does not say this build
+  is fixed, and it is not. RUSTSEC-2026-0502 (published 2026-10-30) is keyed
+  on `sqlcipher-src` itself (`patched >= 420.0.0`) and named that build:
+  `cargo audit` reported one vulnerability for the root `Cargo.lock`
+  (`sqlcipher-src` 419.0.6; run 2026-11-15) and the Dependency Audit was red.
+  It was never on the ignore list, because a fix could be reached.
 - **Exposure:** only a process that opens a database, with its `-wal`, that a
   less trusted party could have written. `witnessd` and the bridges open
   their own database in their own data directory; whoever can plant a `-wal`
@@ -268,14 +307,125 @@ upstream fix lets the ignore go.
   commands (`log_verify`, `export_verify`, `court_export`, `log_anchor`,
   `break_glass`) open the database they are pointed at and hold key material
   while they do, so the exposed case is running one of them on a database
-  directory received from someone else. Until the fix, check received
-  evidence as an envelope (`envelope_verify`, the offline viewer), which
-  reads JSON and never opens SQLite, and do not open a received database
-  that arrives with a `-wal` file beside it.
-- **Fix not yet possible:** `sqlcipher-src` 420.0.0 carries SQLite 3.54.1,
-  but `libsqlite3-sys` 0.39.x pins `=419.0.6` exactly, so nothing we can
-  bump or patch selects it. The fix arrives with the first `libsqlite3-sys`
-  release that pins `sqlcipher-src` 420 or later.
+  directory received from someone else. On a kernel older than 0.9.1,
+  check received evidence as an envelope (`envelope_verify`, the offline
+  viewer), which reads JSON and never opens SQLite, and do not open a
+  received database that arrives with a `-wal` file beside it.
+- **Fix, taken in kernel 0.9.1:** `rusqlite` 0.43 with `libsqlite3-sys`
+  0.40.0, which pins `sqlcipher-src` `=420.0.0` (SQLCipher 4.20.0 on SQLite
+  3.54.1). `libsqlite3-sys` 0.39.x pinned `=419.0.6` exactly, which is why
+  nothing short of the `rusqlite` bump could select the fixed source. The
+  kernel's tests, `cargo clippy` and the `--no-default-features` tests pass
+  on the new build, and `cargo audit` no longer reports either advisory for
+  the root `Cargo.lock`. A binary built from 0.9.0 or earlier still carries
+  the old SQLCipher: update it.
+
+- **Standing tests:** `tests::linked_sqlite_is_at_least_3_54_0` in
+  `src/lib.rs` asks the linked library for its version and fails below
+  3.54.0, and `tests::kernel_database_cipher_settings_are_pinned` pins the
+  cipher settings SQLCipher reports for a new kernel database. What no
+  pragma reports (the salt header, the key and IV sizes) is not pinned, and
+  no standing test opens a file written by another SQLCipher version; that
+  was checked once by hand on 2026-11-15 with the conformance fixture, in
+  both directions.
+
+### Group 6 — `quinn-udp` receive loop (RUSTSEC-2026-0538) — RESOLVED
+
+- **Advisory:** RUSTSEC-2026-0538, "Receive loop can spin after a truncated
+  datagram", against `quinn-udp` 0.5.15; patched in 0.5.16. Nothing beyond
+  that title is described here.
+- **Where it came from:** the lockfiles of the Flasher
+  (`desktop/src-tauri`), the Lab app (`desktop-lab/src-tauri`) and the flash
+  engine (`desktop/flash-engine`). `quinn-udp` sits under `quinn` 0.11.11,
+  an optional dependency of `reqwest` 0.12.28 that only `reqwest`'s `http3`
+  feature (its HTTP/3 client over QUIC) turns on. `reqwest` 0.12.28 is
+  reached from `flash-engine` and, in the two apps, also from the app crate
+  itself (`securacv-flasher` in `desktop/src-tauri`, `securacv-lab` in
+  `desktop-lab/src-tauri`). `tauri` 2.12.5 and `tauri-plugin-updater`
+  2.14.1 depend on `reqwest` 0.13.4 instead, which has no `quinn` edge in
+  these lockfiles.
+- **Compiled in? No.** No crate in the three graphs turns on `http3`; the
+  lockfiles list `quinn` because `reqwest`'s `__rustls-ring` feature names
+  `quinn?/ring`, a reference that does not enable the dependency.
+  `cargo tree --locked --target all -i quinn-udp` prints nothing in each of
+  the three crates, with default features and with `--all-features`
+  (2026-11-15). The audit reads the lockfile, so it failed all the same.
+- **Fix:** `quinn-udp` 0.5.16 in all three lockfiles. Only that package
+  entry (version and checksum) changed; each lockfile passes
+  `cargo metadata --locked`.
+
+### Group 7 — ML-DSA and ML-KEM in the PQClean bindings (RUSTSEC-2026-0586 and RUSTSEC-2026-0585) — FIXED by moving to `ml-dsa` and `ml-kem`
+
+- **Bug:** two advisories published 2026-11-20 against the crates behind the
+  optional `pqc-signatures` and `pqc-vault` features, neither with a fixed
+  release.
+  - RUSTSEC-2026-0586, `pqcrypto-mldsa` 0.1.2: built with its default `avx2`
+    feature and run on an x86_64 CPU with AVX2, it verifies with PQClean's
+    AVX2 code, which does not check that the infinity norm of the response z
+    is below `gamma1 - beta` (FIPS 204, Algorithm 8, line 13) and mishandles
+    a `UseHint` boundary case. It accepts signatures a conforming verifier
+    rejects and rejects one class of valid signatures. Making an accepted
+    out-of-bound signature takes the private key.
+  - RUSTSEC-2026-0585, `pqcrypto-mlkem` 0.1.1: neither input check of
+    FIPS 203 is made. Encapsulation takes an encapsulation key with a
+    coefficient not reduced mod q (section 7.2), and decapsulation takes a
+    decapsulation key whose stored hash or embedded encapsulation key was
+    altered (section 7.3). The advisory says no key material is disclosed.
+- **Where it came from:** both were direct dependencies and both wrap
+  PQClean, which is archived; the crates are unmaintained (RUSTSEC-2026-0166
+  and -0161, with `pqcrypto-traits` -0162 and `pqcrypto-internals` -0163).
+  The kernel took `pqcrypto-mldsa` with its default features, so `avx2` was
+  on. Neither feature is in the default build and no Dockerfile or release
+  workflow in this repository enables one, so a binary has them only if its
+  builder asked for them.
+- **Exposure, signatures:** this one was on a path the kernel ran. A kernel
+  or verifier binary built with `pqc-signatures`, through kernel 0.9.3, on an
+  x86_64 CPU with AVX2 checked every ML-DSA-44 signature with the affected
+  verifier. What that allows is narrower than a forgery. Nobody without the
+  device's ML-DSA private key can make a signature that verifier accepts and
+  a conforming one rejects, and the key's holder can sign validly anyway.
+  Ed25519 is required on every entry in both verification modes, so no entry
+  ever rested on ML-DSA alone. What is left is a verdict that depends on the
+  machine: an entry the key's holder signed out of bounds passes strict mode
+  on an AVX2 verifier and fails on a conforming one, and a valid signature of
+  the boundary class fails only on the AVX2 verifier. The advisory limits the
+  defect to that code path; PQClean's portable verifier gave the expected
+  verdict on all 180 Wycheproof ML-DSA-44 cases when run here (2026-11-21).
+- **Exposure, vault:** the only ML-KEM keys the vault handles are its own,
+  read from `kem-mlkem768.key` in its own directory; it takes no
+  encapsulation or decapsulation key from anyone else. Whoever can write that
+  file can replace the keypair outright, which neither check would stop, and
+  a key PQClean generated passes both. The missing checks never changed what
+  a vault sealed or opened.
+- **Fix:** a migration, not an ignore; nothing was added to
+  [`.cargo/audit.toml`](.cargo/audit.toml). `pqc-signatures` builds on
+  `ml-dsa` 0.1.2 and `pqc-vault` on `ml-kem` 0.3.4 (RustCrypto, pure Rust),
+  and the four `pqcrypto-*` crates are absent from `Cargo.lock`. `ml-dsa`
+  refuses an out-of-bound response when it decodes a signature. `ml-kem`
+  makes both input checks when it imports a key, which the vault does when it
+  loads its key file, before anything is sealed to the key or opened with
+  it. No stored format changed. A binary built with `pqc-signatures` from
+  0.9.3 or earlier still carries the AVX2 verifier: rebuild it.
+- **What this does not claim:** neither `ml-dsa` nor `ml-kem` has had an
+  independent audit (their READMEs say so), and both read the stored private
+  keys, which are expanded encodings and not seeds, through imports they mark
+  deprecated ([`docs/pqc_mode.md`](docs/pqc_mode.md)). Both features stay
+  experimental.
+- **Standing tests:** [`tests/fixtures/pqcrypto_kat/`](tests/fixtures/pqcrypto_kat/README.md)
+  holds a keypair, signatures, a signed envelope, a vault key file and sealed
+  envelopes written by the kernel while it linked the PQClean crates;
+  `pqcrypto_kat` in `src/crypto/signatures.rs` and `src/vault/crypto.rs`, and
+  `tests/pqcrypto_kat_fixtures.rs`, hold the current implementation to them.
+  `mldsa44_checks` requires four Wycheproof infinity-norm cases
+  ([`tests/fixtures/wycheproof/`](tests/fixtures/wycheproof/README.md)) and a
+  response coefficient set to each side of the bound to be refused when the
+  signature is decoded, and a Wycheproof `UseHint` boundary case to verify.
+  `mlkem768_checks` requires a key file with a coefficient of q or more, an
+  altered hash or an altered embedded encapsulation key to be refused by
+  `KemKeypair::from_bytes` and by `FilesystemVaultStore::new`. The other
+  direction (what the new code writes, read by PQClean) was run once before
+  the crates were removed and is recorded in the fixture README; it is not a
+  standing test, because the old implementation is no longer a dependency.
 
 ## Non-goals
 

@@ -98,7 +98,8 @@ final class SetupPortalClient: ObservableObject {
         config.waitsForConnectivity = false
         config.timeoutIntervalForRequest = 6
         config.timeoutIntervalForResource = 10
-        return URLSession(configuration: config)
+        // The household password is posted here: never follow a redirect.
+        return URLSession(configuration: config, delegate: RefuseRedirects.shared, delegateQueue: nil)
     }()
 
     /// Step one: join the Canary's setup network (iOS asks once), wait for

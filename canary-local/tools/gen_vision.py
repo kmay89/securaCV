@@ -498,8 +498,8 @@ SERIAL = {
         f"              d b          v{FW_VERSION}",
         "",
         "    This is your privacy witness device.",
-        "    It creates tamper-proof records of what it",
-        "    sees, so nobody can change the story later.",
+        "    It keeps tamper-evident records of what it",
+        "    sees, so any edit to the story shows later.",
     ],
     "boot": [
         {"tag": "[--]", "text": f"Type   {DEVICE_TYPE}"},
@@ -567,6 +567,8 @@ TOPIC_DESCS = {
     "aim": {"retain": False, "desc": "the boxes-only aim stream — coordinates and scores at ~5 Hz, never pixels"},
     "aim/state": {"retain": True, "desc": "aim switch state (off by default; auto-off)"},
     "aim/set": {"retain": False, "desc": "HA's Aim assist switch writes ON/OFF"},
+    "beacon/state": {"retain": True, "desc": "Broadcast detection switch state (off by default): whether the cleartext fleet beacon carries the live detection"},
+    "beacon/set": {"retain": False, "desc": "HA's Broadcast detection switch writes ON/OFF"},
     "identify/set": {"retain": False, "desc": "HA's Identify button — 10 s LED blink"},
     "identify": {"retain": False, "desc": "identify echo — dashboards pulse the card in sync"},
     "doorbell": {"retain": False, "desc": "the Vision Doorbell: one {\"event_type\":\"press\"} per sealed ring (HA's doorbell event)"},
@@ -611,6 +613,7 @@ ENTITY_META = {
     "Lost timeout": ("number", "silence before \"person left\""),
     "Dwell start": ("number", "sustained presence before \"dwelling\""),
     "Aim assist": ("switch", "the boxes-only live aim stream (auto-off 10 min)"),
+    "Broadcast detection": ("switch", "owner opt-in, off by default: the cleartext fleet beacon (BLE, ESP-NOW, LAN multicast) carries the live detection, so a display alerts with no broker and anyone in range can read it"),
     "Identify": ("button", "blink the LED to find this device"),
     "Auto Update": ("switch", "install signed releases automatically"),
     "Doorbell enabled": ("switch", "the Vision Doorbell's button + glow ring (XIAO hosts; the first press turns it on)"),
@@ -777,7 +780,7 @@ PANE_ONLINE = [
         "occupancy": "none", "posture": "unknown", "proximity": "unknown", "occ_mask": 0,
         "last_event": "boot", "uptime_s": EX_UPTIME_S, "ts_ms": EX_TS_MS}, STATE_KEYS, "state")),
     ("health", True, keyed_as({
-        "battery": 100, "battery_present": False, "memory_free": EX_HEAP, "uptime": EX_UPTIME_S,
+        "battery_present": False, "memory_free": EX_HEAP, "uptime": EX_UPTIME_S,
         "firmware_version": FW_VERSION, "public_key": EX_PUBKEY}, HEALTH_KEYS, "health")),
     ("chain", True, keyed_as({
         "v": 1, "length": EX_CHAIN, "latest_hash": "5d0e…", "algorithm": "ed25519",

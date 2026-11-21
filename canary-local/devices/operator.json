@@ -25,9 +25,9 @@
     },
     {
       "name": "trustee enroll",
-      "one_line": "Add one trustee \u2014 import a key, or mint one.",
-      "usage": "break_glass trustee enroll --id <name> (--public-key <HEX> | --generate --output <file>)",
-      "what": "Adds one trustee to the draft. Import a public key a trustee generated themselves (--public-key), or mint a fresh Ed25519 keypair for them (--generate) \u2014 the signing key is written at mode 0600 to hand over. Rejects duplicate ids and reused keys up front. The real quorum policy commits automatically, once, when the roster is complete \u2014 earlier enrollments only edit the draft.",
+      "one_line": "Add one trustee \u2014 import the public key they made with trustee keygen.",
+      "usage": "break_glass trustee enroll --id <name> --public-key <HEX>",
+      "what": "Adds one trustee to the draft. Each trustee runs `break_glass trustee keygen` on their own machine \u2014 the key is wrapped under their passphrase and only the public half is printed \u2014 and you import that public key (--public-key). --generate --output still mints a keypair for them, but it is deprecated and prints a warning: it leaves you holding the trustee's secret. Rejects duplicate ids and reused keys up front. The real quorum policy commits automatically, once, when the roster is complete \u2014 earlier enrollments only edit the draft.",
       "flags": [
         {
           "flag": "--id name",
@@ -35,11 +35,11 @@
         },
         {
           "flag": "--public-key HEX",
-          "desc": "import an existing 32-byte Ed25519 public key"
+          "desc": "import the 32-byte Ed25519 public key the trustee's keygen printed"
         },
         {
           "flag": "--generate --output FILE",
-          "desc": "mint a keypair; write the signing key (0600) to hand over"
+          "desc": "deprecated: mint a keypair for the trustee (prints a warning; prefer trustee keygen)"
         },
         {
           "flag": "--device-key-seed",
@@ -94,8 +94,8 @@
       "blurb": "The real policy commits automatically, once, when the m-th trustee is enrolled. Committing earlier \u2014 at the threshold \u2014 would have made every later enrollment a silent rewrite of a LIVE policy, exactly the roster-mutation path the quorum gate exists to close (Invariant V). The commit runs the kernel's own validate(), so the gate is never partial and reused keys are refused."
     },
     {
-      "title": "Mint or import \u2014 your call",
-      "blurb": "A trustee can generate their own key and send you only the public half (import), or you can mint one for them. A minted signing key is written at mode 0600 to hand over \u2014 it is the one secret in the whole flow; the draft never holds it."
+      "title": "The trustee makes the key; you import the public half",
+      "blurb": "Each trustee runs break_glass trustee keygen on their own machine: the signing key is wrapped under their passphrase (mode 0600) and only the public key and its fingerprint are printed. You import the public key, so you never hold a trustee secret, and the draft never holds one either. Minting a key for them (--generate) still works but is deprecated and prints a warning."
     },
     {
       "title": "Rehearse before you trust it",
@@ -147,9 +147,8 @@
         "note": "Two of three. The threshold is met, but the roster is not complete, so the draft stays a draft \u2014 nothing commits until every planned trustee is enrolled."
       },
       {
-        "cmd": "DEVICE_KEY_SEED=devkey:your-seed break_glass trustee enroll --id carol --generate --output carol.key --db witness.db",
+        "cmd": "DEVICE_KEY_SEED=devkey:your-seed break_glass trustee enroll --id carol --public-key 89ab\u2026 --db witness.db",
         "out": [
-          "  \u2713 minted a signing key for 'carol' \u2192 carol.key (secret, mode 0600 \u2014 hand it to the trustee)",
           "  \u2713 enrolled trustee 'carol' (3/3)",
           "  \u2713 quorum policy is live: 2-of-3"
         ],
@@ -159,7 +158,7 @@
           "carol"
         ],
         "policy": "2-of-3",
-        "note": "Minted carol a key (written 0600 to hand over) and completed the roster \u2014 the policy commits once, as a valid 2-of-3 (history row 1, bootstrap), and the vault can now open under quorum."
+        "note": "Carol ran break_glass trustee keygen on her own machine and sent only the public half, like alice and bob, so you never held a trustee secret. Her key completes the roster \u2014 the policy commits once, as a valid 2-of-3 (history row 1, bootstrap), and the vault can now open under quorum."
       },
       {
         "cmd": "break_glass drill --threshold 2 --trustees 3",
@@ -169,6 +168,7 @@
           "  \u2713 2 trustees approved; two break-glass tokens minted (one to seal, one to unseal)",
           "  \u2713 sealed a throwaway envelope",
           "  \u2713 unsealed it with a fresh quorum token",
+          "  \u2713 recorded the unseal and verified its handoff sidecar",
           "  \u2713 recovered payload matches the original, byte for byte",
           "Result: DRILL PASSED \u2014 break-glass works end to end on this build."
         ],

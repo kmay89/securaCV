@@ -15,17 +15,20 @@ self-update design is in [`../docs/tvos/AUTOPIPELINE.md`](../docs/tvos/AUTOPIPEL
 > so the watch runs while the Wall is the app on the TV. See
 > [`ResidentWatch.swift`](WitnessWall/Sources/WitnessWall/ResidentWatch.swift).
 >
-> **Status: built and continuously tested; the App Store upload is waiting on
-> an Apple Developer account.** The app and its verification core are real and
+> **Status: built, continuously tested, and uploaded to App Store Connect from
+> `tvos-v*` tags since `tvos-v0.2.2` (August 2026); there is no public App
+> Store release.** The app and its verification core are real and
 > are exercised on every PR by
 > [`.github/workflows/tvos.yml`](../.github/workflows/tvos.yml) — the Rust core
 > (including the check that pins its chain math to the kernel's own fixtures)
 > and a full SwiftUI build + unit-test run on the **tvOS Simulator**, with no
-> signing and no secrets. What still no-ops is only the *signed upload*
-> ([`tvos-release.yml`](../.github/workflows/tvos-release.yml)): a `tvos-v*`
-> tag today prints a helpful message and exits green until you enable it,
-> because signing needs **your Apple Developer account** and that can't come
-> from CI or this repo alone. The checklist below is the whole remaining gap,
+> signing and no secrets. The *signed upload*
+> ([`tvos-release.yml`](../.github/workflows/tvos-release.yml)) runs only where
+> it has been switched on: in a fork, or anywhere the repository variable
+> `ENABLE_TVOS_BUILD` and the Apple signing secrets are missing, a `tvos-v*`
+> tag prints a helpful message and exits green, because signing needs **your
+> Apple Developer account** and that can't come from CI or this repo alone.
+> The checklist below is what switching it on takes,
 > and it's the same shape as [`../desktop-lab/MOBILE.md`](../desktop-lab/MOBILE.md).
 
 ## What makes this the best at what it does
@@ -65,7 +68,11 @@ categories are simply **empty**, and this app sits in all three:
    time or head, so a replayed or cut-short genuine log still walks clean
    (tvos/discovery/DISCOVERY.md, "What 'Verified' proves"). A log signed
    by any other key is an alarm ("Your hub's signing key changed since this
-   Apple TV was paired"), a revoked token a warning, and an unpaired Wall
+   Apple TV was paired"), a revoked token a warning, a paired hub that
+   answers the roll-call but serves no sealed log for three cycles running
+   a warning too ("Paired, but your hub served no sealed record this
+   cycle" — the TV was paired to be told when its check stops, so that is
+   never folded into the calm self-report), and an unpaired Wall
    still labels the fleet's status as the devices' own report ("Your fleet
    reported in through …", the device's self-stamp shown only as "Device
    reports …") or, when it did walk a log, as "not yet pinned". Forgetting
@@ -79,7 +86,14 @@ categories are simply **empty**, and this app sits in all three:
 2. **Zero-typing, zero-cloud setup.** Turn it on: the Wall probes the same
    well-known LAN addresses the desktop Flasher, the Lab and the web walls
    probe (`canary.local:8099`, the kernel's own port `canary.local:8799`,
-   then `canary.local`), finds the fleet by itself, and remembers it. No account,
+   then `canary.local`), finds the fleet by itself, and remembers it. A
+   hub's roll-call is the kernel's own row alone until its owner opts into
+   the full one — `fleet_rollcall: full` in the Home Assistant add-on,
+   `SECURACV_FLEET_ROLLCALL=1` on the Docker sidecar, `api.fleet_rollcall:
+   full` in a host kernel's config — because that route takes no token
+   ([`docs/security/REMEDIATION-2026-11.md`](../docs/security/REMEDIATION-2026-11.md));
+   the Wall says so under its headline when a hub lists only itself, and
+   an add-on with MQTT publishing off serves the same single row. No account,
    no subscription, nothing leaves the room — and tvOS's own constraints
    (storage the OS may purge, foreground-only apps) match the architecture:
    the TV never holds the record, it witnesses, displays, and proves.

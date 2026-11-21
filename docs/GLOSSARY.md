@@ -25,12 +25,12 @@ follows.
 
 | Name | What it is | Not |
 |---|---|---|
-| **SecuraCV** | The **platform** — the witness kernel plus the signed evidence log. The "how." | Not the device, not the company |
-| **Canary** | The **device**, and the brand people say out loud. The hero noun. | Not the software |
+| **SecuraCV** | The **witness** — open-source software for the cameras and sensors you already own (the witness kernel plus the signed evidence log), and the platform a Canary runs. The name on the door. | Not the device, not the company |
+| **Canary** | The **device**, and the name people say out loud for one. | Not the software |
 | **Errer Labs** | The **company** that makes it and holds the trademarks. | Not the product |
 
 Say "a Canary," "your fleet of Canaries," "SecuraCV runs on it." Don't make
-someone learn "witness kernel" before they understand what they're buying.
+someone learn "witness kernel" before they understand what they're getting.
 Canonical rules: [`docs/BRAND.md`](BRAND.md).
 
 **Casing.** The platform is written **`SecuraCV`** in all prose, UI, store
@@ -87,6 +87,34 @@ the Lab.
 **The Vault** — The kernel's sealed store of raw frames that break-glass
 opens — by quorum, never by one person.
 → [`spec/break_glass.md`](../spec/break_glass.md)
+
+**Handoff sidecar** — The file that travels with every disclosed file,
+`<file>.securacv-handoff.json` (0600): the device-signed rows of the
+disclosure that released it, verbatim — the trustees' grant, the
+redemption, and the unseal record or export receipt — plus anchors
+referenced by hash. Unsigned itself: a carrier, and everything it does not
+embed signed is labeled *declared*. Always two words.
+→ [handoff sidecars](handoff_sidecars.md)
+
+**Unseal record** — The device-signed `Unsealed` row the kernel appends
+after a successful decrypt and before any byte is written: "the device
+decrypted envelope E, under redemption R, to the plaintext this salted
+commitment fixes." The salt lives only in the handoff sidecar, so the
+ledger holds no media fingerprint.
+→ [`spec/break_glass.md`](../spec/break_glass.md)
+
+**Recipient commitment** — A salted SHA-256 commitment to the recipient the
+operator *declared* at disclosure, signed into the unseal record or export
+receipt; the name and salt live only in the handoff sidecar. It fixes the
+declaration against later substitution — it does not verify who received
+the file.
+→ [handoff sidecars](handoff_sidecars.md)
+
+**Authorizing receipt** — The field of a quorum export's receipt that names
+the `Granted` break-glass receipt whose token it spent. The requester's
+trustee-consented context stays on that grant, named by reference, never
+copied into the export ledger.
+→ [`spec/evidence_envelope.md`](../spec/evidence_envelope.md)
 
 **Sealed snapshot** — Not the Vault. One camera frame a canary-wap seals when
 an alarm it was armed for fires, encrypted to one person's X25519 key; the
@@ -292,6 +320,52 @@ behaves as `away`. Always "household posture," never bare "posture," which
 already means a Vision event's body posture and the Pocket Canary's bird.
 → [`spec/household_keys_v0.md`](../spec/household_keys_v0.md),
 [the decision record](design/household_presence_and_posture.md)
+
+**Projection** — A file derived from receipts that adds no authority; the
+receipt is the record. The first one designed is the SIEM projection.
+→ [`compliance/SIEM_PROJECTION.md`](compliance/SIEM_PROJECTION.md)
+
+**FHIR AuditEvent** — HL7's audit-record resource. SecuraCV's projection is
+shaped as an R4 AuditEvent, one per receipt row; designed, item 7 CP2.
+→ [`compliance/SIEM_PROJECTION.md`](compliance/SIEM_PROJECTION.md)
+
+**IHE ATNA** — IHE's audit-trail and node-authentication profile, which
+carries audit records over syslog. Transport is the operator's: SecuraCV
+writes files and never sends.
+→ [`compliance/SIEM_PROJECTION.md`](compliance/SIEM_PROJECTION.md)
+
+**CAWG identity assertion** — The Creator Assertions Working Group's
+assertion that names a person in a C2PA manifest. SecuraCV's design names
+only the person the cited receipt records, as publisher; designed, item 7 CP5.
+→ [`compliance/CAWG_COSIGNING.md`](compliance/CAWG_COSIGNING.md)
+
+**Qualified electronic ledger** — An eIDAS category (Arts. 45k/45l) whose
+records, as commonly cited, carry a legal presumption of ordering and
+integrity; the article text was not read here, so that content is unverified
+(see the map). SecuraCV is not one and seeks no such status.
+→ [`compliance/eidas_qualified_ledger.md`](compliance/eidas_qualified_ledger.md)
+
+**ALCOA+** — Data-integrity attributes, as commonly listed for pharmaceutical
+and medical records: attributable, legible, contemporaneous, original,
+accurate, and complete, consistent, enduring, available. The list follows
+common usage and is unverified against the PIC/S and MHRA guidance (see the
+map).
+→ [`compliance/alcoa_plus.md`](compliance/alcoa_plus.md)
+
+**BS 10008** — The British standard on the evidential weight of electronic
+information. Mapped by topic only, because the standard was not read.
+→ [`compliance/BS10008_OPERATOR_PACK.md`](compliance/BS10008_OPERATOR_PACK.md)
+
+**Validation sheet** — Per-ruleset reliability documentation: what a ruleset's
+events assert and do not, and whether any validation was performed (by
+SecuraCV, never). Designed, item 7 CP3.
+→ [`compliance/VALIDATION_SHEETS.md`](compliance/VALIDATION_SHEETS.md)
+
+**Compliance map** — A JSON file that maps one regime's clauses to SecuraCV
+mechanisms, each row with one status from a closed vocabulary
+(`structural`, `procedural`, `designed`, `not-applicable`, `not-pursued`) and
+evidence a linter holds to the disk. A map, never a determination.
+→ [`compliance/README.md`](compliance/README.md), [`compliance/STATUS.md`](compliance/STATUS.md)
 
 **Fleet** — **The word for a group of Canaries.** Not "flock" — that word is
 off-limits in all copy, identifiers, and comments (a company called Flock
@@ -598,8 +672,8 @@ parses the real source in each language and
 fails CI if any copy drifts. To change a vocabulary, edit the dictionary first.
 
 **Anchor subject** — What an RFC 3161 anchor row says it covers: `chain_head`,
-`export_receipt_head`, `break_glass_receipt_head`, `policy_head`, or a bare
-`digest`. A label the tools re-derive from the token and the ledgers, never
+`export_receipt_head`, `break_glass_receipt_head`, `policy_head`,
+`clock_provenance_head`, or a bare `digest`. A label the tools re-derive from the token and the ledgers, never
 trust — a court kit packages by hash, not by label.
 → [timestamping](timestamping.md)
 
@@ -608,6 +682,49 @@ trust — a court kit packages by hash, not by label.
 which declared role (`qualified` / `independent`); `log_anchor verify --policy`
 checks countersignatures, count and distinctness against it, never legal
 status. → [timestamping](timestamping.md)
+
+**Clock provenance** — The device's own clock measured against an RFC 3161
+token's `genTime`: `witnessd` seals one device-signed, hash-chained,
+never-pruned record per anchor row (whole seconds, clamped to ±3600, with the
+measured poll gap that bounds it, bound to the token by its SHA-256; a row
+already there when a daemon starts gets a *binding-only* record). The
+ledger's head is the anchor subject `clock_provenance_head`. It answers "the
+device's clock was wrong" with a signed measurement; it never makes an
+event's 10-minute bucket finer. → [timestamping](timestamping.md) ·
+[design](design/clock_provenance.md)
+
+**OpenTimestamps proof** — A `.ots` file over a SHA-256 digest: a chain of
+hash operations from the digest to a calendar's commitment and, once the
+calendar has committed it, to a Bitcoin block's merkle root. `anchor-all`
+stores one per (subject, calendar) in `ots_anchors`; a court kit packages
+them as `anchors/ots-NNNN-<subject>.ots`. Once its path is checked against a
+block header you trust, it shows existence before that block, never identity;
+a pending proof is not yet evidence of time. → [timestamping](timestamping.md) ·
+[design](design/opentimestamps_leg.md)
+
+**Calendar (OpenTimestamps)** — A public server that aggregates submitted
+commitments into one Bitcoin transaction. A relay, not an authority: once a
+proof reaches a Bitcoin block it needs no trust in the calendar. Declared in
+the anchor policy's `ots` object by name and URL. →
+[timestamping](timestamping.md)
+
+**Commitment (OpenTimestamps)** — What a calendar receives:
+`SHA256(hash ‖ 16 fresh random bytes)`, a fresh nonce per subject, calendar
+and run, so no calendar sees a ledger head or an empty-ledger sentinel. →
+[timestamping](timestamping.md)
+
+**Attests Bitcoin block N / Confirmed in Bitcoin block N** — "Attests": the
+proof carries a Bitcoin attestation at height N, a claim anyone can write
+into a file. "Confirmed": `log_anchor verify` matched the proof's path to the
+merkle root of block N's header, supplied by the verifier
+(`--bitcoin-headers`). Only confirmed rows count toward an anchor policy;
+court kits say "attests", because the reader runs the comparison. →
+[timestamping](timestamping.md)
+
+**Pending (not yet in a Bitcoin block)** — An OpenTimestamps proof whose only
+attestation names a calendar that received the commitment. Not evidence of
+time; `anchor-all` polls it for an upgrade for 7 days. →
+[timestamping](timestamping.md)
 
 **Empty-ledger sentinel** — The fixed per-subject digest `anchor-all` requests
 when a ledger has no head yet, so a scheduled run always sends the same number
@@ -688,6 +805,7 @@ event vocabulary and signed witness record stay identical across profiles.
 | "verified" for a kernel's self-check | **"Chain OK (kernel-reported)"**, `kernel_reported_chain_ok` | A kernel vouching for itself with its own key is not a check you ran; only the integration's walk, or the recipient's viewer, earns the word. |
 | face recognition, plate reading, gait, re-ID, demographics | — | Not disabled — **absent**. Invariant II; never implement. |
 | "secure" as a bare adjective | the specific property | Say what can't happen and what still has to be true. |
+| words that claim a standing under a regime, about SecuraCV | "maps to", "designed to support", "shaped as" | The determination belongs to the regulator, the assessor, the court or the operator; the list lives once, in `scripts/lint_compliance_map.py`. |
 | performance claims without benchmarks | "varies by hardware; benchmark first" | Claims discipline. On the site, review keeps them out (no site test looks for them); here, `scripts/lint_bench_rows.py` fails the build on a pasted [benchmark](BENCHMARKS.md) table. |
 
 ---

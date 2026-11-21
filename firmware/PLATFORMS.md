@@ -26,13 +26,54 @@ every copy; now it is structural.
 
 | Section | Literal | Who builds on it | Why this literal, and why it is distinct |
 |---|---|---|---|
-| `platform_s3c3` | `espressif32@6.9.0` | `common_esp32s3` / `common_esp32c3` in `common.ini`, so every env that extends them: canary-vision (all envs), canary-display's core-2 SPI panels (`watch`, `watch-modes`, `watch-debug`, `nightstand-s3`, `touch169`, `amoled241`) and `nightlight-c3`, `canary-sentinel-lite`; `firmware/canary` `[env]` default: `dev`, `release`, `dev_ha`, `release_ha`, `minimal`, `usb-onboard`, `esp32cam`, `esp32-wroom`, `freenove-s3`; `provisioning/platformio_secure.ini` (`secure`, `secure_ha`), which `firmware/canary/platformio.ini` includes through `extra_configs` | Official platform, **exact** pin: arduino-esp32 core 2.0.17 / ESP-IDF 4.4.7, the bench-validated release path that `projects/canary-display/arduino/PARITY.md` and the two `core_compat.h` name by number. The canary tree and the secure envs joined on 2026-09-22 (the decision below); until then they floated on `^7.0.0` (the same 2.0.17 core) and `^6.5.0` (the newest 6.x at build time: `6.9.0` or later, never recorded). |
-| `platform_core3` | pioarduino release `55.03.38-1` (`platform-espressif32.zip`) | every ESP32-C6 env (canary-sense, canary-sentinel `door`/`window`/`hallway`/`demo-head`, canary-display `nightstand-c6`); canary-wap (all envs); canary-display's dash family incl. `dash7` / `nightstand7`; canary `[env:full]` | The only PlatformIO platform that packages arduino-esp32 3.x (3.3.8 / ESP-IDF 5.5.4). The official platform has no C6 support for `framework = arduino`; canary-wap calls IDF5-only APIs unconditionally; canary-wap and `[env:full]` link NimBLE-Arduino 2.x, which needs core 3; the dash family needs GFX 1.6.x's RGB bounce buffers, which need core 3. |
+| `platform_s3c3` | `espressif32@6.9.0` | `common_esp32s3` / `common_esp32c3` in `common.ini`, so every env that extends them: canary-vision (all envs), canary-display's core-2 SPI panels (`watch`, `watch-modes`, `watch-debug`, `nightstand-s3`, `touch169`, `amoled241`) and `nightlight-c3`, `canary-sentinel-lite`; `firmware/canary` `[env]` default: `dev`, `release`, `dev_ha`, `release_ha`, `minimal`, `usb-onboard`, `esp32cam`, `esp32-wroom`, `freenove-s3`; `provisioning/platformio_secure.ini` (`secure`, `secure_ha`), which `firmware/canary/platformio.ini` includes through `extra_configs` | Official platform, **exact** pin: arduino-esp32 core 2.0.17 / ESP-IDF 4.4.7, the bench-validated release path that `projects/canary-display/arduino/PARITY.md` and the two `core_compat.h` name by number. End of life upstream, and its WebServer users link a patched copy ([below](#the-core-2-line-is-end-of-life)). The canary tree and the secure envs joined on 2026-09-22 (the decision below); until then they floated on `^7.0.0` (the same 2.0.17 core) and `^6.5.0` (the newest 6.x at build time: `6.9.0` or later, never recorded). |
+| `platform_core3` | pioarduino release `55.03.311` (`platform-espressif32.zip`) | every ESP32-C6 env (canary-sense, canary-sentinel `door`/`window`/`hallway`/`demo-head`, canary-display `nightstand-c6`); canary-wap (all envs); canary-display's dash family incl. `dash7` / `nightstand7`; canary `[env:full]` | The only PlatformIO platform that packages arduino-esp32 3.x (3.3.11 / ESP-IDF 5.5.5). The official platform has no C6 support for `framework = arduino`; canary-wap calls IDF5-only APIs unconditionally; canary-wap and `[env:full]` link NimBLE-Arduino 2.x, which needs core 3; the dash family needs GFX 1.6.x's RGB bounce buffers, which need core 3. Moved from `55.03.38-1` (3.3.8 / ESP-IDF 5.5.4) on 2026-11-16 for GHSA-g764-gwc3-75m5 (an out-of-bounds read in ESP-IDF 5.5.4's lwIP DHCP-server option parser, reached by every core-3 product that runs a SoftAP; fixed in ESP-IDF 5.5.5). Not `55.03.312` (3.3.12): its platform.json requires PlatformIO Core >= 6.2.0, and this tree pins 6.1.19 (`check_route_security.py`'s reader with it), so moving to it is a PlatformIO bump first. Nothing built on the new pin has been on a bench yet. |
 | `platform_ota_idf` | `espressif32@6.5.0` | `projects/canary-ota` (`dev`, `production`, `test`) | `framework = espidf`, not arduino: this pin selects an ESP-IDF release, and the project's `sdkconfig` is written against it. Exact pin, left where it was on 2026-09-22 (below). |
 
 The env lists are what `pio project config --json-output` reports per project
 on the tree this file was written against; `flavors.json` is the truth for
 which of them CI builds and which ship.
+
+## The core-2 line is end of life
+
+`platform_s3c3` and the 2.0.17 Arduino-CLI row build on arduino-esp32 2.0.17
+/ ESP-IDF 4.4.7, and neither gets another release: 2.0.17 is the last 2.x
+release, and ESP-IDF 4.4 receives no further fixes. A flaw found later in
+either stays in every image built on this line. Recorded 2026-11-16, after
+the first run of `scripts/check_firmware_advisories.py`:
+
+- **The core's WebServer is replaced where it is compiled.**
+  GHSA-8cmm-3887-r32j: 2.0.17's WebServer sizes a stack array from a
+  client's multipart boundary while `handleClient()` parses the request,
+  for any URI and before any route handler runs, so no check in our
+  handlers can stop it, and no 2.x release carries upstream's fix. Every
+  core-2 build that compiles WebServer links
+  [`third_party/WebServer-2.0.17-securacv/`](third_party/WebServer-2.0.17-securacv/README.md)
+  instead: the canary-vision envs, `canary-sentinel-lite` (CI only), and
+  the displays `watch` (the Arduino-CLI release row and the PlatformIO
+  envs), `nightstand-s3`, `touch169`, `amoled241` and `nightlight-c3`.
+  PlatformIO reaches it through `lib_extra_dirs = ../../third_party` on
+  those envs (the dash family states its own `lib_extra_dirs`, so no core-3
+  env does), the 2.0.17 Arduino-CLI rows through `--library`, and
+  `firmware.yml` fails an env whose dependency graph shows the core's own
+  `WebServer @ 2.0.0`. The copy is upstream's 2.0.17 library byte for byte
+  except one backport (a boundary over 70 bytes is refused, the buffer is a
+  fixed size); its README holds every file's upstream hash and the diff.
+  `scripts/tests/test_vendored_webserver_core2.py` holds the files and the
+  wiring, and `tests_host/test_webserver_boundary.cpp` drives the parser
+  under AddressSanitizer. Compile-tested and host-tested; not bench-tested.
+  The flagship serves HTTP on `esp_http_server` and links no WebServer. A
+  build of the display sketch on 2.0.17 outside our workflows (the Arduino
+  IDE, or `sketch.yaml`'s 2.0.17 profiles) still links the core's copy.
+- **The residual is the IDF.** Wi-Fi, lwIP, mbedTLS and Bluetooth on these
+  images stay at 4.4.7. The follow-up is moving canary-vision and the
+  core-2 displays to `platform_core3`, each after a bench pass on its board
+  (a move resets `verified` to `compile-tested`, below); the vendored copy
+  leaves a product's envs in the same change, and is deleted with the last
+  one. The flagship's `release_ha` is estimated not to fit
+  `partitions_ota.csv` on core 3, so its move needs a partition change or
+  cuts first. The advisory check cannot warn about this line: the 2026
+  ESP-IDF advisories name no v4.4 release.
 
 ## How to bump a pin
 
@@ -51,7 +92,7 @@ the reason written beside it — one section per *distinct* literal, never a
 second section for the same one (the lint refuses duplicates).
 
 **Two lines cannot share a PlatformIO core directory.** Both platforms ship a
-package named `framework-arduinoespressif32`, at 2.0.17 and 3.3.8; a core-3
+package named `framework-arduinoespressif32`, at 2.0.17 and 3.3.11; a core-3
 build that finds the core-2 copy already installed fails with
 `FRAMEWORK_DIR=None` before compiling anything. That is handled *outside*
 this file — `flavors.json`'s `isolated_core_envs` / `core_dir_groups`,
@@ -137,11 +178,12 @@ images are compile-tested on the pin until a bench pass. Rolling back is one
   NimBLE split their majors along the core boundary) is pinned to the same
   version by that product's profiles on that core
   ([`sbom/README.md`](../sbom/README.md)).
-- **The WAP's Arduino-CLI rows: release rows pinned, the PR row floats** (a
-  release decision, made in #1802, sweep F21; maintainer to confirm). The
+- **The WAP's Arduino-CLI rows: release rows pinned, the PR row floats on
+  the 3.x line** (a release decision, made in #1802, sweep F21, and bounded
+  to a line on 2026-11-20; maintainer to confirm). The
   rows that make or measure what a release ships (`firmware-release.yml`,
   `flasher-release.yml`, `ram_audit.yml`, `csi_module_disable_matrix.yml`)
-  pass `core-version: "3.3.8"`, the WAP sketch's pin and the core inside
+  pass `core-version: "3.3.11"`, the WAP sketch's pin and the core inside
   `platform_core3`, so a release's Arduino-CLI WAP build rides the core the
   PR's PlatformIO `canary-wap-*` builds and `sketch.yaml` already use (a
   release builds the WAP through Arduino-CLI only). The two release jobs
@@ -153,23 +195,39 @@ images are compile-tested on the pin until a bench pass. Rolling back is one
   is each job's first install. `flasher-release.yml` reads its pin from the
   dispatch ref, not from the tag it rebuilds, so a refresh of an older tag
   builds that tag's WAP image on today's pin. `firmware.yml`'s
-  PR row (`build-arduino-cli`) keeps passing no `core-version` and builds on
-  the action's weekly "latest", on purpose: it is the early warning that the
-  next core breaks the sketch, before anyone moves the pin. The cost is
-  stated, not hidden: **a cut release can differ from its PR build's core**.
-  On a PR the Arduino-CLI row proves the sketch on "latest"; the same sources
-  compile on 3.3.8 through the PlatformIO `canary-wap-*` envs and the
-  CSI-module matrix, but the release's own Arduino-CLI invocation on 3.3.8
+  PR row (`build-arduino-cli`) keeps passing no `core-version`, on purpose:
+  it is the early warning that the next core breaks the sketch, before
+  anyone moves the pin. Since 2026-11-20 it passes `core-line: "3"` and
+  builds on the newest stable 3.x release the Boards-Manager index lists
+  that week, not on "latest": that day esp32:esp32 4.0.0 became the newest
+  release, the sketch's `#include "mbedtls/sha256.h"` stopped resolving, and
+  the row went red on every firmware PR whatever the PR touched (#1991 was a
+  change to five strings). The warning was correct and it was delivered; what
+  was wrong was that a new **major** arrived through the same door as a patch
+  release. A major is a port with a PR of its own, and that PR moves the
+  line (`.github/scripts/test_setup_arduino_esp32.py` holds the line to the
+  major `sketch.yaml` pins, and refuses any row that names neither a version
+  nor a line). **Open: the WAP sketch does not compile on core 4.x.** The
+  first error is the mbedTLS header; nobody has looked past it. The cost of
+  floating is stated, not hidden: **a cut release can differ from its PR
+  build's core**.
+  On a PR the Arduino-CLI row proves the sketch on the line's newest; the same sources
+  compile on 3.3.11 through the PlatformIO `canary-wap-*` envs and the
+  CSI-module matrix, but the release's own Arduino-CLI invocation on 3.3.11
   runs only when a release does. Moving the pin is one edit per row plus the
   sketch's `sketch.yaml` (the SBOM refuses a row pin no WAP profile shares,
   and `scripts/tests/test_gen_firmware_sbom.py` names which rows pin and
   which floats), and the PR row's warning is the reason to make it. What was rejected:
   pinning the PR row too (the early warning goes with it), and leaving every
   row on "latest" (a release would build on whatever the action resolved
-  that week, a core no PR had necessarily compiled the sketch on). Note too
-  that the core-3 lines sit on different patch releases (the WAP on 3.3.8 in
-  both build paths, the display's Arduino-CLI rows on 3.3.10); the SBOM lists
-  them as two components rather than one.
+  that week, a core no PR had necessarily compiled the sketch on). Since
+  2026-11-16 the core-3 lines sit on one patch release: the WAP (both build
+  paths), the display's core-3 Arduino-CLI rows and `sketch.yaml` profiles,
+  and `platform_core3` all name 3.3.11, so the SBOM lists one arduino-esp32
+  3.x component. They moved together, in one change, because the SBOM's
+  agreement check refuses a partial move; a later bump moves them together
+  too, or the release builds a core the bench never ran (the release-vs-bench
+  drift of `.github/RELEASE_LESSONS.md` 2026-07-30 (q)).
 - **`projects/canary-wap/setup.sh`** runs `pio pkg install --global --platform
   espressif32` (unpinned, latest official) for its interactive first-run path.
   That pre-installs a platform; the env's own `platform =` spec still governs

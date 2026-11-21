@@ -27,8 +27,17 @@
 // drawer, so the firmware derives its own token as always), the rescue
 // bench, the local-file install and the Vision module burn. Those stay in the
 // Flasher; the card says so, and says where.
+//
+// About this board: the Flasher's This Board rows, drawn from the same model
+// (flash-core.js aboutBoardGroups, the desktop's copy held to it by
+// desktop_parity.test.js) and fed the same detect_chip answer. The Lab app
+// has no fuse read and no passport read (desktop-lab exposes neither
+// command), so the eFuse and installed-image rows say "Read with the
+// Flasher" instead of guessing. The hardware address detect_chip returns is
+// kept in st.mac, never read and never drawn — this bench shows none.
 
 import * as core from "./flash-core.js";
+const SETTINGS_TOO_BIG = core.SETTINGS_TOO_BIG;
 
 const tauri = () =>
   typeof window !== "undefined" && window.__TAURI__ && window.__TAURI__.core ? window.__TAURI__ : null;
@@ -118,6 +127,16 @@ function classifyFlashError(err) {
       hint: "Nothing was written. It has no bootloader for this chip where the chip " +
         "loads one from, so the board couldn't start from it (the details say where). " +
         "Use an image laid out for this chip: SecuraCV factory images from fw-v2.4.18 on are." };
+
+  // The typed settings don't fit the one NVS page they are written into
+  // (flash-engine provisioning.rs: "provisioning values do not fit in one NVS
+  // page"). The engine refuses after the download and before any write; the
+  // browser flasher refuses the same install on its confirm card
+  // (core.settingsSeedProblem) with this same sentence. Named, so it is not
+  // read as an unknown failure and coached toward download mode.
+  if (has("do not fit in one nvs page"))
+    return { kind: "settings-size", title: "Your settings don't fit on the board",
+      hint: SETTINGS_TOO_BIG };
 
   if (has("failed to open serial port", "port is already open", "already open",
           "resource temporarily unavailable", "resource busy", "device or resource busy") ||
@@ -223,7 +242,7 @@ const requiresLiveReceipt = (product) => !product || product.serial_receipt !== 
     gen_flash.py. */
 export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
   const st = {
-    ports: [], port: null, portInfo: null, chip: null, flashBytes: null, mac: null,
+    ports: [], port: null, portInfo: null, chip: null, chipDesc: null, flashBytes: null, mac: null,
     macCheck: null, detecting: false, failedPort: null, busy: false,
     devChannel: false, manifest: null, manifestError: null, product: null,
     baudCeiling: null, monitoring: false, pollTimer: null,
@@ -234,9 +253,23 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
   // every place the bench takes the port back or the monitor ends goes
   // through here, so a stopped monitor never leaves a live-looking Send.
   let monitorControls = [];
+  // Tell the Lab shell (lab-shell.js) when this bench is busy — a write in
+  // flight or the boot monitor holding the port — and when it is free again,
+  // so a route change or a reload asks before replacing this frame: the
+  // write itself finishes in Rust, but the receipt, the boot log and the
+  // Home's record of the flash live only here. Posted only when framed,
+  // only to the same origin, and only when the word changed.
+  let announced = null;
+  const announceBusy = () => {
+    const busy = !!(st.busy || st.monitoring);
+    if (busy === announced || window === window.top) return;
+    announced = busy;
+    try { window.parent.postMessage({ source: "scv-lab", type: "busy", busy }, location.origin); } catch { /* not framed by the shell */ }
+  };
   const setMonitoring = (on) => {
     st.monitoring = on;
     for (const c of monitorControls) c.disabled = !on;
+    announceBusy();
   };
   // The receipt card's serial:status / serial:log / serial:receipt listeners
   // belong to that card alone (sweep A85). A new flash, a new card and a
@@ -267,7 +300,8 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
   portRow.append(portSel);
   const recheck = el("button", "ghost flash-hidden", "Read the board again");
   const note = el("p", "flash-note flash-note-soft flash-hidden");
-  head.append(conn, portRow, recheck, note);
+  const about = el("div", "flash-hidden");
+  head.append(conn, portRow, recheck, note, about);
   head.append(el("p", "fineprint",
     "The automatic safety copy, room presets, the fleet book, the rescue bench, " +
     "local-file installs and the Vision camera module live in the SecuraCV Flasher " +
@@ -279,6 +313,29 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
   mount.append(head, pick, flashCard, result);
 
   const setConn = (text) => { conn.textContent = text; };
+
+  // ── About this board: the Flasher's rows, from detect_chip alone ─────────
+  const aboutFacts = () => ({ chip: st.chip, chipDesc: st.chipDesc, flashBytes: st.flashBytes, bench: true });
+  const renderAbout = () => {
+    about.innerHTML = "";
+    if (!st.chip) { about.classList.add("flash-hidden"); return; }
+    about.classList.remove("flash-hidden");
+    const det = el("details", "flash-about");
+    det.append(el("summary", null, "About this board"));
+    for (const g of core.aboutBoardGroups(aboutFacts())) {
+      det.append(el("h4", null, g.title));
+      det.append(el("p", "fineprint", g.source));
+      for (const r of g.rows) {
+        // The hardware address: this bench keeps it (st.mac) but never reads
+        // or shows it — the Flasher reveals it on request.
+        if (r.reveal) continue;
+        const row = el("div", "flash-report-row");
+        row.append(el("span", "flash-report-label", r.label), el("span", "flash-report-val", r.value));
+        det.append(row);
+      }
+    }
+    about.append(det);
+  };
   const showNote = (text) => {
     note.textContent = text || "";
     note.classList.toggle("flash-hidden", !text);
@@ -301,8 +358,9 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
   };
 
   const resetBoard = () => {
-    st.chip = null; st.flashBytes = null; st.mac = null; st.macCheck = null;
+    st.chip = null; st.chipDesc = null; st.flashBytes = null; st.mac = null; st.macCheck = null;
     st.product = null; st.failedPort = null;
+    renderAbout();
     pick.classList.add("flash-hidden");
     flashCard.classList.add("flash-hidden");
     recheck.classList.add("flash-hidden");
@@ -358,11 +416,12 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
       const info = await invoke("detect_chip", { port });
       if (port !== st.port) return; // unplugged or switched while reading
       st.chip = info.chip;
+      st.chipDesc = info.chip_desc || null;
       st.flashBytes = info.flash_bytes;
       st.mac = info.mac;
       st.macCheck = info.mac_check || null;
-      const size = st.flashBytes ? ` · ${Math.round(st.flashBytes / (1024 * 1024))} MB flash` : "";
-      setConn(`Connected · ${info.chip}${size} on ${port}`);
+      setConn(`Connected · ${core.aboutBoardSummary(aboutFacts())} on ${port}`);
+      renderAbout();
       if (st.macCheck && st.macCheck.level && st.macCheck.level !== "clear") {
         showNote(`${st.macCheck.label}${st.macCheck.detail ? " — " + st.macCheck.detail : ""}`);
       }
@@ -534,7 +593,9 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
     const pre = el("pre");
     log.append(pre);
     flashCard.append(stage, bar, log);
-    const line = (t) => { pre.textContent += t + "\n"; pre.scrollTop = pre.scrollHeight; };
+    // espflash prints its board info, MAC included, before every flash; the
+    // bench masks the address where it draws the line (core.maskHardwareAddress).
+    const line = (t) => { pre.textContent += core.maskHardwareAddress(t) + "\n"; pre.scrollTop = pre.scrollHeight; };
     go.addEventListener("click", () => onFlash({ product, form, redrawForm, erase, go, stage, bar, fill, line }));
   };
 
@@ -597,6 +658,7 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
       autoUpdate: !!creds.autoUpdate,
     };
     st.busy = true;
+    announceBusy();
     go.disabled = true;
     go.textContent = "Flashing…";
     result.classList.add("flash-hidden");
@@ -645,7 +707,8 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
       result.append(el("h2", null, c.title || "The flash didn’t finish"));
       result.append(el("p", "muted", withoutLocalFile(c.hint)));
       const details = el("details", "flash-log");
-      details.append(el("summary", null, "Details"), el("pre", null, String(e)));
+      // espflash's last lines, which can hold its board info's "MAC address: …".
+      details.append(el("summary", null, "Details"), el("pre", null, core.maskHardwareAddress(String(e))));
       result.append(details);
       // A layout refusal wrote nothing, and no retry or download mode changes
       // where an image keeps its bootloader: say that instead.
@@ -660,6 +723,7 @@ export async function mountNativeBench(mount, { catalog, renderWifiFields }) {
       go.disabled = false;
       go.textContent = "Flash my Canary";
       st.busy = false;
+      announceBusy(); // still busy while the monitor holds the port
       st.chip = null; // the board reboots after a write; read it fresh next time
     }
   };

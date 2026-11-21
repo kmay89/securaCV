@@ -878,6 +878,43 @@ static int test_no_stored_certificate_makes_and_stores_one() {
   return check_idle();
 }
 
+// A certificate made this boot that the store refused (the length probe
+// says nothing is stored, then the read-write session will not open) is
+// not served: false, so setup() leaves HTTPS off this boot, with the pair
+// zeroed and freed and no pin left to hand out. Before, this answered true
+// with the certificate in RAM and its fingerprint in g_tls_cert_fp_hex:
+// HTTPS ran on it for one boot, and the pairing QR and the bearer and
+// BOOT-tap receipt handed out a pin no later boot's certificate matches.
+static int test_a_certificate_that_cannot_be_stored_is_not_served() {
+  tls_unit(false, false);
+  host_nvs().prefs_begin_fails = true;
+  const HostFirstBootNvs before = host_nvs();
+  const bool known = tls_boot();
+  host_nvs().prefs_begin_fails = false;
+  CHECK(!known);
+  CHECK(g_certgens == g_tls_gens_before + 1);          // Absent: one was made ...
+  CHECK(host_nvs().rw_begins == g_tls_rw_before + 1);  // ... and its store was tried, once
+  CHECK(same_store(before, host_nvs()));               // nothing reached NVS
+  CHECK(g_tls_cert_der == nullptr && g_tls_key_der == nullptr);
+  CHECK(g_tls_cert_der_len == 0 && g_tls_key_der_len == 0);
+  CHECK(host_alloc::live.empty() && host_alloc::frees == 2);
+  CHECK(host_alloc::freed_unzeroed == 0 && host_alloc::foreign_frees == 0);
+  CHECK(!g_tls_cert_persisted && g_tls_cert_fp_hex[0] == '\0');
+  CHECK(printed("[TLS] Certificate not stored in NVS - HTTPS off this boot, no pin handed out\n"));
+  CHECK(!printed("[TLS] CN:"));
+  CHECK(!printed("Cert fingerprint:"));
+  // The next boot, with NVS answering: nothing was stored, so it makes
+  // another and stores it, and that one is served and pinned.
+  CHECK(tls_boot());
+  CHECK(g_certgens == g_tls_gens_before + 1);
+  CHECK(g_tls_cert_persisted);
+  CHECK(g_tls_cert_fp_hex == pin_of(std::vector<uint8_t>(kGenCertLen, 0x61)));
+  host_release(g_tls_cert_der);
+  host_release(g_tls_key_der);
+  g_tls_cert_der_len = g_tls_key_der_len = 0;
+  return check_idle();
+}
+
 // A session that will not open (Preferences refuses it, the shared
 // handle's lock wait timed out; or NVS refuses every open, which the length
 // probe meets first): Refused. Before, that read as "no certificate", and
@@ -1410,6 +1447,50 @@ static int test_only_an_absent_certificate_is_replaced() {
   return 0;
 }
 
+// One rule hands out a pin: tls_after_setup(), which needs the certificate
+// stored and its fingerprint computed. The pairing QR asked its own
+// (g_tls_enabled and a non-empty fingerprint, so a certificate whose store
+// failed was pinned), and the bearer and BOOT-tap receipt named the servers
+// up now even during setup, where the setup door's claim names the address
+// and pin the unit reboots into.
+static int test_every_pin_is_handed_out_by_the_one_rule() {
+  const std::string dir = WAP_SKETCH_DIR;
+  const std::string ino = strip_comments(read_file(dir + "/canary_wap.ino"));
+  CHECK(!ino.empty());
+  // The rule itself: stored, and computed, before anything else.
+  const std::string rule = body_of(ino, "static inline bool tls_after_setup() {");
+  CHECK(rule.find("if (!g_tls_cert_persisted || g_tls_cert_fp_hex[0] == '\\0') return false;") !=
+        std::string::npos);
+  // The QR: the pin is written under the rule, and nowhere else in it.
+  const std::string qr = body_of(ino, "static esp_err_t handle_pairing_qr(httpd_req_t* req) {");
+  const size_t asked = qr.find("if (tls_after_setup()) {");
+  CHECK(asked != std::string::npos);
+  CHECK(count_of(qr, "g_tls_cert_fp_hex") == 1);
+  CHECK(qr.find("g_tls_cert_fp_hex") > asked && qr.find("g_tls_cert_fp_hex") < qr.find("} else {", asked));
+  // The receipt: the claim, and any grant during setup, ask the rule; the
+  // pin rides only with the scheme that choice made.
+  const std::string receipt = body_of(
+      ino, "static esp_err_t send_provisioning_receipt(httpd_req_t* req, receipt_authority::Grant grant) {");
+  CHECK(receipt.find("const bool tls = (grant == receipt_authority::Grant::SETUP_DOOR_CLAIM || "
+                     "setup_wizard::is_active())\n"
+                     "                       ? tls_after_setup()\n"
+                     "                       : g_tls_enabled;") != std::string::npos);
+  CHECK(receipt.find("in.tls_enabled = tls;") != std::string::npos);
+  CHECK(receipt.find("in.tls_cert_fp = tls ? g_tls_cert_fp_hex : \"\";") != std::string::npos);
+  CHECK(count_of(receipt, "g_tls_cert_fp_hex") == 1);
+  // And a certificate whose store failed is freed, unpinned and refused, in
+  // the generator's branch of init_tls_cert().
+  const std::string init = body_of(ino, "static bool init_tls_cert() {");
+  const size_t failed = init.find("if (!tls_store_to_nvs()) {");
+  CHECK(failed != std::string::npos);
+  const std::string branch = init.substr(failed, init.find("\n  }\n", failed) - failed);
+  CHECK(branch.find("tls_free_buffers();") != std::string::npos);
+  CHECK(branch.find("g_tls_cert_persisted = false;") != std::string::npos);
+  CHECK(branch.find("g_tls_cert_fp_hex[0] = '\\0';") != std::string::npos);
+  CHECK(branch.find("return false;") != std::string::npos);
+  return 0;
+}
+
 // The chirp reads (F220): setup() calls chirp_channel::init(), which loads
 // the settings, before loop() runs; the stamp read the cut took is loop()'s;
 // NvsSession's read-only open is the quiet one, and the convenience readers
@@ -1466,6 +1547,7 @@ int main() {
   rc |= test_a_refused_keygen_refuses_the_chain();
   rc |= test_a_stored_certificate_loads_unchanged();
   rc |= test_no_stored_certificate_makes_and_stores_one();
+  rc |= test_a_certificate_that_cannot_be_stored_is_not_served();
   rc |= test_a_certificate_session_that_will_not_open_is_refused();
   rc |= test_a_failed_certificate_length_lookup_is_refused();
   rc |= test_an_empty_stored_pair_is_refused();
@@ -1479,6 +1561,7 @@ int main() {
   rc |= test_the_boot_runs_these_opens_in_this_order();
   rc |= test_a_refused_key_halts_the_boot();
   rc |= test_only_an_absent_certificate_is_replaced();
+  rc |= test_every_pin_is_handed_out_by_the_one_rule();
   rc |= test_a_first_boot_logs_no_chirp_line();
   rc |= test_stored_chirp_settings_read_as_before();
   rc |= test_an_nvs_fault_keeps_its_chirp_lines();

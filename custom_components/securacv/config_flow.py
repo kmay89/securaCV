@@ -79,6 +79,7 @@ from .const import (
     CONF_EVIDENCE_KEEP,
     CONF_KERNEL_DEVICE_ID,
     CONF_KERNEL_KEY_PINNED_BUCKET_START,
+    CONF_KERNEL_LAST_ANNOUNCE_BUCKET_START,
     CONF_KERNEL_TOKEN_ID,
     CONF_KERNEL_VERIFYING_KEY,
     CONF_MQTT_PREFIX,
@@ -148,6 +149,35 @@ PLAINTEXT_WARNING = (
     "presents crosses your network unencrypted on every request. Use https:// "
     "(a reverse proxy in front of the kernel) if that network is not yours alone."
 )
+
+
+def _announce_self_signed(announce: Announce) -> bool:
+    """Whether an announce is signed by the key it names.
+
+    Before a pin exists this is the only check possible. What it buys: a
+    card shows a key's fingerprint only over an announce that key signed,
+    so a broker client cannot pair the genuine kernel's fingerprint with a
+    host that kernel never announced. A card under the client's own key
+    shows its own fingerprint, which the person compares with what `pair`
+    printed; that comparison, not this check, is what stops a host that
+    answers /api/pair under the key it announced. (The pair step's
+    `announce_key_mismatch` check additionally catches a host that relays
+    the genuine kernel's answer.) It is no freshness check either: with no
+    entry there is no stored bucket, so a captured announce naming a host
+    the kernel has since left is still offered, which is why the pairing
+    form shows the address the code is sent to. An announce with no
+    signature at all is never offered.
+    """
+    return announce.sig is not None and verify_announce_signature(
+        announce, announce.verifying_key
+    )
+
+
+def _stored_bucket_start(value: Any) -> int | None:
+    """An entry's stored announce bucket, or None when none (or junk) is stored."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
 
 
 def plaintext_url_warning(url: Any) -> str:
@@ -541,7 +571,7 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         @callback
         def _on_announce(msg: mqtt.ReceiveMessage) -> None:
             announce = parse_announce(msg.payload)
-            if announce is not None and not found.done():
+            if announce is not None and _announce_self_signed(announce) and not found.done():
                 found.set_result(announce)
 
         unsub = None
@@ -819,6 +849,13 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self.context["title_placeholders"] = {"name": f"sidecar {where}"}
 
         existing = await self.async_set_unique_id(f"kernel_{announce.device_id}")
+        if existing is None and not _announce_self_signed(announce):
+            # First contact, no pin yet: the announce must be signed by the
+            # key it names, or the discovered card would carry a fingerprint
+            # anyone on the broker could copy over their own host. Nothing
+            # of it is kept: no later step of this flow may read it.
+            self._announce = None
+            return self.async_abort(reason="announce_signature_invalid")
         if existing is not None:
             pinned = normalize_kernel_key(
                 (getattr(existing, "data", None) or {}).get(CONF_KERNEL_VERIFYING_KEY)
@@ -851,13 +888,41 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     },
                 )
             # Signed by the pinned key: the kernel's own word on where its
-            # topics and (when it announced a host) its API live.
+            # topics and (when it announced a host) its API live — when it
+            # is newer than the last announce accepted. A retained announce
+            # an earlier host published is signed for good; replayed by
+            # whatever answers at that host now, it would move the entry
+            # (and the paired token) back there. Newer means a later
+            # `announced_bucket_start` than the stored one, never wall-clock
+            # time; the same bucket is the kernel's own re-publish of the
+            # bytes already accepted, and may change nothing. An entry with
+            # no bucket stored yet (paired before one was kept, or set up
+            # without an announce) has nothing to compare: it takes this
+            # announce and stores its bucket.
+            data = getattr(existing, "data", None) or {}
+            last = _stored_bucket_start(data.get(CONF_KERNEL_LAST_ANNOUNCE_BUCKET_START))
+            bucket = announce.announced_bucket_start
+            if bucket is None or (last is not None and bucket < last):
+                return self.async_abort(reason="announce_stale")
             updates: dict[str, Any] = {CONF_MQTT_TOPIC_PREFIX: announce.mqtt_topic_prefix}
             url = announce.api_url(None)
             if url:
                 # An explicitly announced host, signed by the pinned key,
                 # is the kernel telling us it moved (discovery-update-info).
                 updates[CONF_URL] = url
+            moved = any(data.get(key) != value for key, value in updates.items())
+            if last is not None and bucket == last and moved:
+                return self.async_abort(reason="announce_stale")
+            if not moved:
+                # Nothing to apply or reload; a newer bucket is still
+                # remembered, so an announce older than it is refused.
+                if last is None or bucket > last:
+                    self.hass.config_entries.async_update_entry(
+                        existing, data={**data, CONF_KERNEL_LAST_ANNOUNCE_BUCKET_START: bucket}
+                    )
+                self._abort_if_unique_id_configured()
+                return self.async_abort(reason="already_configured")
+            updates[CONF_KERNEL_LAST_ANNOUNCE_BUCKET_START] = bucket
             self._abort_if_unique_id_configured(updates=updates, reload_on_update=True)
         return await self.async_step_announce_confirm()
 
@@ -889,12 +954,26 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def _async_pair_step(
         self, step_id: str, user_input: dict[str, Any] | None
     ) -> ConfigFlowResult:
-        """The pairing form, shared by `pair`, reauth and reconfigure."""
+        """The pairing form, shared by `pair`, reauth and reconfigure.
+
+        Re-pairing an entry (reauth, reconfigure) also offers the witness
+        prefix the token-file form offers, defaulting to the entry's, so a
+        sidecar whose `--mqtt-topic-prefix` changed is moved here and not
+        only by its next signed announce. First contact takes the prefix
+        from the announce.
+        """
         errors: dict[str, str] = {}
         announce = self._announce
+        entry = self._flow_entry()
         if user_input is not None:
             url = str(user_input.get(CONF_URL, "")).strip().rstrip("/")
             code = str(user_input.get(CONF_PAIRING_CODE, "")).strip()
+            topic_prefix: str | None = None
+            if entry is not None and CONF_MQTT_TOPIC_PREFIX in user_input:
+                topic_prefix = (
+                    str(user_input.get(CONF_MQTT_TOPIC_PREFIX) or "").strip()
+                    or DEFAULT_MQTT_TOPIC_PREFIX
+                )
             self._pair_url = url or None
             if not PAIRING_CODE_RE.fullmatch(code):
                 errors[CONF_PAIRING_CODE] = "invalid_pairing_code"
@@ -929,18 +1008,29 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             },
                         )
                     else:
-                        return await self._async_finish_pair(url, result, key)
+                        return await self._async_finish_pair(
+                            url, result, key, topic_prefix=topic_prefix
+                        )
+        fields: dict[Any, Any] = {
+            vol.Required(CONF_URL, default=self._pair_url_default()): str,
+            vol.Required(CONF_PAIRING_CODE): str,
+        }
+        if entry is not None:
+            # What was typed survives an error, like the URL; else the
+            # entry's own prefix.
+            typed = (user_input or {}).get(CONF_MQTT_TOPIC_PREFIX)
+            prefix_default = (
+                (typed.strip() if isinstance(typed, str) else "")
+                or (getattr(entry, "data", None) or {}).get(CONF_MQTT_TOPIC_PREFIX)
+                or DEFAULT_MQTT_TOPIC_PREFIX
+            )
+            fields[vol.Optional(CONF_MQTT_TOPIC_PREFIX, default=prefix_default)] = str
         return self.async_show_form(
             step_id=step_id,
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_URL, default=self._pair_url_default()): str,
-                    vol.Required(CONF_PAIRING_CODE): str,
-                }
-            ),
+            data_schema=vol.Schema(fields),
             errors=errors,
             description_placeholders={
-                **self._kernel_placeholders(self._flow_entry()),
+                **self._kernel_placeholders(entry),
                 "plaintext_warning": plaintext_url_warning(self._pair_url_default()),
             },
         )
@@ -954,14 +1044,22 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except Exception:  # noqa: BLE001 - `unpair` on the sidecar still works
             _LOGGER.debug("could not revoke the unused paired token", exc_info=True)
 
-    async def _async_finish_pair(self, url: str, result: PairResult, key: str) -> ConfigFlowResult:
-        """A pairing succeeded: update the entry being re-authed, or create one."""
+    async def _async_finish_pair(
+        self, url: str, result: PairResult, key: str, *, topic_prefix: str | None = None
+    ) -> ConfigFlowResult:
+        """A pairing succeeded: update the entry being re-authed, or create one.
+
+        `topic_prefix` is the witness prefix the re-pairing form was given,
+        if it was; it moves the entry's prefix with the credential.
+        """
         paired: dict[str, Any] = {
             CONF_URL: url,
             CONF_TOKEN: result.token,
             CONF_AUTH_MODE: AUTH_MODE_PAIRED,
             CONF_KERNEL_TOKEN_ID: result.token_id,
         }
+        if topic_prefix is not None:
+            paired[CONF_MQTT_TOPIC_PREFIX] = topic_prefix
         await self.async_set_unique_id(f"kernel_{result.device_id}")
         if self.source in (config_entries.SOURCE_REAUTH, config_entries.SOURCE_RECONFIGURE):
             entry = (
@@ -992,19 +1090,22 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 break
         self._abort_if_unique_id_configured()
         announce = self._announce
-        return await self._async_create_or_promote(
-            _kernel_entry_data(
-                url=url,
-                auth_mode=AUTH_MODE_PAIRED,
-                probe_device_id=result.device_id,
-                verifying_key=key,
-                token=result.token,
-                token_id=result.token_id,
-                topic_prefix=announce.mqtt_topic_prefix if announce else DEFAULT_MQTT_TOPIC_PREFIX,
-                enable_mqtt=True,
-                setup_mode=SETUP_MODE_BOTH,
-            )
+        data = _kernel_entry_data(
+            url=url,
+            auth_mode=AUTH_MODE_PAIRED,
+            probe_device_id=result.device_id,
+            verifying_key=key,
+            token=result.token,
+            token_id=result.token_id,
+            topic_prefix=announce.mqtt_topic_prefix if announce else DEFAULT_MQTT_TOPIC_PREFIX,
+            enable_mqtt=True,
+            setup_mode=SETUP_MODE_BOTH,
         )
+        if announce is not None and announce.announced_bucket_start is not None:
+            # The announce this entry was paired from: a later announce
+            # signed by the pin moves the entry only when it is newer.
+            data[CONF_KERNEL_LAST_ANNOUNCE_BUCKET_START] = announce.announced_bucket_start
+        return await self._async_create_or_promote(data)
 
     async def async_step_pair(
         self, user_input: dict[str, Any] | None = None
@@ -1070,21 +1171,22 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         entry, data_updates=updates, unique_id=f"kernel_{probe.device_id}"
                     )
                 self._abort_if_unique_id_configured()
-                return await self._async_create_or_promote(
-                    _kernel_entry_data(
-                        url=user_input[CONF_URL],
-                        auth_mode=_auth_mode_for(user_input),
-                        probe_device_id=probe.device_id,
-                        verifying_key=probe.verifying_key,
-                        token=user_input.get(CONF_TOKEN, ""),
-                        token_file=user_input.get(CONF_TOKEN_FILE) or None,
-                        topic_prefix=(
-                            announce.mqtt_topic_prefix if announce else DEFAULT_MQTT_TOPIC_PREFIX
-                        ),
-                        enable_mqtt=True,
-                        setup_mode=SETUP_MODE_BOTH,
-                    )
+                data = _kernel_entry_data(
+                    url=user_input[CONF_URL],
+                    auth_mode=_auth_mode_for(user_input),
+                    probe_device_id=probe.device_id,
+                    verifying_key=probe.verifying_key,
+                    token=user_input.get(CONF_TOKEN, ""),
+                    token_file=user_input.get(CONF_TOKEN_FILE) or None,
+                    topic_prefix=(
+                        announce.mqtt_topic_prefix if announce else DEFAULT_MQTT_TOPIC_PREFIX
+                    ),
+                    enable_mqtt=True,
+                    setup_mode=SETUP_MODE_BOTH,
                 )
+                if announce is not None and announce.announced_bucket_start is not None:
+                    data[CONF_KERNEL_LAST_ANNOUNCE_BUCKET_START] = announce.announced_bucket_start
+                return await self._async_create_or_promote(data)
         values = dict(user_input or {})
         if not values:
             values = {
@@ -1245,7 +1347,8 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # flow_title is "SecuraCV {name}"; the app announces itself as
         # "SecuraCV", so the discovered card reads "SecuraCV app" rather
-        # than the name twice. The confirm step still shows the app's name.
+        # than the name twice. The confirm step shows the app's name and
+        # the URL the token file's contents will be presented to.
         name = getattr(discovery_info, "name", None) or config.get("addon") or "SecuraCV"
         self.context["title_placeholders"] = {"name": "app"}
         self._hassio_name = str(name)
@@ -1336,6 +1439,7 @@ class SecuraCVConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             description_placeholders={
                 "name": self._hassio_name,
                 "url": info[CONF_URL],
+                "plaintext_warning": plaintext_url_warning(info[CONF_URL]),
             },
         )
 

@@ -206,6 +206,12 @@ jobs:
         run: python3 tools/test_away_access_check.py
       - name: Docs index — no stragglers, no dead links
         run: python3 scripts/lint_docs_index.py
+      - name: Compliance maps — closed schema, evidence on disk, named tests exist, no claim words
+        # docs/compliance/README.md is the posture. A row may be `structural` only while the test and the
+        # code symbol it names exist; a renamed test fails here until the row changes in the same PR.
+        run: python3 scripts/lint_compliance_map.py
+      - name: Compliance tables are generated from the maps
+        run: python3 scripts/gen_compliance_tables.py --check
       - name: Glossary status column matches the evidence ledger
         # The glossary's device-line Status column is a human-readable copy
         # of verdicts figures.json DERIVES from evidence on disk — the one
@@ -223,6 +229,19 @@ jobs:
         # own table of contents carried four stale version anchors, one of
         # them three releases behind — nothing was red.
         run: python3 scripts/lint_md_links.py
+      - name: Site links — every securacv.com link opens something that exists
+        # The Lab, the desktop and Apple apps, the back office's mail and the
+        # firmware's help QR codes all link pages on the website, which lives
+        # in another repository — and nothing told this one when a page there
+        # moved. A census found the Lab's footer opening a page that never
+        # existed, a welcome mail linking a 404, and the desktop atlas opening
+        # an anchor the home page lacks. The website states every address it
+        # answers (routes, redirecting short links, published files, anchors)
+        # in its upstream-contract.json; the carried copy is
+        # canary-local/devices/site_contract.json, and this holds every link
+        # in the tree to it — literal URLs, an origin constant joined to a
+        # path in code, and the Lab manifest's site-relative hrefs.
+        run: python3 scripts/lint_site_links.py
       - name: Apple Home docs match the vocabulary they describe
         # The quickstart tells a user exactly what their Canaries will publish
         # into their home — which signals, which are OFF by default, how
@@ -259,6 +278,18 @@ jobs:
         # research docs) and allowlists only the files that state the rule or
         # test for it.
         run: python3 scripts/lint_fleet_word.py
+      - name: The record is tamper-evident (AGENTS.md rule 4)
+        # A signed, hash-chained log makes an edit visible; it does not
+        # prevent one. The website and the HACS store page were held to that
+        # word by their own tests, and this tree by nothing: a Canary's boot
+        # banner, its console greeting, three Lab generators and six compiled
+        # emulator bundles said the "-proof" form for a year. The script bans
+        # the stem in every spelling, allowlists only the docs that state the
+        # rule or quote a finding and the tests that assert its absence, and
+        # fails when an allowlist entry outlives its reason;
+        # scripts/tests/test_lint_tamper_word.py pins each verdict and that no
+        # device-string source can be exempt.
+        run: python3 scripts/lint_tamper_word.py
       - name: No compiled binary committed
         # The host-test Makefiles build into build/, but a hand build beside
         # the source (`g++ test_x.cpp -o test_x`) leaves an extensionless
@@ -361,6 +392,22 @@ jobs:
         # the manifests yet (roadmap §4 wave 1), so this is the only gate that
         # can catch a stale join.
         run: python3 scripts/lint_device_manifests.py
+      - name: Check board registry
+        # firmware/boards/boards.json is the single source of truth for
+        # supported hardware (the board-level flavors.json). This guard
+        # keeps the registry, the board directories, the pin headers, the
+        # build environments, and the boards README consistent — and
+        # enforces the "pins are data" rule (pins.h = #define only) plus
+        # tier_evidence for any board claiming hardware validation, and
+        # (checks 10 and 11) that every name and board token a build shows
+        # comes from its board. Contract: firmware/PORTING.md.
+        # It ran in firmware.yml, whose path filter lists no devices/ path;
+        # it reads devices/<slug>/device.json (checks 9 and 10: the env ->
+        # board join, devices/canary/device.json's name), so it runs here,
+        # unfiltered. scripts/tests/test_board_registry_runs_on_its_inputs.py
+        # records what it reads and fails when a workflow that runs it on a
+        # pull request has a path filter that misses one of those files.
+        run: python3 firmware/scripts/check_board_registry.py
       - name: Manifest-owned CAD knobs equal the case literals
         # Since roadmap §4 wave 3 (Parametrize) a manifest's `cad.params` OWNS
         # the board/module knobs of its case: gen_cad_params.py writes them
@@ -464,6 +511,10 @@ jobs:
         # SECURACV_MQTT_PASSWORD, so README/RUNBOOK step one must write .env
         # before any `docker compose` command, or it fails as written.
         run: bash integrations/ha_frigate_mqtt/tests/test_bringup_order.sh
+      - name: Frigate stack config keeps per-camera MQTT images off
+        # Frigate publishes a retained JPEG of every tracked object unless a
+        # camera says mqtt.enabled: false; snapshots.enabled does not cover it.
+        run: bash integrations/ha_frigate_mqtt/tests/test_frigate_camera_mqtt.sh
 
   hacs-store-page-links:
     # The HACS store page is the mirror's README.md

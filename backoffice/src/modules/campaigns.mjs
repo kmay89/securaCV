@@ -4,7 +4,7 @@
 // who withdrew consent between queue and send. Waitlist notifications are
 // the one transactional exception: one mail, because they asked for it.
 import { nowIso } from '../db.mjs';
-import { segment, segmentCount, waitlistFor, requestConsent, contactById } from './contacts.mjs';
+import { segment, segmentCount, waitlistFor, requestConsent, contactById, validEmail } from './contacts.mjs';
 import { enqueue, fill, renderHtml, brandOpts } from './mail.mjs';
 
 export const unsubscribeUrl = (cfg, c) => `${cfg.baseUrl}/u/${c.unsubscribe_token}`;
@@ -56,6 +56,8 @@ export function sendDueCampaigns(db, cfg) { const due = db.all('SELECT slug FROM
 // A test send: the operator sees exactly what a subscriber will, filled in for a sample person.
 export function sendTest(db, slug, to, cfg, { actor = 'web' } = {}) {
   const c = campaign(db, slug); if (!c) throw new Error('no such campaign'); if (!to) throw new Error('set OPERATOR_EMAIL, or type an address');
+  // The one recipient a person types straight into a send: held to the rule every other address passes (one address, no whitespace).
+  to = String(to).trim(); if (!validEmail(to)) throw new Error('a valid email is required');
   // Filled in with a real subscriber's name so the merge tags read true — but the unsubscribe link is inert:
   // a token nobody holds, so clicking it in the test can never unsubscribe a customer.
   const first = segment(db, c.segment)[0]; const sample = { name: first?.name || 'Test Reader', email: first?.email || to, unsubscribe_token: 'test-send-inert' };

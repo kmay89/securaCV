@@ -11,51 +11,49 @@
 //! `espflash` sidecar and the file dialogs — those are what a Mac /
 //! release-tag build validates end-to-end.
 
-/// The full-flash backup's filename, in the browser Lab's own scheme
-/// (flash.js `takeBackup`: `canary-${macStamp()}-backup.bin`) so a file saved
-/// by either flasher is the `canary-…-backup.bin` both restore panels tell the
-/// user to look for: `canary-<mac6>[-<stamp>]-backup.bin`.
+/// The full-flash backup's filename: `canary-<day>-<n>-backup.bin`, the
+/// local date and a counter — the browser's own scheme (flash-core.js
+/// `fileStamp` + `backupFileName`), so a file saved by either flasher is the
+/// `canary-…-backup.bin` both restore panels tell the user to look for.
 ///
-/// `mac6` is the last six hex digits of the MAC, lowercased — the browser's
-/// `macStamp()` exactly, `canary` when no MAC was read. `stamp` is optional
-/// (the browser leaves it to the downloads folder to de-duplicate; the
-/// Flasher's automatic safety copies share one folder, so they carry the
-/// moment): reduced to filename-safe characters, so it can't produce a path
-/// separator or a surprise, and dropped when it comes out empty.
-pub fn backup_filename(mac: &str, stamp: &str) -> String {
-    let hex: String = mac
-        .chars()
-        .filter(char::is_ascii_hexdigit)
-        .collect::<String>()
-        .to_ascii_lowercase();
-    let mac6 = if hex.is_empty() {
-        "canary"
-    } else {
-        &hex[hex.len().saturating_sub(6)..]
-    };
-    let safe: String = stamp
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
-                c
+/// Nothing of the board's goes in the name. It used to carry the MAC's last
+/// six hex digits, but the base MAC is the station address in every Wi-Fi
+/// frame the board sends, so any slice of it names the board to anything in
+/// radio range, and a file name travels with the file. `None` when `day` is
+/// not a `YYYY-MM-DD` date (the frontend computes it in the local zone), so a
+/// path separator or a surprise can never reach the name.
+pub fn backup_filename(day: &str, n: u32) -> Option<String> {
+    if !is_local_day(day) || n == 0 {
+        return None;
+    }
+    Some(format!("canary-{day}-{n}-backup.bin"))
+}
+
+/// `YYYY-MM-DD`, digits and dashes in exactly those places.
+pub fn is_local_day(day: &str) -> bool {
+    let b = day.as_bytes();
+    b.len() == 10
+        && b.iter().enumerate().all(|(i, c)| {
+            if i == 4 || i == 7 {
+                *c == b'-'
             } else {
-                '-'
+                c.is_ascii_digit()
             }
         })
-        .collect();
-    // collapse runs of '-' and trim them, so "AA::BB" -> "AA-BB", not "AA--BB"
-    let mut stamp = String::with_capacity(safe.len());
-    for c in safe.chars() {
-        if !(c == '-' && stamp.ends_with('-')) {
-            stamp.push(c);
-        }
+}
+
+/// The first `canary-<day>-<n>-backup.bin` (n counting from 1) that `taken`
+/// does not already hold — the automatic safety copies share one folder, so
+/// the counter is what keeps two copies on one day apart.
+pub fn next_backup_filename(day: &str, taken: &[String]) -> Option<String> {
+    // Refuse a day that is not one before counting: every counter would be
+    // refused in turn, four billion times.
+    if !is_local_day(day) {
+        return None;
     }
-    let stamp = stamp.trim_matches(|c| c == '-' || c == '.');
-    if stamp.is_empty() {
-        format!("canary-{mac6}-backup.bin")
-    } else {
-        format!("canary-{mac6}-{stamp}-backup.bin")
-    }
+    (1..=u32::MAX)
+        .filter_map(|n| backup_filename(day, n))
+        .find(|name| !taken.iter().any(|t| t == name))
 }
 
 /// Validate a candidate restore/local image against the detected chip's flash
@@ -124,6 +122,18 @@ pub fn read_flash_args(port: &str, size: u64, out: &str, baud: u32) -> Vec<Strin
         "--baud".into(),
         baud.to_string(),
     ]
+}
+
+/// The error a failed region read ends in: the exit code, the offset, and the
+/// whole captured espflash log, with the board info's "MAC address: …" masked
+/// ([`crate::flash::mask_hardware_address`]) — read-flash prints it right
+/// after connecting, and this error is drawn on screen and kept in the app's
+/// event log.
+pub fn read_failure(code: i32, offset: u32, log: &str) -> String {
+    format!(
+        "espflash exited with code {code} reading 0x{offset:x}: {}",
+        crate::flash::mask_hardware_address(log.trim())
+    )
 }
 
 /// `read-flash <offset> <size> <out> --port <port> --baud <baud>` — read ONE
@@ -199,8 +209,11 @@ pub fn parse_flash_size(board_info: &str) -> Option<u64> {
 
 /// Pull the board's MAC address out of `espflash board-info` output — the
 /// "MAC address: aa:bb:cc:dd:ee:ff" line — lowercased. `detect_chip` reads it
-/// from the same board-info call that already names the chip, so the health
-/// report and backup names can show a stable ID. None if no MAC-shaped token.
+/// from the same board-info call that already names the chip, for the intake
+/// MAC check and to know the same board again. The frontends never draw it
+/// unless asked, and no report or file name carries it (a backup is the
+/// flash's own bytes, which hold it in NVS beside the PHY calibration). None
+/// if no MAC-shaped token.
 pub fn parse_mac(board_info: &str) -> Option<String> {
     for line in board_info.lines() {
         if !line.to_ascii_lowercase().contains("mac") {
@@ -218,6 +231,60 @@ pub fn parse_mac(board_info: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// The value of a `Label:  value` line of `espflash board-info` output, by its
+/// label, case-insensitive (espflash 3.3.0 cli/mod.rs print_board_info).
+fn board_info_value<'a>(board_info: &'a str, label: &str) -> Option<&'a str> {
+    board_info.lines().find_map(|line| {
+        let (k, v) = line.trim().split_once(':')?;
+        k.trim().eq_ignore_ascii_case(label).then(|| v.trim())
+    })
+}
+
+/// espflash's own chip line, e.g. "esp32s3 (revision v0.2)" — kept verbatim
+/// for the technical view; `catalog::canonical_chip` stays the guard.
+pub fn parse_chip_desc(board_info: &str) -> Option<String> {
+    board_info_value(board_info, "chip type")
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+}
+
+/// The silicon revision off the chip line ("v0.2"), or None when espflash
+/// printed no revision.
+pub fn parse_revision(board_info: &str) -> Option<String> {
+    let line = board_info_value(board_info, "chip type")?;
+    let at = line.find("revision v")? + "revision ".len();
+    let rev: String = line[at..]
+        .chars()
+        .take_while(|c| *c == 'v' || *c == '.' || c.is_ascii_digit())
+        .collect();
+    let (major, minor) = rev.strip_prefix('v')?.split_once('.')?;
+    (!major.is_empty() && !minor.is_empty()).then_some(rev)
+}
+
+/// "Crystal frequency: 40 MHz" → 40, the leading number only. For the S3, C3
+/// and C6 espflash prints a fixed value rather than measuring
+/// (`targets/<chip>.rs` `crystal_freq`), which is why the frontends draw the
+/// crystal from the datasheet, not from this.
+pub fn parse_crystal_mhz(board_info: &str) -> Option<u32> {
+    let v = board_info_value(board_info, "crystal frequency")?;
+    let digits: String = v.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
+}
+
+/// "Features: WiFi, BLE" → ["WiFi", "BLE"]. Fixed strings per chip in
+/// espflash 3.3.0, kept for the technical view only.
+pub fn parse_features(board_info: &str) -> Vec<String> {
+    board_info_value(board_info, "features")
+        .map(|v| {
+            v.split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 // ── tiny helpers (std only) ──────────────────────────────────────────────────
@@ -242,27 +309,100 @@ mod tests {
     use super::*;
 
     #[test]
-    fn backup_filename_is_the_browsers_scheme_and_safe() {
-        // flash.js takeBackup: `canary-${macStamp()}-backup.bin`, macStamp =
-        // the MAC's last six hex digits, lowercased, or "canary".
+    fn a_failed_region_read_never_carries_the_address_espflash_printed() {
+        // read-flash prints the board info, "MAC address: …" included, right
+        // after connecting (espflash 3.3.0); the health check's error keeps
+        // the whole captured log.
+        let log = "Chip type:         esp32s3 (revision v0.2)\nMAC address:       dc:54:75:c1:22:30\nError: espflash::timeout\n";
+        let err = read_failure(1, 0x8000, log);
+        assert!(!err.contains("c1:22:30"), "{err}");
         assert_eq!(
-            backup_filename("AA:BB:CC:DD:EE:FF", ""),
-            "canary-ddeeff-backup.bin"
+            err,
+            "espflash exited with code 1 reading 0x8000: Chip type:         esp32s3 (revision v0.2)\nMAC address:       [hardware address hidden]\nError: espflash::timeout"
         );
-        assert_eq!(backup_filename("", ""), "canary-canary-backup.bin");
+    }
+
+    #[test]
+    fn backup_filename_is_the_browsers_scheme_and_names_no_board() {
+        // flash-core.js: backupFileName(fileStamp(day, n)) — the local date
+        // and a counter. desktop_parity.test.js runs the browser's builder on
+        // the same day and counter and pins the same name.
         assert_eq!(
-            backup_filename("aa-bb-cc-dd-ee-ff", "1789000000"),
-            "canary-ddeeff-1789000000-backup.bin"
+            backup_filename("2026-10-22", 1).as_deref(),
+            Some("canary-2026-10-22-1-backup.bin")
         );
-        // A MAC shorter than six digits keeps what it has.
-        assert_eq!(backup_filename("0:1", ""), "canary-01-backup.bin");
-        // Path-separator / space attempts collapse to '-', never escape the name.
         assert_eq!(
-            backup_filename("", "es/p 32"),
-            "canary-canary-es-p-32-backup.bin"
+            backup_filename("2026-10-22", 12).as_deref(),
+            Some("canary-2026-10-22-12-backup.bin")
         );
-        assert!(!backup_filename("../etc", "../../x").contains('/'));
-        assert!(!backup_filename("", "../..").contains(".."));
+        // Anything that is not a plain date never reaches a file name: no
+        // MAC, no path separator, no climbing out of the backups folder.
+        for bad in [
+            "dc:54:75:c1:22:30",
+            "2026/10/22",
+            "../../etc",
+            "2026-10-2x",
+            "",
+            "2026-10-222",
+        ] {
+            assert_eq!(backup_filename(bad, 1), None, "{bad}");
+        }
+        assert_eq!(backup_filename("2026-10-22", 0), None);
+        // Still the pattern both restore panels describe.
+        let name = backup_filename("2026-01-05", 3).unwrap();
+        assert!(name.starts_with("canary-") && name.ends_with("-backup.bin"));
+    }
+
+    #[test]
+    fn the_next_backup_name_counts_past_the_ones_already_there() {
+        let taken = vec![
+            "canary-2026-10-22-1-backup.bin".to_string(),
+            "canary-2026-10-22-2-backup.bin".to_string(),
+            "canary-2026-10-21-3-backup.bin".to_string(),
+        ];
+        assert_eq!(
+            next_backup_filename("2026-10-22", &taken).as_deref(),
+            Some("canary-2026-10-22-3-backup.bin")
+        );
+        assert_eq!(
+            next_backup_filename("2026-10-21", &taken).as_deref(),
+            Some("canary-2026-10-21-1-backup.bin")
+        );
+        assert_eq!(next_backup_filename("not-a-day", &taken), None);
+    }
+
+    #[test]
+    fn board_info_chip_line_crystal_and_features_parse() {
+        // espflash 3.3.0's print_board_info, verbatim layout.
+        let info = "[INFO] Serial port: '/dev/ttyACM0'\n[INFO] Connecting...\n\
+                    Chip type:         esp32s3 (revision v0.2)\n\
+                    Crystal frequency: 40 MHz\n\
+                    Flash size:        8MB\n\
+                    Features:          WiFi, BLE\n\
+                    MAC address:       dc:54:75:c1:22:30\n";
+        assert_eq!(
+            parse_chip_desc(info).as_deref(),
+            Some("esp32s3 (revision v0.2)")
+        );
+        assert_eq!(parse_revision(info).as_deref(), Some("v0.2"));
+        assert_eq!(parse_crystal_mhz(info), Some(40));
+        assert_eq!(parse_features(info), vec!["WiFi", "BLE"]);
+        // A chip line with no revision, and absent lines, say nothing.
+        let bare = "Chip type: esp32c6\nFeatures: WiFi 6, BT 5\n";
+        assert_eq!(parse_revision(bare), None);
+        assert_eq!(parse_crystal_mhz(bare), None);
+        assert_eq!(parse_features(bare), vec!["WiFi 6", "BT 5"]);
+        assert_eq!(parse_chip_desc("no chip here"), None);
+        assert!(parse_features("").is_empty());
+        assert_eq!(parse_revision("Chip type: esp32s3 (revision v)"), None);
+        // A revision missing either half is no revision.
+        assert_eq!(parse_revision("Chip type: esp32s3 (revision v.2)"), None);
+        assert_eq!(parse_revision("Chip type: esp32s3 (revision v1.)"), None);
+        // The crystal is the leading number; a later one is not appended.
+        assert_eq!(
+            parse_crystal_mhz("Crystal frequency: 26 MHz (not 40)"),
+            Some(26)
+        );
     }
 
     #[test]

@@ -751,6 +751,23 @@ fn empty_approvals_commitment() -> [u8; 32] {
     approvals_commitment(&[])
 }
 
+/// The approvals a receipt records: exactly those over its own request hash, in presentation order.
+/// An approval over another hash (a stale file, a pre-M client's legacy hash) never counted and
+/// is not evidence about this request.
+///
+/// Nothing is deduplicated here: two approvals from one trustee over this hash are both recorded,
+/// and the distinct-trustee count stays where it has always been (`authorize`, the gate and the
+/// verifier). `authorize` commits this set (`approvals_commitment`) and
+/// `Kernel::append_break_glass_receipt` stores it, so the stored `approvals_json` and the signed
+/// commitment always describe the same list.
+pub fn recorded_approvals(request_hash: &[u8; 32], approvals: &[Approval]) -> Vec<Approval> {
+    approvals
+        .iter()
+        .filter(|approval| &approval.request_hash == request_hash)
+        .cloned()
+        .collect()
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum BreakGlassOutcome {
     Granted,
@@ -769,7 +786,24 @@ pub enum BreakGlassOutcome {
         nonce: [u8; 32],
         receipt_entry_hash: [u8; 32],
     },
+    /// The device decrypted the envelope whose redemption row (named by hash)
+    /// spent the token, to plaintext fixed by a salted commitment. Written only
+    /// by `Kernel::record_unsealed`, after a successful decrypt and before any
+    /// byte is written. Restates the redemption; names no trustee. The salt
+    /// lives only in the handoff sidecar, so the ledger holds no media
+    /// fingerprint (Invariant II).
+    Unsealed {
+        redemption_entry_hash: [u8; 32],
+        plaintext_commitment: [u8; 32],
+        /// Declared by the operator at unseal (salted, hiding). Not trustee-consented.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        recipient_commitment: Option<[u8; 32]>,
+    },
 }
+
+/// `(redemption entry hash, plaintext commitment, recipient commitment)`
+/// of an `Unsealed` row ([`BreakGlassReceipt::unsealed_record`]).
+pub type UnsealedRecord = ([u8; 32], [u8; 32], Option<[u8; 32]>);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BreakGlassReceipt {
@@ -885,6 +919,65 @@ impl BreakGlassReceipt {
         })
     }
 
+    /// The `Unsealed` row completing `redemption` (whose chain hash is
+    /// `redemption_entry_hash`): it restates the redemption's envelope,
+    /// request hash, ruleset, policy commitment and bucket (no new clock
+    /// read), names no trustee and carries no approvals. Refuses a receipt
+    /// that is not a token redemption, and the redemption of an
+    /// `export:events` token (exports are receipted in the export chain).
+    pub fn unsealed_of(
+        redemption: &BreakGlassReceipt,
+        redemption_entry_hash: [u8; 32],
+        plaintext_commitment: [u8; 32],
+        recipient_commitment: Option<[u8; 32]>,
+    ) -> Result<Self> {
+        if !matches!(redemption.outcome, BreakGlassOutcome::TokenRedeemed { .. }) {
+            return Err(anyhow!(
+                "cannot record an unseal of a receipt that is not a token redemption"
+            ));
+        }
+        if redemption.vault_envelope_id == crate::EXPORT_EVENTS_ENVELOPE_ID {
+            return Err(anyhow!(
+                "an export:events redemption is not an unseal — exports are receipted in the \
+                 export chain"
+            ));
+        }
+        Ok(Self {
+            vault_envelope_id: redemption.vault_envelope_id.clone(),
+            request_hash: redemption.request_hash,
+            ruleset_hash: redemption.ruleset_hash,
+            time_bucket: redemption.time_bucket,
+            trustees_used: vec![],
+            approvals_commitment: empty_approvals_commitment(),
+            policy_commitment: redemption.policy_commitment,
+            outcome: BreakGlassOutcome::Unsealed {
+                redemption_entry_hash,
+                plaintext_commitment,
+                recipient_commitment,
+            },
+            purpose: None,
+            context: None,
+            request_bucket: None,
+        })
+    }
+
+    /// `(redemption hash, plaintext commitment, recipient commitment)` when
+    /// this row records an unseal.
+    pub fn unsealed_record(&self) -> Option<UnsealedRecord> {
+        match &self.outcome {
+            BreakGlassOutcome::Unsealed {
+                redemption_entry_hash,
+                plaintext_commitment,
+                recipient_commitment,
+            } => Some((
+                *redemption_entry_hash,
+                *plaintext_commitment,
+                *recipient_commitment,
+            )),
+            _ => None,
+        }
+    }
+
     /// `(nonce, granted receipt hash)` when this row records a redemption.
     pub fn redeemed_token(&self) -> Option<([u8; 32], [u8; 32])> {
         match &self.outcome {
@@ -967,6 +1060,21 @@ impl BreakGlassReceipt {
                 bucket_utc_label(self.time_bucket),
                 hex::encode(nonce),
                 hex::encode(receipt_entry_hash)
+            )),
+            BreakGlassOutcome::Unsealed {
+                redemption_entry_hash,
+                recipient_commitment,
+                ..
+            } => out.push_str(&format!(
+                "  Outcome: UNSEALED at {} — redemption {}; plaintext committed (salted; opened \
+                 only by the handoff sidecar){}\n",
+                bucket_utc_label(self.time_bucket),
+                hex::encode(redemption_entry_hash),
+                if recipient_commitment.is_some() {
+                    "; recipient committed — declared by the operator, not verified"
+                } else {
+                    ""
+                }
             )),
         }
         match &self.context {
@@ -1254,15 +1362,21 @@ impl BreakGlass {
         now_bucket: TimeBucket,
     ) -> (Result<BreakGlassToken>, BreakGlassReceipt) {
         // A denial before any approval is examined: no trustee is "used", but the
-        // receipt still commits to what was presented.
+        // receipt still commits to what was presented over this request's hash
+        // (`recorded_approvals`) — an approval over another hash is no evidence
+        // about this request and is neither committed nor stored.
         let denied = |reason: String| {
+            let request_hash = request.request_hash();
             let receipt = BreakGlassReceipt {
                 vault_envelope_id: request.vault_envelope_id.clone(),
-                request_hash: request.request_hash(),
+                request_hash,
                 ruleset_hash: request.ruleset_hash,
                 time_bucket: now_bucket,
                 trustees_used: vec![],
-                approvals_commitment: approvals_commitment(approvals),
+                approvals_commitment: approvals_commitment(&recorded_approvals(
+                    &request_hash,
+                    approvals,
+                )),
                 policy_commitment: policy.commitment(),
                 outcome: BreakGlassOutcome::Denied {
                     reason: reason.clone(),
@@ -1347,7 +1461,12 @@ impl BreakGlass {
             }
         };
 
-        let approvals_commitment = approvals_commitment(approvals);
+        // The receipt commits to the approvals it records: those over this
+        // request's hash, the same set `Kernel::append_break_glass_receipt`
+        // stores. A stale approval over another hash was skipped above and is
+        // no evidence about this request.
+        let approvals_commitment =
+            approvals_commitment(&recorded_approvals(&request_hash, approvals));
         let receipt = BreakGlassReceipt {
             vault_envelope_id: request.vault_envelope_id.clone(),
             request_hash,
@@ -1383,6 +1502,10 @@ impl BreakGlass {
             // written only by `Kernel::redeem_token_durably`.
             BreakGlassOutcome::TokenRedeemed { .. } => (
                 Err(anyhow!("authorize cannot produce a redemption outcome")),
+                receipt,
+            ),
+            BreakGlassOutcome::Unsealed { .. } => (
+                Err(anyhow!("authorize cannot produce an unseal outcome")),
                 receipt,
             ),
         }
@@ -1422,6 +1545,9 @@ impl BreakGlass {
             }
             BreakGlassOutcome::TokenRedeemed { .. } => Err(anyhow!(
                 "break-glass token points at a redemption record, not a grant"
+            )),
+            BreakGlassOutcome::Unsealed { .. } => Err(anyhow!(
+                "break-glass token points at an unseal record, not a grant"
             )),
         }
     }

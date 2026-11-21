@@ -346,8 +346,11 @@ esac
 export WITNESS_API_FLEET_ROLLCALL="$FLEET_ROLLCALL"
 
 # The Supervisor-internal hostname the discovery payload and the MQTT
-# announce carry (contract C1/C6). Not a LAN address.
-ADDON_HOST=$(bashio::addon.hostname 2>/dev/null || hostname)
+# announce carry (contract C1/C6). Not a LAN address. bashio 0.19.0 (the
+# 3.22 base) names the getter bashio::app.hostname and keeps the addon
+# spelling only as an alias that logs a deprecation warning on each
+# start; the fallback is unchanged.
+ADDON_HOST=$(bashio::app.hostname 2>/dev/null || hostname)
 
 # ============================================================================
 # Function to write API config for Frigate mode
@@ -544,10 +547,14 @@ if [ "$MODE" = "frigate" ]; then
     bashio::log.info "Seals: $([ "$ENABLE_REVIEWS" = "true" ] && echo "only Frigate alerts (reviews)" || echo "every tracked object (events)")"
 
     # Build frigate_bridge command using array for safe argument handling
-    # Note: --allow-remote-mqtt is safe in HA because:
-    # 1. The MQTT broker (core-mosquitto) is a trusted HA component
-    # 2. All event data is still sanitized before logging
-    # 3. No raw media ever flows through this path
+    # Note: --allow-remote-mqtt is needed in HA because core-mosquitto is
+    # another container, not loopback. What it trusts is every publisher on
+    # the Frigate topic: MQTT names none, and the Mosquitto app (7.x) lets
+    # every login it accepts publish every topic, so any broker login, the
+    # Canaries' shared one included, can publish what this bridge seals.
+    # Event data is still sanitized before sealing, and the bridge subscribes
+    # to no image topic (Frigate's per-camera MQTT JPEGs are a separate topic,
+    # off in the configs the setup wizard and the hub plan write).
     # The state prefix and device id are the publisher's (contract C5): the
     # bridge's retained `<prefix>/frigate_link` must land beside the
     # publisher's state topics and name the same `pwk_` id, or Home
@@ -662,7 +669,9 @@ else
     CAMERA_HEIGHT=$(echo "$FIRST_CAMERA" | jq -r '.height // 480')
 
     bashio::log.info "Primary camera: $CAMERA_NAME"
-    bashio::log.info "  URL: ${CAMERA_URL%%@*}@[redacted]"
+    # The login never reaches the log: the old line cut at the "@" and
+    # printed the half that holds the username and password.
+    bashio::log.info "  URL: $(camera_url_for_log "$CAMERA_URL")"
     bashio::log.info "  Zone: $CAMERA_ZONE"
     bashio::log.info "  Resolution: ${CAMERA_WIDTH}x${CAMERA_HEIGHT} @ ${CAMERA_FPS}fps"
 
@@ -674,6 +683,13 @@ else
     fi
 
     # Build configuration file
+    # The URL is free text (a camera password may hold a quote or a
+    # backslash), so jq encodes it as a JSON string and the block below
+    # takes that whole, quotes included, instead of pasting the raw value
+    # between quotes: unescaped, such a password made the file invalid JSON
+    # and witnessd exited on every start. The zone is held to its pattern
+    # above.
+    CAMERA_URL_JSON=$(printf '%s' "$CAMERA_URL" | jq -Rs .)
     cat > "$CONFIG_FILE" << EOF
 {
   "db_path": "$DB_PATH",
@@ -683,7 +699,7 @@ else
     "token_path": "$TOKEN_FILE"$FLEET_PEERS_API
   },
   "rtsp": {
-    "url": "$CAMERA_URL",
+    "url": $CAMERA_URL_JSON,
     "target_fps": $CAMERA_FPS,
     "width": $CAMERA_WIDTH,
     "height": $CAMERA_HEIGHT

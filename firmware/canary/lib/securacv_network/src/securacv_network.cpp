@@ -33,7 +33,7 @@
 #include <esp_timer.h>  // esp_timer_get_time: a 64-bit microsecond uptime
 
 // F15: self-signed HTTPS. One code path for both cores — dev/release/board
-// envs are Arduino 2.0.17 / IDF 4.4.7, [env:full] is core 3.3.8 / IDF 5.5.4 —
+// envs are Arduino 2.0.17 / IDF 4.4.7, [env:full] is core 3.3.11 / IDF 5.5.5 —
 // so every capability is detected, never assumed:
 //   * SECURACV_HAS_HTTPS_SERVER: FEATURE_HTTPS on, the header present, AND the
 //     core's prebuilt sdkconfig built the component (the header can exist
@@ -181,7 +181,7 @@ static_assert((int)WIFI_AUTH_WPA2_WPA3_PSK == canary::net::ap_security::kAuthWpa
 #endif
 #if FEATURE_DIAGNOSTICS
 #include "securacv_diagnostics.h"
-#include "diagnostics_json.h"              /* GET /api/diagnostics' body (F179) */
+#include "diagnostics_json.h"              /* GET /api/diagnostics' body (F179), and /api/selftest's */
 #include "csi_event_egress_diagnostics.h"  /* its egress counters (include/) */
 #endif
 #if FEATURE_POWER_MONITOR
@@ -418,7 +418,12 @@ static void start_mdns(const char* device_id) {
     f.name = named ? dev_name : f.device_id;
     f.host = MDNS_HOSTNAME;
     f.fw = FIRMWARE_VERSION;
-    f.model = "XIAO ESP32S3";
+    // The board this env was made for (canary_config.h): it said
+    // "XIAO ESP32S3" on every board port. A build that names no board
+    // leaves `model` out of the advert, the way `hw` is left out below.
+#ifdef CANARY_BOARD_NAME
+    f.model = CANARY_BOARD_NAME;
+#endif
     f.dt = DEVICE_TYPE;
     f.role = mt::ROLE_WITNESS;
 #ifdef CANARY_FIGURE_HARDWARE
@@ -5533,34 +5538,22 @@ static esp_err_t handle_selftest(httpd_req_t* req) {
   if (!auth_gate(req)) return ESP_OK;
   witness_get_health().http_requests++;
 
-  /* Run self-test (blocks ~2-5 seconds). */
-  uint8_t score = diag_run_selftest();
+  /* Run self-test (blocks ~2-5 seconds); the report holds its score. */
+  (void)diag_run_selftest();
 
   selftest_report_t report;
   if (!diag_get_selftest(&report)) {
     return http_send_error(req, 500, "selftest_failed");
   }
 
-  char buf[1024];
-  int pos = 0;
-
-  pos += snprintf(buf + pos, sizeof(buf) - pos,
-    "{\"ok\":true,\"health_score\":%u,"
-    "\"passed\":%u,\"total\":%u,\"tests\":[",
-    score, report.passed_count, report.total_count);
-
-  for (uint8_t i = 0; i < report.total_count && i < SELFTEST_COUNT; i++) {
-    if (i > 0) pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
-    pos += snprintf(buf + pos, sizeof(buf) - pos,
-      "{\"name\":\"%s\",\"passed\":%s,\"ms\":%u}",
-      report.tests[i].name ? report.tests[i].name : "unknown",
-      report.tests[i].passed ? "true" : "false",
-      report.tests[i].duration_ms);
-    if ((size_t)pos >= sizeof(buf) - 64) break;
+  /* The body is diagnostics_json::selftest()'s (host-tested in
+   * test_canary_diagnostics.cpp): its rows are GET /api/diagnostics' rows,
+   * so the watchdog row, which checks nothing, says "probe":false rather
+   * than "passed":false, and `total` counts the probes. */
+  char buf[diagnostics_json::kSelftestJsonMax];
+  if (diagnostics_json::selftest(report, buf, sizeof(buf)) == 0) {
+    return http_send_error(req, 500, "selftest_too_large");
   }
-
-  pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");
-
   return http_send_json(req, buf);
 }
 

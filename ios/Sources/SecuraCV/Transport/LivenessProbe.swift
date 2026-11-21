@@ -24,7 +24,7 @@ enum LivenessProbe {
         config.timeoutIntervalForRequest = 2.5
         config.timeoutIntervalForResource = 2.5
         config.waitsForConnectivity = false
-        return URLSession(configuration: config)
+        return URLSession(configuration: config, delegate: RefuseRedirects.shared, delegateQueue: nil)
     }()
 
     /// True when the device answered with ANY HTTP status.

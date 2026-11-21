@@ -217,6 +217,22 @@ def test_parse_announce_refuses_malformed_payloads(bad):
     assert parse_announce(bad) is None
 
 
+def test_parse_announce_takes_nesting_past_the_interpreters_limit_as_no_announce(monkeypatch):
+    """A retained announce of nested brackets raised RecursionError (no
+    ValueError) out of the config flow's announce listener and the
+    discovery step; it is no announce, like any other junk."""
+    deep = "[" * 20000 + "]" * 20000
+    for bad in (deep, deep.encode(), '{"v":1,"api":' + deep + "}"):
+        assert parse_announce(bad) is None
+
+    def _too_deep(*_args, **_kwargs):
+        raise RecursionError("maximum recursion depth exceeded while decoding a JSON document")
+
+    # Wherever this interpreter's limit lies, a decoder that hits it is junk.
+    monkeypatch.setattr(json, "loads", _too_deep)
+    assert parse_announce(json.dumps(payload())) is None
+
+
 def test_canonical_bytes_are_prefix_plus_compact_json_without_sig():
     data = signed()
     unsigned = {k: v for k, v in data.items() if k != "sig"}

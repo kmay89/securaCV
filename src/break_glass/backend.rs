@@ -12,10 +12,9 @@
 //! and the device verifying key by [`Kernel::device_verifying_key`], so there is
 //! no second database connection.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{anyhow, Result};
-use zeroize::Zeroize;
 
 use super::http::{BreakGlassOps, PolicyBootstrap};
 use crate::break_glass::{Approval, BreakGlass, QuorumPolicy, UnlockRequest};
@@ -55,7 +54,7 @@ impl KernelVaultOps {
 
 impl BreakGlassOps for KernelVaultOps {
     fn policy(&self) -> Result<Option<QuorumPolicy>> {
-        Ok(self.kernel.break_glass_policy().cloned())
+        Ok(self.kernel.break_glass_policy_checked()?.cloned())
     }
 
     /// The console's one-time setup. The in-memory policy and a database
@@ -69,7 +68,7 @@ impl BreakGlassOps for KernelVaultOps {
     /// configured". Only a genuine bootstrap is `Stored`, with the CLI's
     /// `bootstrap` history row.
     fn bootstrap_policy(&mut self, policy: &QuorumPolicy) -> Result<PolicyBootstrap> {
-        if self.kernel.break_glass_policy().is_some()
+        if self.kernel.break_glass_policy_checked()?.is_some()
             || crate::verify::load_break_glass_policy(&self.kernel.conn)?.is_some()
         {
             return Ok(PolicyBootstrap::AlreadyConfigured);
@@ -89,7 +88,7 @@ impl BreakGlassOps for KernelVaultOps {
             )),
             // The gate refreshed the in-memory policy from the database: if
             // one is there now, it was committed after the early check.
-            Err(_) if self.kernel.break_glass_policy().is_some() => {
+            Err(_) if matches!(self.kernel.break_glass_policy_checked(), Ok(Some(_))) => {
                 Ok(PolicyBootstrap::AlreadyConfigured)
             }
             Err(err) => Err(err),
@@ -106,13 +105,25 @@ impl BreakGlassOps for KernelVaultOps {
         approvals: &[Approval],
         now_bucket: TimeBucket,
         output_dir: &str,
-    ) -> Result<PathBuf> {
+    ) -> Result<crate::handoff::UnsealOutput> {
         // Clone the policy so the kernel is free to be borrowed mutably below.
         let policy = self
             .kernel
-            .break_glass_policy()
+            .break_glass_policy_checked()?
             .cloned()
             .ok_or_else(|| anyhow!("break-glass quorum policy is not configured"))?;
+
+        // The output paths and the stale-sidecar rule come first, before any
+        // receipt is logged or token spent: an old handoff sidecar is moved
+        // aside (restored on every failure below, a denial included) and the
+        // sidecar path is proven writable. The sidecar's time value is read
+        // here too, so nothing fallible sits between decrypt and release.
+        let sanitized = crate::vault::sanitize_envelope_id(&request.vault_envelope_id)?;
+        let dir = Path::new(output_dir);
+        std::fs::create_dir_all(dir)?;
+        let path = dir.join(format!("{}.raw", sanitized));
+        let stale = crate::break_glass::cli::prepare_unseal_output(&path)?;
+        let created_bucket = crate::handoff::handoff_bucket_now()?;
 
         // Authorize, then log a tamper-evident receipt regardless of outcome —
         // exactly as `break_glass authorize` does.
@@ -128,7 +139,7 @@ impl BreakGlassOps for KernelVaultOps {
         // receipts DB before any cleartext exists, so this token — even if
         // its file form leaks — can never authorize a second unseal. The
         // signed redemption row lands in the same transaction.
-        self.kernel.redeem_token_durably(&token)?;
+        let redemption_entry_hash = self.kernel.redeem_token_durably(&token)?;
 
         // Unseal through the same kernel: device key + receipt lookup both come
         // from it, so no second connection is opened.
@@ -138,7 +149,7 @@ impl BreakGlassOps for KernelVaultOps {
             key_material: crate::VaultKeyMaterial::from_env(),
         })?;
         let verifying_key = self.kernel.device_verifying_key();
-        let mut clear = vault.unseal(
+        let clear = zeroize::Zeroizing::new(vault.unseal(
             &request.vault_envelope_id,
             &mut token,
             self.ruleset_hash,
@@ -150,19 +161,27 @@ impl BreakGlassOps for KernelVaultOps {
                     hash,
                 )
             },
-        )?;
+        )?);
 
-        // Write the recovered envelope to the server-configured directory (0600).
-        let sanitized = crate::vault::sanitize_envelope_id(&request.vault_envelope_id)?;
-        let dir = Path::new(output_dir);
-        std::fs::create_dir_all(dir)?;
-        let path = dir.join(format!("{}.raw", sanitized));
-        let write_result = write_restricted(&path, &clear);
-        // Wipe the recovered cleartext from RAM regardless of whether the write
-        // succeeded — it must not linger in a heap buffer for a core dump to leak.
-        clear.zeroize();
-        write_result?;
-        Ok(path)
+        // The shared release tail: the device-signed unseal record, the
+        // handoff sidecar, then the cleartext (0600) — fail-closed; the
+        // cleartext is zeroized on every path. The console takes no
+        // recipient (a follow-up), so the sidecar names none.
+        let out = crate::handoff::release_unsealed(
+            &mut self.kernel,
+            clear,
+            &crate::handoff::UnsealRelease {
+                raw_path: &path,
+                redemption_entry_hash,
+                granted_entry_hash: receipt_entry_hash,
+                recipient: None,
+                created_bucket,
+                tool_version: env!("CARGO_PKG_VERSION"),
+            },
+            &mut crate::handoff::FsReleaseIo,
+        )?;
+        stale.discard();
+        Ok(out)
     }
 }
 
@@ -327,6 +346,12 @@ mod tests {
         let bucket = TimeBucket::now_10min()?;
         let request = UnlockRequest::new("vault-x", cfg.ruleset_hash, "audit", bucket)?;
         let out = dir.join("out");
+        // An earlier disclosure's sidecar at the output path survives the
+        // denial byte-identical: the stale rule moves it aside before the
+        // burn and restores it on every failure.
+        std::fs::create_dir_all(&out)?;
+        let earlier = out.join("vault-x.raw.securacv-handoff.json");
+        std::fs::write(&earlier, b"earlier sidecar")?;
         let err = ops
             .authorize_unseal(
                 &request,
@@ -339,8 +364,10 @@ mod tests {
         // the receipt is logged *before* the denial is surfaced, so a logging
         // failure would show up as a different error here.
         assert!(err.to_string().contains("insufficient"), "got: {err}");
-        // Nothing was written on denial.
+        // Nothing was written on denial, and the earlier sidecar is back.
         assert!(!out.join("vault-x.raw").exists());
+        assert_eq!(std::fs::read(&earlier)?, b"earlier sidecar");
+        assert_eq!(std::fs::read_dir(&out)?.count(), 1, "nothing left aside");
         Ok(())
     }
 
@@ -469,7 +496,7 @@ mod tests {
         let mut ops = KernelVaultOps::open(cfg.clone(), vault_path)?;
         let unseal_req = UnlockRequest::new(envelope, cfg.ruleset_hash, "unseal", bucket)?;
         let out = dir.join("out");
-        let path = ops.authorize_unseal(
+        let written = ops.authorize_unseal(
             &unseal_req,
             &[approval_for(&alice, "alice", &unseal_req)],
             bucket,
@@ -478,11 +505,37 @@ mod tests {
 
         // A correct recovery exercises the whole chain — authorize, receipt
         // logging, token signing, and the vault's receipt-verified unseal.
-        let recovered = std::fs::read(&path)?;
+        let recovered = std::fs::read(&written.raw_path)?;
         assert_eq!(
             recovered, secret,
             "unsealed bytes must match what was sealed"
         );
+        // The console writes a 0600 handoff sidecar beside the file, and it
+        // verifies under the device key with the plaintext pairing.
+        assert_eq!(
+            written.sidecar_path,
+            crate::handoff::sidecar_path_for(&written.raw_path)
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&written.sidecar_path)?
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+        let sidecar = std::fs::read(&written.sidecar_path)?;
+        let report = crate::handoff::verify_sidecar(
+            &sidecar,
+            &written.raw_path,
+            &crate::handoff::VerifyOptions {
+                pinned: Some(ops.kernel.device_verifying_key()),
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(report.verdict(), "valid", "{:?}", report.checks);
+        assert!(!written.recipient_named);
         Ok(())
     }
 }

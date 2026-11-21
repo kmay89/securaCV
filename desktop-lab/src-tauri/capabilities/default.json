@@ -1,10 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capabilities for the main SecuraCV Lab window.",
+  "description": "Capabilities for the main SecuraCV Lab window: exactly what its pages call. core.invoke of the app's own commands needs no core grant; core:event:default is for the flash, serial and update:log listeners; opener:default is for the links lab-nav.js hands to the OS browser. No core:default, so none of its tray, menu, window or webview permissions reach the webview (the tray and the menu are driven from Rust only; see desktop.json).",
   "windows": ["main"],
   "permissions": [
-    "core:default",
+    "core:event:default",
     "opener:default"
   ]
 }

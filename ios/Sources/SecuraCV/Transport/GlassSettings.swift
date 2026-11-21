@@ -202,7 +202,7 @@ extension GlassSettings {
 
 enum GlassAPI {
     /// GET /api/settings — the request; GlassSettings.decode reads the body.
-    static func settings(at base: URL, session: URLSession = .shared) async throws -> GlassSettings {
+    static func settings(at base: URL, session: URLSession = LANSession.plain) async throws -> GlassSettings {
         guard DeviceAPI.isPrivate(base) else { throw DeviceError.notPrivateAddress }
         var req = URLRequest(url: base.appendingPathComponent("/api/settings"))
         req.timeoutInterval = 4
@@ -216,9 +216,9 @@ enum GlassAPI {
     /// POST /api/set?k=&v= — one knob per request, the contract the on-glass
     /// settings engine already validates and debounces. Shared with
     /// NightlightAPI rather than reimplemented, so there is one place that
-    /// knows how to write a setting.
+    /// knows how to write a setting, the per-boot write token included.
     static func set(_ key: String, _ value: Int, at base: URL,
-                    session: URLSession = .shared) async throws {
+                    session: URLSession = LANSession.plain) async throws {
         try await NightlightAPI.set(key, value, at: base, session: session)
     }
 

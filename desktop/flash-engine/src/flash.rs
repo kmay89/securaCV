@@ -22,6 +22,53 @@ use crate::provisioning::Provisioning;
 use crate::{broker_receipt, changemap, intake, port_hint, provisioning, release, rescue, sidecar};
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// A count of operations in flight, with RAII membership: [`InFlight::begin`]
+/// counts one in and the guard it returns counts it out when dropped — on
+/// success, on every `?`, and when the future holding it is dropped.
+pub struct InFlight(AtomicUsize);
+
+/// One member of an [`InFlight`] count.
+pub struct InFlightGuard(&'static InFlight);
+
+impl InFlight {
+    /// An empty count.
+    pub const fn new() -> Self {
+        Self(AtomicUsize::new(0))
+    }
+
+    /// Count one operation in; it is counted out when the guard drops.
+    pub fn begin(&'static self) -> InFlightGuard {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        InFlightGuard(self)
+    }
+
+    /// Whether anything is in flight right now.
+    pub fn any(&self) -> bool {
+        self.0.load(Ordering::SeqCst) > 0
+    }
+}
+
+impl Default for InFlight {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        self.0 .0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// Board writes in flight: held by [`flash`] for exactly as long as espflash
+/// is erasing or writing the board, and by an app's own writing commands (a
+/// local file, a restore, an erase). espflash also runs for reads — the chip
+/// probe, a backup, a health check — so "an espflash is running" does not
+/// mean "a board is being written"; an app that asks before quitting
+/// mid-write reads this to tell the two apart.
+pub static BOARD_WRITES: InFlight = InFlight::new();
 
 /// What a successful write reports — the ESP32 receipt the frontends render
 /// and keep. Field names and order are the wire contract of both apps.
@@ -62,11 +109,24 @@ pub struct BrokerTlsReceipt {
 /// What `detect_chip` reports: the canonical chip name — the "you can't pick the
 /// wrong image" guard, since the UI only offers products whose `chip` matches —
 /// plus the flash size in bytes when board-info named it, which the rescue
-/// bench's full-chip backup needs. Both come from the one board-info call.
+/// bench's full-chip backup needs. All of it comes from the one board-info call.
 #[derive(Serialize)]
 pub struct ChipInfo {
     chip: String,
+    /// espflash's own chip line ("esp32s3 (revision v0.2)") and the silicon
+    /// revision off it ("v0.2") — the About-this-board Chip row, "Read from
+    /// the chip". `canonical_chip` above keeps the guard role.
+    chip_desc: Option<String>,
+    revision: Option<String>,
+    /// espflash's crystal and features lines. For the S3, C3 and C6 these are
+    /// fixed strings in espflash 3.3.0, not readings, so the frontends draw
+    /// the crystal and radios from the datasheet and show these only at the
+    /// technical level.
+    crystal_mhz: Option<u32>,
+    features: Vec<String>,
     flash_bytes: Option<u64>,
+    /// Kept for the intake check below and to know the board again; the
+    /// frontends draw none of it unless asked, and save none of it.
     mac: Option<String>,
     /// The read-only MAC sanity check (blank / multicast / locally
     /// administered). Reported here rather than kept to ourselves: a board
@@ -110,12 +170,15 @@ pub async fn detect_chip<H: FlashHost>(
         // fault). Linux-only: the hint text is a Linux fix.
         if cfg!(target_os = "linux") {
             if let Some(hint) = port_hint::linux_open_hint(&out) {
-                return Err(format!("{hint}\n\nespflash said:\n{}", out.trim()));
+                return Err(format!(
+                    "{hint}\n\nespflash said:\n{}",
+                    mask_hardware_address(out.trim())
+                ));
             }
         }
         return Err(format!(
             "couldn't read the chip (espflash exit {code}). Put the board in download mode (hold BOOT, tap RESET, release BOOT) and try again.\n\nespflash said:\n{}",
-            out.trim()
+            mask_hardware_address(out.trim())
         ));
     }
     match bundled.canonical_chip(&out) {
@@ -127,6 +190,10 @@ pub async fn detect_chip<H: FlashHost>(
             });
             Ok(ChipInfo {
                 chip,
+                chip_desc: rescue::parse_chip_desc(&out),
+                revision: rescue::parse_revision(&out),
+                crystal_mhz: rescue::parse_crystal_mhz(&out),
+                features: rescue::parse_features(&out),
                 flash_bytes: rescue::parse_flash_size(&out),
                 mac,
                 mac_check,
@@ -134,7 +201,7 @@ pub async fn detect_chip<H: FlashHost>(
         }
         None => Err(format!(
             "couldn't recognize the chip from espflash's output:\n{}",
-            out.trim()
+            mask_hardware_address(out.trim())
         )),
     }
 }
@@ -156,12 +223,56 @@ pub async fn fetch_manifest<H: FlashHost>(
 
 /// The words a failed espflash write ends in — its exit code, the can't-brick
 /// reassurance, and espflash's own last lines (`tail`), which the frontends
-/// classify (permission / busy / not in download mode / cable).
+/// classify (permission / busy / not in download mode / cable). espflash
+/// prints its board info right after connecting, so the tail can hold its
+/// "MAC address: …" line: the address is masked here, before the error is
+/// drawn, logged or pasted into a report.
 pub fn write_failure(code: i32, tail: &[String]) -> String {
     format!(
         "espflash exited with code {code}. The board can't be bricked — put it back in download mode and try again.\n{}",
-        tail.join("\n")
+        mask_hardware_address(&tail.join("\n"))
     )
+}
+
+/// What a masked hardware address reads as: the frontends' `HW_ADDRESS_MASK`,
+/// word for word.
+pub const HW_ADDRESS_MASK: &str = "[hardware address hidden]";
+
+/// Replace every MAC-shaped token (six two-digit hex octets joined by `:` or
+/// `-`, with no letter, digit or `_` on either side) with
+/// [`HW_ADDRESS_MASK`]: the frontends' `maskHardwareAddress`, the same
+/// token. espflash 3.3.0 prints its board info, "MAC address: …" included,
+/// after connecting on every board-info, write-bin and read-flash, so every
+/// error this engine builds from espflash's output goes through this first:
+/// an error string is drawn on screen, kept in the app's event log and pasted
+/// into a diagnostic report, and the base MAC is the station address in every
+/// Wi-Fi frame the board sends.
+pub fn mask_hardware_address(text: &str) -> String {
+    const LEN: usize = 17; // "aa:bb:cc:dd:ee:ff"
+    let b = text.as_bytes();
+    let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    let at = |i: usize| {
+        (i == 0 || !word(b[i - 1]))
+            && (0..6)
+                .all(|k| b[i + 3 * k].is_ascii_hexdigit() && b[i + 3 * k + 1].is_ascii_hexdigit())
+            && (1..6).all(|k| matches!(b[i + 3 * k - 1], b':' | b'-'))
+            && b.get(i + LEN).is_none_or(|&c| !word(c))
+    };
+    let mut out = String::with_capacity(text.len());
+    let (mut i, mut kept) = (0, 0);
+    while i + LEN <= b.len() {
+        if at(i) {
+            // Every byte of a match is ASCII, so both ends are char boundaries.
+            out.push_str(&text[kept..i]);
+            out.push_str(HW_ADDRESS_MASK);
+            i += LEN;
+            kept = i;
+        } else {
+            i += 1;
+        }
+    }
+    out.push_str(&text[kept..]);
+    out
 }
 
 /// Resolve → download → flash. Streams every line espflash prints over the
@@ -276,6 +387,16 @@ pub async fn flash<H: FlashHost>(
         .and_then(Value::as_u64)
         .filter(|size| *size > 0)
         .ok_or_else(|| format!("{product_id} has an invalid release size"))?;
+    // `size` sizes the download's buffer and is only checked against the
+    // image once the whole body is in hand: refuse one no Canary's flash
+    // could hold before a byte is reserved or fetched.
+    if expected_size > crate::image::LOCAL_IMAGE_MAX_BYTES {
+        return Err(format!(
+            "{product_id} declares an implausible release size ({expected_size} bytes; no Canary \
+             carries more than {} bytes of flash)",
+            crate::image::LOCAL_IMAGE_MAX_BYTES
+        ));
+    }
     let expected_sha = entry
         .get("sha256")
         .and_then(Value::as_str)
@@ -506,6 +627,9 @@ pub async fn flash<H: FlashHost>(
     //     isFirstContact). The browser decides it by reading the board;
     //     espflash reports nothing about resident firmware, so here it comes
     //     from the step-1 checkbox.
+    // From here espflash changes the board: marked until this function
+    // returns, on every path.
+    let _writing = BOARD_WRITES.begin();
     if erase_first.unwrap_or(false) {
         emit("→ first contact with this board — erasing the whole chip before writing".into());
         let code = run_streaming(host, rescue::erase_flash_args(&port), "flash:log").await?;
@@ -681,6 +805,9 @@ mod tests {
         espflash: Vec<(i32, &'static str)>,
         /// Whether the staged image still existed while espflash "ran".
         staged_seen: Mutex<Vec<bool>>,
+        /// Whether BOARD_WRITES was up while espflash "ran" an erase or a
+        /// write.
+        write_marked: Mutex<Vec<bool>>,
         fetched: Mutex<Vec<String>>,
         manifest: Value,
         image: Vec<u8>,
@@ -693,6 +820,7 @@ mod tests {
                 espflash_calls: Mutex::new(Vec::new()),
                 espflash: Vec::new(),
                 staged_seen: Mutex::new(Vec::new()),
+                write_marked: Mutex::new(Vec::new()),
                 fetched: Mutex::new(Vec::new()),
                 manifest: fx.manifest.clone(),
                 image: fx.image.clone(),
@@ -738,6 +866,15 @@ mod tests {
             if args.first().map(String::as_str) == Some("write-bin") {
                 let exists = std::path::Path::new(&args[2]).exists();
                 self.staged_seen.lock().unwrap().push(exists);
+            }
+            if matches!(
+                args.first().map(String::as_str),
+                Some("write-bin" | "erase-flash")
+            ) {
+                self.write_marked
+                    .lock()
+                    .unwrap()
+                    .push(super::BOARD_WRITES.any());
             }
             let (code, out) = self.espflash.get(n).copied().unwrap_or((0, ""));
             on_output(out.as_bytes());
@@ -1006,6 +1143,66 @@ mod tests {
     }
 
     #[test]
+    fn in_flight_counts_every_member_in_and_out() {
+        // Its own count, so the tests that flash in parallel (and hold
+        // BOARD_WRITES while they do) cannot move it.
+        static COUNT: super::InFlight = super::InFlight::new();
+        assert!(!COUNT.any());
+        let a = COUNT.begin();
+        let b = COUNT.begin();
+        assert!(COUNT.any());
+        drop(a);
+        assert!(COUNT.any(), "one of two is still in flight");
+        drop(b);
+        assert!(!COUNT.any(), "the last guard dropped");
+        // A guard dropped by an early return counts out like any other.
+        let early = || -> Result<(), String> {
+            let _held = COUNT.begin();
+            Err("stopped".into())
+        };
+        assert!(early().is_err());
+        assert!(!COUNT.any());
+    }
+
+    #[test]
+    fn a_release_size_no_canary_could_hold_is_refused_before_download() {
+        // The manifest's `size` used to go straight into the download's
+        // Vec::with_capacity: 2^40 aborted the app at "resolving the
+        // release". One byte past the largest flash any Canary carries is
+        // already not a firmware image, and nothing is fetched to find out.
+        let fx = fixture();
+        for size in [
+            crate::image::LOCAL_IMAGE_MAX_BYTES + 1,
+            1u64 << 40,
+            u64::MAX,
+        ] {
+            let mut host = Recorder::new(&fx);
+            host.manifest["products"]["canary-s3"]["size"] = json!(size);
+            let err = block_on(flash(
+                &host,
+                fx.catalog,
+                request(&fx, "canary-s3", "ESP32-S3"),
+            ))
+            .err()
+            .unwrap();
+            assert!(
+                err.starts_with("canary-s3 declares an implausible release size"),
+                "{err}"
+            );
+            assert!(
+                err.contains(&crate::image::LOCAL_IMAGE_MAX_BYTES.to_string()),
+                "the limit is named: {err}"
+            );
+            assert_eq!(
+                host.fetched.lock().unwrap().len(),
+                1,
+                "manifest only, no download"
+            );
+            assert!(host.calls().is_empty());
+        }
+    }
+
+    #[test]
     fn bytes_that_do_not_match_the_release_are_never_written() {
         let fx = fixture();
         let mut host = Recorder::new(&fx);
@@ -1048,6 +1245,10 @@ mod tests {
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0], rescue::erase_flash_args("/dev/ttyACM0"));
         assert_eq!(calls[1][0], "write-bin");
+        // Both espflash runs changed the board, and the write marker was up
+        // for each: an app's quit guard reads it to ask before a quit that
+        // would leave the board half-written.
+        assert_eq!(*host.write_marked.lock().unwrap(), vec![true, true]);
 
         // An erase that fails stops everything: nothing is written.
         let mut host = Recorder::new(&fx);
@@ -1081,6 +1282,111 @@ mod tests {
         ));
         // Every line also streamed to the console, untrimmed but non-empty.
         assert!(host.log().iter().any(|l| l == "  line 9  "));
+    }
+
+    #[test]
+    fn a_failed_write_never_carries_the_address_espflash_printed() {
+        // espflash prints its board info, "MAC address: …" included, right
+        // after connecting on every write-bin (espflash 3.3.0), and a failure
+        // prints only a few lines after it, so the kept tail holds the line.
+        // The error is drawn on screen, kept in the app's event log and
+        // pasted into a diagnostic report: the address must not be in it.
+        let fx = fixture();
+        let mut host = Recorder::new(&fx);
+        host.espflash = vec![(
+            1,
+            "Chip type:         esp32s3 (revision v0.2)\nCrystal frequency: 40 MHz\nFlash size:        8MB\nFeatures:          WiFi, BLE\nMAC address:       dc:54:75:c1:22:30\nError: espflash::timeout\n  × Error while running FlashData command\n  ╰─▶ Timeout while running FlashData command\n",
+        )];
+        let err = block_on(flash(
+            &host,
+            fx.catalog,
+            request(&fx, "canary-s3", "ESP32-S3"),
+        ))
+        .err()
+        .unwrap();
+        assert!(!err.to_ascii_lowercase().contains("c1:22:30"), "{err}");
+        assert!(
+            err.contains(&format!("MAC address:       {HW_ADDRESS_MASK}")),
+            "{err}"
+        );
+        // espflash's own words, the ones the frontends classify, survive.
+        assert!(err.contains("Error: espflash::timeout"), "{err}");
+        assert!(
+            err.contains("Chip type:         esp32s3 (revision v0.2)"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_board_info_error_never_carries_the_address_espflash_printed() {
+        // A board-info that names no chip folds its whole output into the error.
+        let fx = fixture();
+        let mut host = Recorder::new(&fx);
+        host.espflash = vec![(
+            0,
+            "Flash size:        4MB\nMAC address:       DC-54-75-C1-22-30\n",
+        )];
+        let err = block_on(detect_chip(&host, fx.catalog, "/dev/ttyACM0".into()))
+            .err()
+            .unwrap();
+        assert!(err.starts_with("couldn't recognize the chip"), "{err}");
+        assert!(!err.to_ascii_lowercase().contains("c1-22-30"), "{err}");
+        assert!(err.contains("Flash size:        4MB"), "{err}");
+        // A failed board-info that got as far as printing it, too.
+        let mut host = Recorder::new(&fx);
+        host.espflash = vec![(
+            1,
+            "MAC address:       dc:54:75:c1:22:30\nError: espflash::timeout\n",
+        )];
+        let err = block_on(detect_chip(&host, fx.catalog, "/dev/ttyACM0".into()))
+            .err()
+            .unwrap();
+        assert!(!err.contains("c1:22:30"), "{err}");
+        assert!(err.contains("Error: espflash::timeout"), "{err}");
+    }
+
+    #[test]
+    fn mask_hardware_address_is_the_frontends_mask() {
+        // The same token the frontends' maskHardwareAddress replaces: six
+        // two-digit hex octets joined by ':' or '-', on word boundaries.
+        let cases = [
+            ("MAC: dc:54:75:c1:22:30", "MAC: [hardware address hidden]"),
+            (
+                "MAC address:       DC-54-75-C1-22-30",
+                "MAC address:       [hardware address hidden]",
+            ),
+            ("a7:3e:5b:c1:9d:f4", "[hardware address hidden]"),
+            (
+                "(a7:3e-5b:c1:9d:f4) and 01:02:03:04:05:06.",
+                "([hardware address hidden]) and [hardware address hidden].",
+            ),
+            ("aa:bb:cc:dd:ee:ff:00", "[hardware address hidden]:00"),
+            ("— dc:54:75:c1:22:30 —", "— [hardware address hidden] —"),
+            // Not a MAC: a word character on either side, too few octets,
+            // three-digit octets, another separator, a non-hex digit in
+            // either place of an octet, a time, an IPv6 address.
+            ("xdc:54:75:c1:22:30", "xdc:54:75:c1:22:30"),
+            ("dc.54.75.c1.22.30", "dc.54.75.c1.22.30"),
+            ("dc:54:75 c1:22:30", "dc:54:75 c1:22:30"),
+            ("gg:54:75:c1:22:30", "gg:54:75:c1:22:30"),
+            ("g0:54:75:c1:22:30", "g0:54:75:c1:22:30"),
+            ("dc:54:75:c1:22:3g", "dc:54:75:c1:22:3g"),
+            ("dc:54:75:c1:22:30x", "dc:54:75:c1:22:30x"),
+            ("_dc:54:75:c1:22:30", "_dc:54:75:c1:22:30"),
+            ("dc:54:75:c1:22", "dc:54:75:c1:22"),
+            ("dc:54:75:c1:22:300", "dc:54:75:c1:22:300"),
+            ("Uptime 12:34:56", "Uptime 12:34:56"),
+            ("fe80::1", "fe80::1"),
+            (
+                "Chip type: esp32s3 (revision v0.2)",
+                "Chip type: esp32s3 (revision v0.2)",
+            ),
+            ("", ""),
+        ];
+        for (input, want) in cases {
+            assert_eq!(mask_hardware_address(input), want, "{input:?}");
+        }
+        assert_eq!(HW_ADDRESS_MASK, "[hardware address hidden]");
     }
 
     #[test]
@@ -1249,7 +1555,7 @@ mod tests {
         let mut host = Recorder::new(&fx);
         host.espflash = vec![(
             0,
-            "Chip type:         esp32s3 (revision v0.2)\nFlash size:        8MB\nMAC address:       dc:54:75:c1:22:30\n",
+            "Chip type:         esp32s3 (revision v0.2)\nCrystal frequency: 40 MHz\nFlash size:        8MB\nFeatures:          WiFi, BLE\nMAC address:       dc:54:75:c1:22:30\n",
         )];
         let info = block_on(detect_chip(&host, fx.catalog, "/dev/ttyACM0".into())).unwrap();
         assert_eq!(
@@ -1258,6 +1564,12 @@ mod tests {
         );
         let info = serde_json::to_value(info).unwrap();
         assert_eq!(info["chip"], "ESP32-S3");
+        // The chip line survives the fold to the canonical name: the revision
+        // the old ChipInfo dropped is the About rows' Chip value.
+        assert_eq!(info["chip_desc"], "esp32s3 (revision v0.2)");
+        assert_eq!(info["revision"], "v0.2");
+        assert_eq!(info["crystal_mhz"], 40);
+        assert_eq!(info["features"], json!(["WiFi", "BLE"]));
         assert_eq!(info["flash_bytes"], 8 * 1024 * 1024);
         assert_eq!(info["mac"], "dc:54:75:c1:22:30");
         assert!(info["mac_check"]["level"].is_string());

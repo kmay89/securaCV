@@ -10,8 +10,8 @@
     "model": "Canary Vision (Grove Vision AI V2)",
     "board_short": "Grove Vision AI V2",
     "board_id": "seeed_grove_vision_ai_v2",
-    "fw_version": "2.4.19",
-    "fw_train": "2.4.19",
+    "fw_version": "2.4.21",
+    "fw_train": "2.4.21",
     "ota_product": "securacv-canary-vision",
     "senses": [
       "camera (on-module inference)"
@@ -326,11 +326,11 @@
       "              ,_,          Waking up...",
       "             (o.o)",
       "             /| |\\         SecuraCV Canary Vision",
-      "              d b          v2.4.19",
+      "              d b          v2.4.21",
       "",
       "    This is your privacy witness device.",
-      "    It creates tamper-proof records of what it",
-      "    sees, so nobody can change the story later."
+      "    It keeps tamper-evident records of what it",
+      "    sees, so any edit to the story shows later."
     ],
     "boot": [
       {
@@ -511,6 +511,16 @@
         "desc": "HA's Aim assist switch writes ON/OFF"
       },
       {
+        "suffix": "beacon/state",
+        "retain": true,
+        "desc": "Broadcast detection switch state (off by default): whether the cleartext fleet beacon carries the live detection"
+      },
+      {
+        "suffix": "beacon/set",
+        "retain": false,
+        "desc": "HA's Broadcast detection switch writes ON/OFF"
+      },
+      {
         "suffix": "cfg/state",
         "retain": true,
         "desc": "retained runtime detection settings: {\"target\",\"score\",\"lost_ms\",\"dwell_ms\",\"profile\",\"profile_label\"}"
@@ -654,6 +664,11 @@
           "desc": "the boxes-only live aim stream (auto-off 10 min)"
         },
         {
+          "name": "Broadcast detection",
+          "component": "switch",
+          "desc": "owner opt-in, off by default: the cleartext fleet beacon (BLE, ESP-NOW, LAN multicast) carries the live detection, so a display alerts with no broker and anyone in range can read it"
+        },
+        {
           "name": "Identify",
           "component": "button",
           "desc": "blink the LED to find this device"
@@ -755,7 +770,7 @@
         {
           "suffix": "health",
           "retain": true,
-          "payload": "{\"battery\":100,\"battery_present\":false,\"memory_free\":183424,\"uptime\":41,\"firmware_version\":\"2.4.19\",\"public_key\":\"2152f8d1\u2026\"}"
+          "payload": "{\"battery_present\":false,\"memory_free\":183424,\"uptime\":41,\"firmware_version\":\"2.4.21\",\"public_key\":\"2152f8d1\u2026\"}"
         },
         {
           "suffix": "chain",

@@ -150,6 +150,21 @@ fn assembles_kit_and_manifest_hashes_are_correct() -> Result<()> {
     assert_eq!(manifest["evidence"]["sha256"], bundle_hex.as_str());
     assert_eq!(manifest["evidence"]["auth_mode"], "self_export");
     assert_eq!(manifest["anchored"], false, "no anchors were recorded");
+    // The handoff sidecar is generated, hashed in files[], and the new
+    // evidence keys are present (null for a receipt without them).
+    assert!(manifest["evidence"]["context"].is_null());
+    assert!(manifest["evidence"]["authorizing_receipt"].is_null());
+    assert_eq!(manifest["handoff"]["source"], "generated");
+    assert_eq!(manifest["handoff"]["recipient_binding"], "none");
+    assert_eq!(
+        manifest["handoff"]["file"],
+        "evidence/witness_export.json.securacv-handoff.json"
+    );
+    assert!(manifest["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["path"] == "evidence/witness_export.json.securacv-handoff.json"));
     for file in manifest["files"].as_array().expect("files array") {
         let path = kit.join(file["path"].as_str().expect("path"));
         let bytes = std::fs::read(&path)?;
@@ -969,5 +984,1122 @@ fn break_glass_policy_sentinel_and_later_receipt_heads_are_never_packaged() -> R
         ),
         "{stdout}"
     );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Clock provenance: the device-signed record of every packaged token travels
+// with it (`clock_provenance/clock-NNNN.json` beside the verbatim signed
+// bytes), checked under the kit's lineage and bound by the packaged token's
+// hash. Clock readings are injected, keyed to the fixture token's genTime.
+// ---------------------------------------------------------------------------
+
+const GEN: u64 = 1_781_094_804;
+
+fn observe(db: &Path, wall: u64, gap: Option<u32>) -> usize {
+    let mut kernel = Kernel::open(&test_cfg(db)).expect("open kernel");
+    kernel
+        .observe_anchors_for_clock_provenance(&witness_kernel::ClockObservation {
+            observed_wall_s: wall,
+            poll_gap_s: gap,
+            kernel_version: "0.0.0-test",
+        })
+        .expect("observe")
+        .len()
+}
+
+/// A database whose export-receipt head is anchored (so the token is
+/// packaged) and measured +2 s by a running daemon; plus a digest anchor
+/// that is not this kit's and has a record of its own. Returns db, bundle.
+fn clock_kit_db(dir: &Path) -> Result<(std::path::PathBuf, std::path::PathBuf)> {
+    let (db, bundle) = make_db_and_bundle(dir)?;
+    let entry_hash = bundle_entry_hash(&bundle)?;
+    assert_eq!(
+        observe(&db, GEN, None),
+        0,
+        "first poll initializes the cursor"
+    );
+    let kernel = Kernel::open(&test_cfg(&db))?;
+    tsa::ensure_anchor_table(&kernel.conn)?;
+    tsa::insert_anchor(
+        &kernel.conn,
+        "export_receipt_head",
+        &entry_hash,
+        "https://tsa.example/tsr",
+        &common::spliced_token(&entry_hash),
+    )?;
+    let other = [0x42u8; 32];
+    tsa::insert_anchor(
+        &kernel.conn,
+        "digest",
+        &other,
+        "https://tsa.example/tsr",
+        &common::spliced_token(&other),
+    )?;
+    // Both rows stored in the bucket of the token's own time (a prompt
+    // online anchoring), not at the test's wall-clock bucket.
+    kernel.conn.execute(
+        "UPDATE tsa_anchors SET created_bucket_start = 1781094600",
+        [],
+    )?;
+    drop(kernel);
+    assert_eq!(observe(&db, GEN + 2, Some(5)), 2);
+    Ok((db, bundle))
+}
+
+fn export_ok(db: &Path, bundle: &Path, kit: &Path) -> std::process::Output {
+    let out = run_court_export(db, bundle, kit);
+    assert!(
+        out.status.success(),
+        "court_export failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out
+}
+
+#[test]
+fn clock_provenance_records_are_packaged_by_token_hash() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = clock_kit_db(temp.path())?;
+    let kit = temp.path().join("kit");
+    let out = export_ok(&db, &bundle, &kit);
+
+    // Only the packaged token's record: #1 (the digest anchor's #2 is not
+    // this kit's).
+    let dir = kit.join("clock_provenance");
+    let mut names: Vec<String> = std::fs::read_dir(&dir)?
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, vec!["clock-0001.json", "clock-0001.payload.json"]);
+
+    // The payload file is the stored literal, byte for byte.
+    let kernel = Kernel::open(&test_cfg(&db))?;
+    let (stored_payload, prev, entry): (String, Vec<u8>, Vec<u8>) = kernel.conn.query_row(
+        "SELECT payload_json, prev_hash, entry_hash FROM clock_provenance WHERE id = 1",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )?;
+    drop(kernel);
+    let payload = std::fs::read(dir.join("clock-0001.payload.json"))?;
+    assert_eq!(payload, stored_payload.as_bytes());
+
+    // Every fact re-derives from kit files alone: the token hash, the entry
+    // hash over prev ‖ payload, and the Ed25519 signature under the domain.
+    let token = std::fs::read(kit.join("anchors/anchor-0001-export_receipt_head.der"))?;
+    let record: serde_json::Value = serde_json::from_slice(&payload)?;
+    assert_eq!(record["token_sha256"], hex::encode(Sha256::digest(&token)));
+    assert_eq!(record["observed_offset_s"], 2);
+    assert_eq!(record["poll_gap_s"], 5);
+    let sidecar: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("clock-0001.json"))?)?;
+    assert_eq!(sidecar["format"], "securacv-clock-provenance-record:v1");
+    assert_eq!(
+        sidecar["anchor_file"],
+        "anchors/anchor-0001-export_receipt_head.der"
+    );
+    assert_eq!(
+        sidecar["signing_domain"],
+        "securacv:pwk:clock-provenance:v1"
+    );
+    assert_eq!(sidecar["prev_hash"], hex::encode(&prev));
+    assert_eq!(prev, vec![0u8; 32], "the first record links to genesis");
+    let mut h = Sha256::new();
+    h.update(&prev);
+    h.update(&payload);
+    let derived: [u8; 32] = h.finalize().into();
+    assert_eq!(derived.to_vec(), entry);
+    assert_eq!(sidecar["entry_hash"], hex::encode(derived));
+    let key_bytes: [u8; 32] = hex::decode(sidecar["signer_public_key"].as_str().unwrap())?
+        .try_into()
+        .unwrap();
+    let key = ed25519_dalek::VerifyingKey::from_bytes(&key_bytes)?;
+    let sig_bytes: [u8; 64] = hex::decode(sidecar["signature"]["ed25519"].as_str().unwrap())?
+        .try_into()
+        .unwrap();
+    let message = witness_kernel::crypto::signatures::domain_separated_hash(
+        "securacv:pwk:clock-provenance:v1",
+        &derived,
+    );
+    key.verify_strict(&message, &ed25519_dalek::Signature::from_bytes(&sig_bytes))?;
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains(
+            "  clock:     1 clock-provenance record(s) packaged; ledger self-consistent; identity unverified"
+        ),
+        "{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn clock_provenance_time_source_section_and_manifest_keys() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    // Absent: a database with no record says so and packages nothing.
+    let (db, bundle) = make_db_and_bundle(temp.path())?;
+    let kit = temp.path().join("kit_absent");
+    export_ok(&db, &bundle, &kit);
+    let manifest = read_manifest(&kit)?;
+    assert_eq!(manifest["clock_provenance_ledger"], "absent");
+    assert!(!kit.join("clock_provenance").exists());
+    let custody = std::fs::read_to_string(kit.join("CUSTODY_AND_CONTROL.md"))?;
+    assert!(
+        custody.contains("Clock-provenance ledger: **absent**"),
+        "{custody}"
+    );
+
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = clock_kit_db(temp.path())?;
+    let kit = temp.path().join("kit");
+    export_ok(&db, &bundle, &kit);
+    let manifest = read_manifest(&kit)?;
+    assert_eq!(
+        manifest["clock_provenance_ledger"],
+        "self-consistent; identity unverified"
+    );
+    let text = serde_json::to_string(&manifest)?;
+    assert!(!text.contains("\"verified\""), "{text}");
+    let anchor = &manifest["anchors"][0];
+    assert_eq!(
+        anchor["clock_provenance"]["file"],
+        "clock_provenance/clock-0001.json"
+    );
+    assert_eq!(
+        anchor["clock_provenance"]["payload_file"],
+        "clock_provenance/clock-0001.payload.json"
+    );
+    assert_eq!(anchor["clock_provenance"]["record_id"], 1);
+    assert_eq!(anchor["clock_provenance"]["observed_offset_s"], 2);
+    assert_eq!(anchor["clock_provenance"]["poll_gap_s"], 5);
+    assert_eq!(anchor["clock_provenance"]["binding_only"], false);
+    assert_eq!(anchor["clock_provenance"]["signer_is_device_key"], true);
+    let files = manifest["files"].to_string();
+    assert!(
+        files.contains("clock_provenance/clock-0001.json"),
+        "{files}"
+    );
+    assert!(
+        files.contains("clock_provenance/clock-0001.payload.json"),
+        "{files}"
+    );
+
+    let custody = std::fs::read_to_string(kit.join("CUSTODY_AND_CONTROL.md"))?;
+    assert!(custody.contains("## Time source"), "{custody}");
+    assert!(
+        custody.contains(
+            "an event's bucket under a device offset is the same width shifted — a bias correction adds no precision"
+        ),
+        "{custody}"
+    );
+    assert!(
+        custody.contains("Clock-provenance ledger: **self-consistent; identity unverified**"),
+        "{custody}"
+    );
+    assert!(
+        custody.contains("binds `anchors/anchor-0001-export_receipt_head.der` by SHA-256"),
+        "{custody}"
+    );
+    assert!(
+        custody.contains("device clock +2 s from the token's time, the row first seen within 5 s of its storage (within one bucket (600 s)); the row was stored in the bucket of issuance."),
+        "{custody}"
+    );
+    let verification = std::fs::read_to_string(kit.join("VERIFICATION.md"))?;
+    assert!(
+        verification.contains("## 3b. Verify the clock-provenance records"),
+        "{verification}"
+    );
+    assert!(
+        verification.contains("sha256sum anchors/anchor-0001-export_receipt_head.der"),
+        "{verification}"
+    );
+    assert!(
+        verification.contains(
+            "openssl pkeyutl -verify -pubin -inkey device.pem -rawin -in msg.bin -sigfile sig.bin"
+        ),
+        "{verification}"
+    );
+    assert!(
+        verification.contains("printf '\\040\\000\\000\\000securacv:pwk:clock-provenance:v1'"),
+        "{verification}"
+    );
+    // No JSON parser, and no key read from the file under check: the device
+    // key the custody record names is written into the recipe.
+    assert!(!verification.contains("jq "), "{verification}");
+    assert!(!verification.contains("<<<"), "{verification}");
+    let device_key = manifest["evidence"]["device_public_key"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        verification.contains(&format!(
+            "printf %s {device_key} | xxd -r -p; }} | openssl pkey"
+        )),
+        "{verification}"
+    );
+    assert!(
+        custody.contains(&device_key),
+        "the recipe's key is the custody record's device key"
+    );
+    // The measured record's step 2 names its bucket and offset.
+    assert!(
+        verification.contains("G + (2) is what the device\n#       clock read, and must lie in [1781094600, 1781095200)"),
+        "{verification}"
+    );
+    let readme = std::fs::read_to_string(kit.join("README.md"))?;
+    assert!(readme.contains("7. `clock_provenance/`"), "{readme}");
+    Ok(())
+}
+
+#[test]
+fn clock_provenance_ledger_that_fails_packages_nothing() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = clock_kit_db(temp.path())?;
+    let kernel = Kernel::open(&test_cfg(&db))?;
+    kernel.conn.execute(
+        "UPDATE clock_provenance SET payload_json = replace(payload_json, '\"observed_offset_s\":2', '\"observed_offset_s\":0') WHERE id = 1",
+        [],
+    )?;
+    drop(kernel);
+    let kit = temp.path().join("kit");
+    let out = export_ok(&db, &bundle, &kit);
+    assert!(!kit.join("clock_provenance").exists(), "fail closed");
+    let manifest = read_manifest(&kit)?;
+    assert_eq!(manifest["clock_provenance_ledger"], "verification failed");
+    assert_eq!(
+        manifest["anchors"][0]["clock_provenance"],
+        serde_json::Value::Null
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("WARNING: the clock-provenance ledger does not verify"),
+        "{stderr}"
+    );
+    let custody = std::fs::read_to_string(kit.join("CUSTODY_AND_CONTROL.md"))?;
+    assert!(
+        custody.contains("Clock-provenance ledger: **verification failed**"),
+        "{custody}"
+    );
+    let verification = std::fs::read_to_string(kit.join("VERIFICATION.md"))?;
+    assert!(
+        verification.contains("**The clock-provenance ledger did not verify at packaging time**"),
+        "{verification}"
+    );
+    // The README agrees with the manifest and the custody record.
+    let readme = std::fs::read_to_string(kit.join("README.md"))?;
+    assert!(
+        readme.contains("7. `clock_provenance/` — not packaged: the clock-provenance ledger did not verify when the kit was assembled"),
+        "{readme}"
+    );
+    assert!(!readme.contains("recorded none"), "{readme}");
+    Ok(())
+}
+
+#[test]
+fn a_record_binding_a_replaced_token_is_withheld_and_named() -> Result<()> {
+    // The packaged anchor's token is replaced after the device bound it:
+    // the record is left out, named on stderr, counted in the README and
+    // the custody record, and the manifest's per-anchor object is null.
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = clock_kit_db(temp.path())?;
+    let entry_hash = bundle_entry_hash(&bundle)?;
+    let kernel = Kernel::open(&test_cfg(&db))?;
+    let mut der = common::spliced_token(&entry_hash).token_der;
+    // Same imprint (the anchor's own line still holds), different bytes.
+    let last = der.len() - 1;
+    der[last] ^= 0x01;
+    kernel
+        .conn
+        .execute("UPDATE tsa_anchors SET token_der = ?1 WHERE id = 1", [der])?;
+    drop(kernel);
+    let kit = temp.path().join("kit");
+    let out = export_ok(&db, &bundle, &kit);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(
+            "WARNING: clock-provenance record #1 for anchor #1 is not packaged: it binds a token"
+        ),
+        "{stderr}"
+    );
+    assert!(!kit.join("clock_provenance").exists());
+    let manifest = read_manifest(&kit)?;
+    assert_eq!(
+        manifest["clock_provenance_ledger"],
+        "self-consistent; identity unverified"
+    );
+    assert_eq!(
+        manifest["anchors"][0]["clock_provenance"],
+        serde_json::Value::Null
+    );
+    let readme = std::fs::read_to_string(kit.join("README.md"))?;
+    assert!(
+        readme.contains("absent: no packaged token has a clock-provenance record that matches it"),
+        "{readme}"
+    );
+    assert!(
+        readme.contains(
+            "1 record(s) were left out because they bind a token other than the one packaged"
+        ),
+        "{readme}"
+    );
+    assert!(!readme.contains("recorded none"), "{readme}");
+    let custody = std::fs::read_to_string(kit.join("CUSTODY_AND_CONTROL.md"))?;
+    assert!(
+        custody
+            .contains("1 clock-provenance record(s) bind a token other than the one packaged here"),
+        "{custody}"
+    );
+    Ok(())
+}
+
+/// A POSIX `sh` with `xxd` on its PATH: the real one, or (when the host has
+/// none) a stand-in for exactly the `xxd -r -p [file]` the recipe uses.
+fn recipe_shell(bin: &Path) -> Option<std::process::Command> {
+    let path = std::env::var("PATH").unwrap_or_default();
+    let has = |tool: &str| {
+        path.split(':')
+            .any(|d| !d.is_empty() && Path::new(d).join(tool).is_file())
+    };
+    if !has("openssl") || !has("sh") {
+        return None;
+    }
+    let mut path_var = path.clone();
+    if !has("xxd") {
+        if !has("python3") {
+            return None;
+        }
+        std::fs::create_dir_all(bin).ok()?;
+        let shim = bin.join("xxd");
+        std::fs::write(
+            &shim,
+            "#!/bin/sh\n[ \"$1\" = -r ] && [ \"$2\" = -p ] || exit 2\nshift 2\nexec python3 -c 'import sys,binascii,re; d=open(sys.argv[1]).read() if len(sys.argv)>1 else sys.stdin.read(); sys.stdout.buffer.write(binascii.unhexlify(re.sub(r\"[^0-9a-fA-F]\",\"\",d)))' \"$@\"\n",
+        )
+        .ok()?;
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).ok()?;
+        path_var = format!("{}:{path}", bin.display());
+    }
+    let mut cmd = std::process::Command::new("sh");
+    cmd.env("PATH", path_var);
+    Some(cmd)
+}
+
+#[test]
+fn the_clock_verification_recipe_runs_in_posix_sh() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let Some(mut sh) = recipe_shell(&temp.path().join("bin")) else {
+        eprintln!("skipping: openssl or sh not available");
+        return Ok(());
+    };
+    let (db, bundle) = clock_kit_db(temp.path())?;
+    let kit = temp.path().join("kit");
+    export_ok(&db, &bundle, &kit);
+    let verification = std::fs::read_to_string(kit.join("VERIFICATION.md"))?;
+    let section = verification
+        .split("## 3b. Verify the clock-provenance records")
+        .nth(1)
+        .unwrap();
+    let block = section
+        .split("```sh\n")
+        .nth(1)
+        .and_then(|b| b.split("```").next())
+        .expect("one sh block");
+    let out = sh.arg("-c").arg(block).current_dir(&kit).output()?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let sidecar: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+        kit.join("clock_provenance/clock-0001.json"),
+    )?)?;
+    let entry = sidecar["entry_hash"].as_str().unwrap();
+    assert!(
+        stdout.contains(entry),
+        "step 3 re-derives the entry hash\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(
+        stdout.contains("Signature Verified Successfully"),
+        "step 5\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    // The same recipe over altered payload bytes fails.
+    let payload = kit.join("clock_provenance/clock-0001.payload.json");
+    let altered =
+        std::fs::read_to_string(&payload)?.replace("\"poll_gap_s\":5", "\"poll_gap_s\":1");
+    std::fs::write(&payload, altered)?;
+    let mut sh = recipe_shell(&temp.path().join("bin")).unwrap();
+    let out = sh.arg("-c").arg(block).current_dir(&kit).output()?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.contains(entry), "{stdout}");
+    assert!(
+        !stdout.contains("Signature Verified Successfully"),
+        "{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn clock_provenance_head_anchors_are_never_packaged() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = clock_kit_db(temp.path())?;
+    let kernel = Kernel::open(&test_cfg(&db))?;
+    let head = tsa::ledger_head(
+        &kernel.conn,
+        witness_kernel::tsa::AnchorSubject::ClockProvenanceHead,
+    )?
+    .expect("ledger head");
+    tsa::insert_anchor(
+        &kernel.conn,
+        "clock_provenance_head",
+        &head,
+        "https://tsa.example/tsr",
+        &common::spliced_token(&head),
+    )?;
+    drop(kernel);
+    let kit = temp.path().join("kit");
+    export_ok(&db, &bundle, &kit);
+    let manifest = read_manifest(&kit)?;
+    assert_eq!(manifest["anchor_count"], 1);
+    let anchors: Vec<String> = std::fs::read_dir(kit.join("anchors"))?
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(anchors, vec!["anchor-0001-export_receipt_head.der"]);
+    let verification = std::fs::read_to_string(kit.join("VERIFICATION.md"))?;
+    assert!(
+        verification.contains("`clock_provenance_head` anchors that fix the ledger itself in time stay in the producing database"),
+        "{verification}"
+    );
+    Ok(())
+}
+
+#[test]
+fn step_2_follows_each_record_clamped_and_binding_only() -> Result<()> {
+    // One packaged record per kit, observed (a) 5000 s after genTime — the
+    // offset clamps at +3600, a bound — and (b) at a process's first poll —
+    // binding only, no measurement.
+    for (wall, gap, expect) in [
+        (
+            GEN + 5_000,
+            Some(5),
+            "The offset +3600 is the\n#       clamp bound: the device read at least G + 3600, so check only that\n#       1781100000 > G + 3600",
+        ),
+        (
+            GEN + 2,
+            None,
+            "#    2. binding only: the record carries no measurement, so step 2 does not apply;\n#       steps 1 and 3-5 do",
+        ),
+    ] {
+        let temp = tempfile::tempdir()?;
+        let (db, bundle) = make_db_and_bundle(temp.path())?;
+        let entry_hash = bundle_entry_hash(&bundle)?;
+        assert_eq!(observe(&db, GEN, None), 0);
+        let kernel = Kernel::open(&test_cfg(&db))?;
+        tsa::ensure_anchor_table(&kernel.conn)?;
+        tsa::insert_anchor(
+            &kernel.conn,
+            "export_receipt_head",
+            &entry_hash,
+            "https://tsa.example/tsr",
+            &common::spliced_token(&entry_hash),
+        )?;
+        drop(kernel);
+        assert_eq!(observe(&db, wall, gap), 1);
+        let kit = temp.path().join("kit");
+        export_ok(&db, &bundle, &kit);
+        let verification = std::fs::read_to_string(kit.join("VERIFICATION.md"))?;
+        assert!(verification.contains(expect), "{verification}");
+        assert!(
+            !verification.contains("must lie in ["),
+            "no in-bucket check for this record: {verification}"
+        );
+    }
+    Ok(())
+}
+
+// -------------------- OpenTimestamps proofs in the kit --------------------
+
+use witness_kernel::ots;
+
+const OTS_BOB: &str = "https://bob.btc.calendar.opentimestamps.org";
+
+/// A pending proof over `hash`, composed from the fixture calendar body.
+fn ots_proof(hash: &[u8; 32]) -> ots::Proof {
+    let body = std::fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ots/response-bob.otsr"),
+    )
+    .unwrap();
+    // Random like the kernel's own, never a literal.
+    let nonce = ots::random_nonce();
+    let c = ots::commitment(hash, &nonce);
+    let node = ots::parse_timestamp(&body, &c).unwrap();
+    ots::Proof::compose(hash, &nonce, node).unwrap()
+}
+
+fn insert_ots_row(db: &Path, subject: tsa::AnchorSubject, proof: &ots::Proof) -> i64 {
+    let kernel = Kernel::open(&test_cfg(db)).unwrap();
+    ots::insert_ots_anchor(
+        &kernel.conn,
+        TimeBucket {
+            start_epoch_s: 600,
+            size_s: 600,
+        },
+        subject,
+        &proof.digest,
+        OTS_BOB,
+        proof,
+    )
+    .unwrap()
+}
+
+#[test]
+fn ots_proof_over_bundle_packaged() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_db_and_bundle(temp.path())?;
+    let bundle_sha: [u8; 32] = Sha256::digest(std::fs::read(&bundle)?).into();
+    let proof = ots_proof(&bundle_sha);
+    let id = insert_ots_row(&db, tsa::AnchorSubject::Digest, &proof);
+    let kit = temp.path().join("kit");
+    let out = run_court_export(&db, &bundle, &kit);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let file = format!("ots-{id:04}-digest.ots");
+    assert_eq!(
+        std::fs::read(kit.join("anchors").join(&file))?,
+        proof.to_bytes()
+    );
+    let m = read_manifest(&kit)?;
+    assert_eq!(m["ots_anchor_count"], 1);
+    assert_eq!(m["ots_bundle_attestation"], "pending");
+    assert_eq!(m["ots_receipt_attestation"], "none");
+    let o = &m["ots_anchors"][0];
+    assert_eq!(o["file"], format!("anchors/{file}"));
+    assert_eq!(o["subject"], "digest");
+    assert_eq!(o["covers"], "bundle_bytes");
+    assert_eq!(o["calendar_url"], OTS_BOB);
+    assert_eq!(o["attestation"], "pending");
+    assert!(o["bitcoin_height"].is_null());
+    assert!(o["merkle_root"].is_null());
+    assert_eq!(o["pending_uris"][0], OTS_BOB);
+    assert!(o.get("clock_provenance").is_none());
+    // The RFC 3161 keys keep their exact meaning.
+    assert_eq!(m["anchored"], false);
+    assert_eq!(m["anchor_count"], 0);
+    assert_eq!(m["receipt_anchored"], false);
+    assert_eq!(m["anchors"].as_array().unwrap().len(), 0);
+    assert!(m["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["path"] == format!("anchors/{file}")));
+    let verification = std::fs::read_to_string(kit.join("VERIFICATION.md"))?;
+    assert!(verification.contains(
+        "The optional OpenTimestamps check in step 3 also needs the open-source `ots` client (`pip install opentimestamps-client`) and a Bitcoin node or block explorer you trust."
+    ));
+    assert!(verification.contains("### OpenTimestamps proofs (optional)"));
+    assert!(verification.contains(&format!("ots info anchors/{file}")));
+    assert!(verification.contains("This proof is pending (not yet in a Bitcoin block)"));
+    let custody = std::fs::read_to_string(kit.join("CUSTODY_AND_CONTROL.md"))?;
+    assert!(custody.contains(&format!(
+        "- `anchors/{file}` — subject `digest`, OpenTimestamps proof via {OTS_BOB}; pending (not yet in a Bitcoin block) at {OTS_BOB} — **covers the evidence file's exact bytes**"
+    )), "{custody}");
+    let readme = std::fs::read_to_string(kit.join("README.md"))?;
+    assert!(readme.contains(
+        "OpenTimestamps proofs in `anchors/*.ots` are pending (not yet in a Bitcoin block) and are not yet evidence of time; `VERIFICATION.md` shows how to upgrade and check them."
+    ), "{readme}");
+    assert!(!readme.contains("attest Bitcoin blocks"), "{readme}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("  ots:       1 proof(s), 0 attest a Bitcoin block, 1 pending"),
+        "{stdout}"
+    );
+    // An OTS proof never silences the RFC 3161 warning.
+    assert!(stdout.contains("WARNING: no RFC 3161 anchor covers"));
+    for doc in [&verification, &custody, &readme] {
+        assert!(!doc.contains("confirmed in Bitcoin"), "{doc}");
+    }
+
+    if common::ots_available() {
+        let o = Command::new("ots")
+            .arg("info")
+            .arg(kit.join("anchors").join(&file))
+            .output()?;
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    }
+    Ok(())
+}
+
+/// A proof over `hash` whose calendar body is a Bitcoin leaf at the
+/// commitment itself (synthetic: a 32-byte message, so it reads as attesting
+/// block `height`; no header confirms it, and the kit never says it does).
+fn ots_attested_proof(hash: &[u8; 32], height: u8) -> ots::Proof {
+    let nonce = ots::random_nonce();
+    let c = ots::commitment(hash, &nonce);
+    let mut body = vec![0x00, 0x05, 0x88, 0x96, 0x0d, 0x73, 0xd7, 0x19, 0x01, 0x01];
+    body.push(height);
+    let node = ots::parse_timestamp(&body, &c).unwrap();
+    ots::Proof::compose(hash, &nonce, node).unwrap()
+}
+
+#[test]
+fn ots_readme_sentence_follows_the_proofs_state() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_db_and_bundle(temp.path())?;
+    let bundle_sha: [u8; 32] = Sha256::digest(std::fs::read(&bundle)?).into();
+    let attested = ots_attested_proof(&bundle_sha, 5);
+    assert_eq!(attested.state(), ots::ProofState::Bitcoin { height: 5 });
+    insert_ots_row(&db, tsa::AnchorSubject::Digest, &attested);
+    let kit = temp.path().join("kit");
+    export_ok(&db, &bundle, &kit);
+    let readme = std::fs::read_to_string(kit.join("README.md"))?;
+    assert!(readme.contains(
+        "OpenTimestamps proofs in `anchors/*.ots` attest Bitcoin blocks for digests named in `CUSTODY_AND_CONTROL.md`; `VERIFICATION.md` shows the `ots` command and the block to look up."
+    ), "{readme}");
+    assert!(!readme.contains("are pending"), "{readme}");
+    assert_eq!(read_manifest(&kit)?["ots_bundle_attestation"], "bitcoin");
+
+    // One attested and one pending: the sentence names the exception.
+    insert_ots_row(&db, tsa::AnchorSubject::Digest, &ots_proof(&bundle_sha));
+    let kit2 = temp.path().join("kit2");
+    export_ok(&db, &bundle, &kit2);
+    let readme = std::fs::read_to_string(kit2.join("README.md"))?;
+    assert!(readme.contains(
+        "except those it lists as pending (not yet in a Bitcoin block), which are not yet evidence of time"
+    ), "{readme}");
+    for doc in [
+        &readme,
+        &std::fs::read_to_string(kit2.join("VERIFICATION.md"))?,
+    ] {
+        assert!(!doc.contains("confirmed in Bitcoin"), "{doc}");
+        assert!(!doc.contains("tie the same digests"), "{doc}");
+    }
+    Ok(())
+}
+
+#[test]
+fn ots_excluded_rows() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_db_and_bundle(temp.path())?;
+    let sentinel = tsa::AnchorSubject::PolicyHead
+        .empty_ledger_sentinel()
+        .unwrap();
+    insert_ots_row(&db, tsa::AnchorSubject::Digest, &ots_proof(&sentinel));
+    insert_ots_row(&db, tsa::AnchorSubject::Digest, &ots_proof(&[9u8; 32]));
+    let gone = insert_ots_row(&db, tsa::AnchorSubject::ChainHead, &ots_proof(&[8u8; 32]));
+    let bundle_sha: [u8; 32] = Sha256::digest(std::fs::read(&bundle)?).into();
+    let broken = insert_ots_row(&db, tsa::AnchorSubject::Digest, &ots_proof(&bundle_sha));
+    {
+        let kernel = Kernel::open(&test_cfg(&db))?;
+        kernel.conn.execute(
+            "UPDATE ots_anchors SET proof = x'00' WHERE id = ?1",
+            [broken],
+        )?;
+    }
+    let kit = temp.path().join("kit");
+    let out = run_court_export(&db, &bundle, &kit);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let m = read_manifest(&kit)?;
+    assert_eq!(m["ots_anchor_count"], 0);
+    assert_eq!(m["ots_bundle_attestation"], "none");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains(&format!(
+        "WARNING: ots anchor #{gone} excluded from the kit: it claims to anchor a chain head, but the anchored hash is not in this database's chain history."
+    )), "{err}");
+    assert!(err.contains(&format!(
+        "WARNING: ots anchor #{broken} excluded from the kit: its stored proof does not parse as an OpenTimestamps proof ("
+    )), "{err}");
+    assert_eq!(
+        err.matches("WARNING: ots anchor").count(),
+        2,
+        "sentinel and foreign digest stay out silently: {err}"
+    );
+    assert!(
+        !kit.join("anchors").exists() || std::fs::read_dir(kit.join("anchors"))?.next().is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn kit_without_ots_rows_has_constant_zero_keys() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_db_and_bundle(temp.path())?;
+    let kit = temp.path().join("kit");
+    let out = run_court_export(&db, &bundle, &kit);
+    assert!(out.status.success());
+    let m = read_manifest(&kit)?;
+    assert_eq!(m["ots_anchor_count"], 0);
+    assert_eq!(m["ots_bundle_attestation"], "none");
+    assert_eq!(m["ots_receipt_attestation"], "none");
+    assert_eq!(m["ots_anchors"], serde_json::json!([]));
+    let verification = std::fs::read_to_string(kit.join("VERIFICATION.md"))?;
+    assert!(!verification.contains("OpenTimestamps"));
+    let readme = std::fs::read_to_string(kit.join("README.md"))?;
+    assert!(!readme.contains("OpenTimestamps"));
+    let kernel = Kernel::open(&test_cfg(&db))?;
+    assert!(
+        !ots::ots_table_exists(&kernel.conn)?,
+        "court_export never creates it"
+    );
+    Ok(())
+}
+
+/// Cross-implementation check, skipped when the Python `ots` client is not
+/// installed: `ots info` reads the fixtures and a proof our codec composed.
+/// `ots info` makes no network call.
+#[test]
+fn ots_client_reads_fixtures_and_our_proofs() -> Result<()> {
+    if !common::ots_available() {
+        eprintln!("skipping: the `ots` client is not on PATH");
+        return Ok(());
+    }
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ots");
+    for f in [
+        "pending.ots",
+        "bitcoin.ots",
+        "pending-bob.ots",
+        "genesis.ots",
+    ] {
+        let o = Command::new("ots").arg("info").arg(dir.join(f)).output()?;
+        assert!(
+            o.status.success(),
+            "{f}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+        if f == "bitcoin.ots" {
+            let text = String::from_utf8_lossy(&o.stdout);
+            assert!(
+                text.contains("BitcoinBlockHeaderAttestation(449399)"),
+                "{text}"
+            );
+            assert!(text.contains("https://alice.btc.calendar.opentimestamps.org"));
+            assert!(text.contains("https://bob.btc.calendar.opentimestamps.org"));
+        }
+    }
+    let temp = tempfile::tempdir()?;
+    let ours = temp.path().join("ours.ots");
+    std::fs::write(&ours, ots_proof(&[0x5au8; 32]).to_bytes())?;
+    let o = Command::new("ots").arg("info").arg(&ours).output()?;
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    Ok(())
+}
+
+// ---- handoff sidecars in the kit (spec/quorum_unseal_v2.md §5) ----
+
+const HANDOFF: &str = "witness_export.json.securacv-handoff.json";
+
+/// A self-export with a declared operator context and a recipient, and its
+/// handoff sidecar beside the bundle (as `export_events` writes it).
+fn make_context_bundle(dir: &Path) -> Result<(std::path::PathBuf, std::path::PathBuf)> {
+    use witness_kernel::break_glass::OperatorContext;
+    use witness_kernel::handoff::{self, HandoffRecipient};
+    let db_path = dir.join("witness.db");
+    let cfg = test_cfg(&db_path);
+    let mut kernel = Kernel::open(&cfg)?;
+    add_test_event(&mut kernel, &cfg)?;
+    let recipient = HandoffRecipient::new("Dana Reyes", None, None)?;
+    let salt = handoff::fresh_salt();
+    let context = witness_kernel::ExportContext::new(
+        Some(OperatorContext::new(
+            "Dana Owner",
+            "owner-recovery",
+            Some("HOA-114"),
+            None,
+        )?),
+        Some(handoff::recipient_commitment(&salt, &recipient)),
+    )?;
+    let bundle = kernel.export_events_bundle_self_with(
+        cfg.ruleset_hash,
+        ExportOptions::default(),
+        context,
+    )?;
+    let bytes = serde_json::to_vec(&bundle)?;
+    let bundle_path = dir.join("witness_export.json");
+    std::fs::write(&bundle_path, &bytes)?;
+    let sidecar = handoff::build_export_sidecar(
+        &kernel.conn,
+        &bytes,
+        "witness_export.json",
+        Some((&recipient, Some(salt))),
+        handoff::handoff_bucket_now()?,
+        "test",
+    )?;
+    handoff::write_sidecar_new(
+        &handoff::sidecar_path_for(&bundle_path),
+        &sidecar.to_canonical_bytes()?,
+    )?;
+    Ok((db_path, bundle_path))
+}
+
+#[test]
+fn a_supplied_valid_sidecar_is_copied_verbatim() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_context_bundle(temp.path())?;
+    let kit = temp.path().join("kit");
+    let out = run_court_export(&db, &bundle, &kit);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let supplied = std::fs::read(temp.path().join(HANDOFF))?;
+    assert_eq!(std::fs::read(kit.join("evidence").join(HANDOFF))?, supplied);
+    let manifest = read_manifest(&kit)?;
+    assert_eq!(manifest["handoff"]["source"], "supplied");
+    assert_eq!(
+        manifest["handoff"]["recipient_binding"],
+        "receipt_commitment"
+    );
+    assert_eq!(
+        manifest["handoff"]["sha256"],
+        hex::encode(Sha256::digest(&supplied)).as_str()
+    );
+    assert_eq!(
+        manifest["evidence"]["context"]["operator"]["requester_name"],
+        "Dana Owner"
+    );
+    assert!(manifest["evidence"]["context"]["recipient_commitment"].is_string());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains(&format!(
+            "  handoff:   evidence/{HANDOFF} (supplied, verified); recipient: receipt_commitment"
+        )),
+        "{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_sidecar_that_contradicts_the_bundle_refuses_the_kit() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_context_bundle(temp.path())?;
+    // Replace the sidecar with one describing other bytes (canonical, so
+    // only the content checks decide).
+    let side = temp.path().join(HANDOFF);
+    let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&side)?)?;
+    v["file"]["sha256"] = serde_json::Value::String("00".repeat(32));
+    std::fs::remove_file(&side)?;
+    std::fs::write(
+        &side,
+        witness_kernel::canonical_json::to_canonical_bytes(&v)?,
+    )?;
+    let kit = temp.path().join("kit");
+    let out = run_court_export(&db, &bundle, &kit);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("custody break: the handoff sidecar beside the bundle does not describe this bundle (file: sha256 "), "{err}");
+    assert!(err.contains(&format!("Remove or replace {} (handoff_sidecar emit writes a fresh one) — a kit must not carry a sidecar that contradicts its evidence. Refusing to package.", side.display())), "{err}");
+    assert!(!kit.exists(), "no kit directory is created");
+    Ok(())
+}
+
+#[test]
+fn an_absent_sidecar_is_generated_committed_not_disclosed() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_context_bundle(temp.path())?;
+    std::fs::remove_file(temp.path().join(HANDOFF))?;
+    let kit = temp.path().join("kit");
+    let out = run_court_export(&db, &bundle, &kit);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let manifest = read_manifest(&kit)?;
+    assert_eq!(manifest["handoff"]["source"], "generated");
+    assert_eq!(
+        manifest["handoff"]["recipient_binding"],
+        "committed_not_disclosed"
+    );
+    let generated = std::fs::read(kit.join("evidence").join(HANDOFF))?;
+    assert!(!String::from_utf8_lossy(&generated).contains("Dana Reyes"));
+    let readme = std::fs::read_to_string(kit.join("README.md"))?;
+    assert!(readme.contains(&format!("8. `evidence/{HANDOFF}` — the handoff sidecar")));
+    let verification = std::fs::read_to_string(kit.join("VERIFICATION.md"))?;
+    assert!(verification.contains(&format!(
+        "sha256sum evidence/{HANDOFF}   # expect: {}",
+        hex::encode(Sha256::digest(&generated))
+    )));
+    assert!(verification.contains("Each `token_sha256` in the handoff sidecar equals one line printed by `sha256sum anchors/*.der`."));
+    assert!(verification.contains(&format!("handoff_sidecar verify --file evidence/witness_export.json --sidecar evidence/{HANDOFF} --anchors-dir anchors --public-key-file <device.pub> [--ca <tsa-ca.pem>]")));
+    Ok(())
+}
+
+#[test]
+fn the_disclosure_context_labels_declared_and_trustee_consented_fields() -> Result<()> {
+    let temp = tempfile::tempdir()?;
+    let (db, bundle) = make_context_bundle(temp.path())?;
+    let kit = temp.path().join("kit");
+    assert!(run_court_export(&db, &bundle, &kit).status.success());
+    let custody = std::fs::read_to_string(kit.join("CUSTODY_AND_CONTROL.md"))?;
+    assert!(custody.contains("## Disclosure context"));
+    assert!(custody.contains("| Requester | Dana Owner |"));
+    assert!(custody.contains("| Case reference | HOA-114 |"));
+    assert!(custody.contains("| Authorizing grant | not applicable (not a quorum export) |"));
+    assert!(custody.contains("| Source of these fields | declared by the exporting operator (device-key holder), recorded in the device-signed receipt; not trustee-consented |"));
+    assert!(custody
+        .contains("| Recipient | committed in the signed receipt; named in the handoff sidecar |"));
+    assert!(custody.contains("## Handoff sidecar"));
+    assert!(custody.contains("Recipient binding: receipt_commitment."));
+    assert!(
+        !custody.contains("Dana Reyes"),
+        "the recipient's name is never rendered in the custody record"
+    );
+
+    // A quorum export's fields come from its grant and are labeled
+    // trustee-consented.
+    let temp = tempfile::tempdir()?;
+    let db_path = temp.path().join("witness.db");
+    let cfg = test_cfg(&db_path);
+    let mut kernel = Kernel::open(&cfg)?;
+    add_test_event(&mut kernel, &cfg)?;
+    let alice = ed25519_dalek::SigningKey::from_bytes(&[41u8; 32]);
+    let policy = witness_kernel::QuorumPolicy::new(
+        1,
+        vec![witness_kernel::TrusteeEntry {
+            id: witness_kernel::TrusteeId::new("alice"),
+            public_key: alice.verifying_key().to_bytes(),
+        }],
+    )?;
+    kernel.set_break_glass_policy(&policy)?;
+    let bucket = TimeBucket::now(600)?;
+    let request = witness_kernel::UnlockRequest::new(
+        witness_kernel::EXPORT_EVENTS_ENVELOPE_ID,
+        cfg.ruleset_hash,
+        "records request",
+        bucket,
+    )?
+    .with_context(witness_kernel::break_glass::OperatorContext::new(
+        "Riley Requester",
+        "legal-request",
+        Some("CASE-9"),
+        None,
+    )?)?;
+    let approval = witness_kernel::Approval::signed(
+        witness_kernel::TrusteeId::new("alice"),
+        request.request_hash(),
+        &alice,
+    );
+    let (result, receipt) = witness_kernel::BreakGlass::authorize(
+        &policy,
+        &request,
+        std::slice::from_ref(&approval),
+        bucket,
+    );
+    let mut token = result?;
+    let granted = kernel.log_break_glass_receipt(&receipt, &[approval])?;
+    kernel.sign_break_glass_token(&mut token, granted)?;
+    let bundle = kernel.export_events_bundle_authorized(
+        cfg.ruleset_hash,
+        ExportOptions::default(),
+        &mut token,
+    )?;
+    let bundle_path = temp.path().join("witness_export.json");
+    std::fs::write(&bundle_path, serde_json::to_vec(&bundle)?)?;
+    drop(kernel);
+    let kit = temp.path().join("kit");
+    let out = run_court_export(&db_path, &bundle_path, &kit);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let custody = std::fs::read_to_string(kit.join("CUSTODY_AND_CONTROL.md"))?;
+    assert!(custody.contains(&format!(
+        "| Authorizing grant | `{}` — the trustee-approved break-glass receipt this export spent; trustees named: alice |",
+        hex::encode(granted)
+    )), "{custody}");
+    assert!(custody.contains("| Requester | Riley Requester |"));
+    assert!(custody.contains(&format!(
+        "| Source of these fields | trustee-consented: bound into the request hash the trustees approved (grant {}…) |",
+        &hex::encode(granted)[..16]
+    )));
+    let manifest = read_manifest(&kit)?;
+    assert_eq!(
+        manifest["evidence"]["authorizing_receipt"],
+        hex::encode(granted).as_str()
+    );
+    assert!(manifest["evidence"]["context"].is_null());
+    assert_eq!(manifest["handoff"]["recipient_binding"], "none");
+    Ok(())
+}
+
+/// An unseal sidecar whose `file` names the bundle's bytes verifies on its
+/// own (real rows, a declared pairing), but a kit carries the export sidecar
+/// of its bundle: court_export refuses it as a custody break.
+#[test]
+fn an_unseal_sidecar_beside_a_bundle_refuses_the_kit() -> Result<()> {
+    use witness_kernel::handoff::{self, HandoffFile, UnsealSelector};
+    let temp = tempfile::tempdir()?;
+    let db_path = temp.path().join("witness.db");
+    let cfg = test_cfg(&db_path);
+    let mut kernel = Kernel::open(&cfg)?;
+    add_test_event(&mut kernel, &cfg)?;
+    let alice = ed25519_dalek::SigningKey::from_bytes(&[41u8; 32]);
+    let policy = witness_kernel::QuorumPolicy::new(
+        1,
+        vec![witness_kernel::TrusteeEntry {
+            id: witness_kernel::TrusteeId::new("alice"),
+            public_key: alice.verifying_key().to_bytes(),
+        }],
+    )?;
+    kernel.set_break_glass_policy(&policy)?;
+    let bucket = TimeBucket::now(600)?;
+    let request =
+        witness_kernel::UnlockRequest::new("vault:1", cfg.ruleset_hash, "records request", bucket)?;
+    let approval = witness_kernel::Approval::signed(
+        witness_kernel::TrusteeId::new("alice"),
+        request.request_hash(),
+        &alice,
+    );
+    let (result, receipt) = witness_kernel::BreakGlass::authorize(
+        &policy,
+        &request,
+        std::slice::from_ref(&approval),
+        bucket,
+    );
+    let mut token = result?;
+    let granted = kernel.log_break_glass_receipt(&receipt, &[approval])?;
+    kernel.sign_break_glass_token(&mut token, granted)?;
+    kernel.redeem_token_durably(&token)?;
+
+    let bundle = kernel.export_events_bundle_self(cfg.ruleset_hash, ExportOptions::default())?;
+    let bytes = serde_json::to_vec(&bundle)?;
+    let bundle_path = temp.path().join("witness_export.json");
+    std::fs::write(&bundle_path, &bytes)?;
+    let sidecar = handoff::build_unseal_sidecar(
+        &kernel.conn,
+        &kernel.device_verifying_key(),
+        UnsealSelector::Grant(granted),
+        &HandoffFile {
+            bytes: bytes.len() as u64,
+            name: "witness_export.json".to_string(),
+            sha256: hex::encode(Sha256::digest(&bytes)),
+        },
+        None,
+        None,
+        handoff::handoff_bucket_now()?,
+        "test",
+    )?;
+    assert_eq!(sidecar.pairing, handoff::Pairing::Declared);
+    assert_eq!(sidecar.recipient_binding, handoff::RecipientBinding::None);
+    let side = temp.path().join(HANDOFF);
+    handoff::write_sidecar_new(&side, &sidecar.to_canonical_bytes()?)?;
+    drop(kernel);
+
+    let kit = temp.path().join("kit");
+    let out = run_court_export(&db_path, &bundle_path, &kit);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains(
+            "custody break: the handoff sidecar beside the bundle does not describe this bundle \
+             (records: this is an unseal sidecar; a kit carries the export sidecar of its bundle)."
+        ),
+        "{err}"
+    );
+    assert!(!kit.exists(), "no kit directory is created");
     Ok(())
 }

@@ -85,8 +85,9 @@ KEK ──unwraps──► per-envelope DEK ──decrypts──► envelope pay
   hardware token).
 - Reconstruction happens **only in memory inside the unseal gate**, after
   quorum authorization, and is zeroized immediately after DEK unwrap — the
-  KSK storage-master-key model; FIPS 140-3 Level 3–4 "split knowledge" in
-  that vocabulary.
+  KSK storage-master-key model; "split knowledge" in the FIPS 140-3 /
+  ISO/IEC 19790 sense of the term (no FIPS level or module validation is
+  claimed; `docs/compliance/fips_140_3_vocabulary.md`).
 
 ### 2.2 Post-quantum layer
 
@@ -256,13 +257,21 @@ is recorded inside the signed receipt, is re-derived at audit and at the
 unseal gate (a receipt whose recorded context does not re-derive its
 consented hash is refused), and renders deterministically via
 `BreakGlassReceipt::render_human`. Operationally documented in
-`break_glass.md`. Export receipts do not carry an operator principal yet —
-that lands with the §5 unseal-output/sidecar work.)*
+`break_glass.md`. A quorum export receipt names its operator principal **by
+reference** — `authorizing_receipt`, the Granted receipt whose recorded
+context the trustees approved — and never restates it; a self-export may
+carry the owner's **declared** `context.operator`.)*
 
 ### 3.7 Trustee credentials
 
 - Baseline: trustee signing keys are **Argon2id-passphrase-wrapped at rest**
   (two-component consent; converges with ENTERPRISE_CUSTODY §5).
+  *(Shipped as a tool, not enforced: `break_glass trustee keygen` /
+  `trustee wrap` write a TKG1 file — the MKG1 keyguard layout under the AAD
+  domain `securacv-trustee-key-v1`, bound to the trustee id and public key —
+  and the passphrase comes from the terminal or `--passphrase-fd`, never argv
+  or the environment. A plaintext key still signs, with a warning. The policy
+  records nothing about wrapping, because the hub cannot check it.)*
 - Policy knobs: **hardware-held trustee keys** (FIDO2/PIV/OpenPGP,
   non-exportable, touch-gated), enforced per-trustee at authorize; and
   **enrollment attestation** recorded beside the trustee entry and surfaced
@@ -287,9 +296,16 @@ that lands with the §5 unseal-output/sidecar work.)*
   one independent) plus **OpenTimestamps** as a trust-kind-independent leg.
   Public witness networks / Sigsum are enterprise-tier opt-ins with a
   rotatable origin. *(Implemented in part: typed anchor subjects, anchor
-  policy with declared roles, anchor-all, distinctness check; OTS open.)*
+  policy with declared roles, anchor-all, distinctness check; OpenTimestamps
+  leg implemented for per-device subjects (`docs/design/opentimestamps_leg.md`);
+  the fleet-aggregate checkpoint remains design.)*
 - Each anchor seals a **clock-provenance event** (the measured device-clock
   vs TSA `genTime` offset) — the direct rebuttal to timestamp challenges.
+  *(Implemented: `witnessd` seals one device-signed, hash-chained record per
+  anchor row into the never-pruned `clock_provenance` ledger, whose head is
+  the anchor subject `clock_provenance_head`; `log_anchor verify`,
+  `run_full_verify` and `court_export` check it.
+  `docs/design/clock_provenance.md`.)*
 - Verification trust is a **tlog-policy file** (device-key pin + witness
   quorum). Without one, `run_full_verify` reports "self-consistent,
   identity unverified" — vocabulary deliberately aligned with C2PA's
@@ -303,6 +319,13 @@ that lands with the §5 unseal-output/sidecar work.)*
 - Every unseal emits **per-file handoff sidecars** (SHA-256 + disclosure
   receipt naming recipient, purpose, approvals, anchor reference) so
   downstream chain-of-custody systems dock onto ours with a verifiable seam.
+  *(Implemented: `break_glass unseal`, the console, the drill and
+  `export_events` write `<file>.securacv-handoff.json` — the device-signed
+  grant, redemption and `Unsealed` record (or export receipt) verbatim, a
+  salted plaintext commitment, a declared recipient fixed by a salted
+  commitment, anchors referenced by token hash; `handoff_sidecar emit |
+  verify | redact`. Guide: `docs/handoff_sidecars.md`; design:
+  `docs/design/handoff_sidecars.md`.)*
 - **`court export`** assembles the litigation bundle: media in native
   container; digests; chain excerpt; receipts rendered as a
   custody-and-control record; both timestamp tokens; auto-filled draft
@@ -314,7 +337,8 @@ that lands with the §5 unseal-output/sidecar work.)*
   *(Implemented for event-export bundles: the `court_export` tool packages a
   verified bundle with custody/identity binding, anchor tokens, certification
   drafts, and an explicit unanchored warning — `docs/court_export.md`. Vault
-  unseal outputs and OTS anchoring remain design.)*
+  unseal outputs remain design; OpenTimestamps proofs are packaged in the court
+  kit.)*
 - Exports optionally carry the frozen **C2PA witness-manifest profile**:
   COSE claim under a self-signed X.509 wrap of the device key, exactly one
   hard binding, `c2pa.created` with capture provenance bound to
@@ -343,7 +367,8 @@ that lands with the §5 unseal-output/sidecar work.)*
    everything before it makes it meaningful.
 6. C2PA profile (§5).
 7. Enterprise-tier projections (FHIR AuditEvent, CAWG, conformance-program
-   and qualified-ledger tracking).
+   and qualified-ledger tracking). *(In part: compliance and tracking maps,
+   `docs/compliance/`.)*
 
 ## 7. Explicit rejections
 

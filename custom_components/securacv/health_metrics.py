@@ -11,6 +11,7 @@ stub-based test harness in tests/conftest.py.
 """
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from .const import EGRESS_COUNTERS, EGRESS_PLANNER_COUNTERS, OFFLINE_QUEUE_COUNTERS
@@ -61,10 +62,11 @@ def replacement_recommended(status: str | None) -> bool:
 
 
 def round_pct(value: Any) -> float | None:
-    """Round a percentage metric to one decimal, tolerating junk."""
+    """Round a percentage metric to one decimal, tolerating junk (an
+    integer too wide for a float among it: OverflowError)."""
     try:
         return round(float(value), 1)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -72,7 +74,7 @@ def bytes_per_day_to_mb(value: Any) -> float | None:
     """Convert a bytes/day write rate to MB/day for display."""
     try:
         return round(float(value) / BYTES_PER_MB, 2)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -107,6 +109,9 @@ def canary_sd_replace_recommended(health_payload: dict[str, Any] | None) -> bool
 # entity, downstream of the callback that read it. Held on the 2026.5 floor
 # and the current release in tests/ha/test_entities.py.
 HA_ATTRIBUTE_INT_MAX = 0xFFFF_FFFF_FFFF_FFFF
+# And the smallest: the same writer takes a negative integer down to a
+# signed 64-bit one's range and refuses one below it.
+HA_ATTRIBUTE_INT_MIN = -0x7FFF_FFFF_FFFF_FFFF
 
 
 def _unsigned_reading(value: Any) -> int | None:
@@ -139,6 +144,74 @@ def _unsigned_reading(value: Any) -> int | None:
     if reading > HA_ATTRIBUTE_INT_MAX:
         return None
     return reading
+
+
+# The public name of the reader above, for the Health, SD Wear and GPS
+# sensors: every broker number that becomes a state attribute there goes
+# through it or through bounded_number below, so no integer past 64 bits
+# reaches the core (HA57 held only the battery and memory keys to that).
+unsigned_reading = _unsigned_reading
+
+
+def bounded_number(value: Any) -> int | float | None:
+    """A JSON number Home Assistant can carry in a state attribute, or None.
+
+    As sent: an integer from HA_ATTRIBUTE_INT_MIN to HA_ATTRIBUTE_INT_MAX,
+    or a finite float no larger in magnitude than HA_ATTRIBUTE_INT_MAX.
+    None for anything else: absent or null, a bool, a string, a container,
+    NaN, an infinity, or an integer past 64 bits, which the core's JSON
+    writer refuses (see HA_ATTRIBUTE_INT_MAX). For the signed and fractional
+    readings a health carries (a temperature, a GPS dilution), where
+    _unsigned_reading's floor and truncation would be wrong.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float):
+        if not math.isfinite(value) or abs(value) > HA_ATTRIBUTE_INT_MAX:
+            return None
+        return value
+    if not HA_ATTRIBUTE_INT_MIN <= value <= HA_ATTRIBUTE_INT_MAX:
+        return None
+    return value
+
+
+def carried_scalar(value: Any) -> str | bool | int | float | None:
+    """A broker scalar as a state attribute can carry it, or None.
+
+    A string or a JSON boolean as sent, a number through bounded_number;
+    None for null, a container, or a number the core cannot carry. For the
+    attributes the sensors copy without reading them as a count (a version,
+    a charge state, a flag).
+    """
+    if isinstance(value, (str, bool)):
+        return value
+    return bounded_number(value)
+
+
+# The `sd` object's keys the Health sensor shows, and how each is read: a
+# flag as a JSON boolean, a number through bounded_number. They are the
+# keys the canary base's health writes (main.cpp, `sdo[...]`).
+SD_FLAG_KEYS = ("mounted", "replace_recommended")
+SD_NUMBER_KEYS = ("usage_pct", "writes", "errors", "lifetime_kb", "wear_pct")
+
+
+def canary_sd_attributes(health_payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The `sd` object's known keys as attributes the core can carry, or
+    None without the object. Only the keys named above, each as a bool or a
+    bounded number; a key the firmware left out, or sent as something else
+    (a wider integer, a string, a bool for a count), is left out, never
+    copied raw."""
+    sd = canary_sd(health_payload)
+    if sd is None:
+        return None
+    out: dict[str, Any] = {}
+    for key in SD_FLAG_KEYS:
+        if isinstance(value := sd.get(key), bool):
+            out[key] = value
+    for key in SD_NUMBER_KEYS:
+        if (number := bounded_number(sd.get(key))) is not None:
+            out[key] = number
+    return out
 
 
 def memory_free_reading(health_payload: dict[str, Any]) -> int | None:
@@ -219,13 +292,18 @@ def battery_charging(health_payload: dict[str, Any]) -> bool:
 
 def _counters(obj: Any, names: tuple[str, ...]) -> dict[str, int] | None:
     """The named counters of a JSON object that are non-negative integers
-    (a bool is not a count). None when `obj` is not an object."""
+    the core can carry (a bool is not a count, nor is an integer past
+    HA_ATTRIBUTE_INT_MAX). None when `obj` is not an object."""
     if not isinstance(obj, dict):
         return None
     out: dict[str, int] = {}
     for name in names:
         value = obj.get(name)
-        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        if (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and 0 <= value <= HA_ATTRIBUTE_INT_MAX
+        ):
             out[name] = value
     return out
 

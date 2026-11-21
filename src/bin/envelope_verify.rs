@@ -105,7 +105,7 @@ fn main() -> Result<()> {
                 "self-attested"
             };
             if args.json {
-                let out = serde_json::json!({
+                let mut out = serde_json::json!({
                     "status": status,
                     "device_key": device_key,
                     "whole_envelope_digest": envelope.whole_envelope_digest,
@@ -117,6 +117,12 @@ fn main() -> Result<()> {
                     "pq_checked": report.pq_checked,
                     "warnings": report.warnings,
                 });
+                if report.break_glass_unsealed > 0 {
+                    out["break_glass_unsealed"] = report.break_glass_unsealed.into();
+                }
+                if report.export_receipts_authorized > 0 {
+                    out["export_receipts_authorized"] = report.export_receipts_authorized.into();
+                }
                 println!("{}", serde_json::to_string_pretty(&out)?);
             } else {
                 if pinned_key.is_some() {
@@ -134,13 +140,29 @@ fn main() -> Result<()> {
                 println!("  digest:         {}", envelope.whole_envelope_digest);
                 println!("  sealed events:  {}", report.sealed_events);
                 println!(
-                    "  break-glass:    {} granted, {} denied, {} redeemed \
+                    "  break-glass:    {} granted, {} denied, {} redeemed{} \
                      (as recorded; trustee approvals not verified offline)",
                     report.break_glass_granted,
                     report.break_glass_denied,
-                    report.break_glass_redeemed
+                    report.break_glass_redeemed,
+                    if report.break_glass_unsealed > 0 {
+                        format!(", {} unsealed", report.break_glass_unsealed)
+                    } else {
+                        String::new()
+                    }
                 );
-                println!("  export receipts:{}", report.export_receipts);
+                println!(
+                    "  export receipts:{}{}",
+                    report.export_receipts,
+                    if report.export_receipts_authorized > 0 {
+                        format!(
+                            ", {} name their authorizing grant",
+                            report.export_receipts_authorized
+                        )
+                    } else {
+                        String::new()
+                    }
+                );
                 println!("  pq checked:     {}", report.pq_checked);
                 for w in &report.warnings {
                     println!("  warning:        {w}");

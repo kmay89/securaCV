@@ -47,7 +47,7 @@ Proves the flagship path end-to-end on real infrastructure. (CI already proves t
 | A2 | Operator smoke check | `integrations/ha_frigate_mqtt/verify_pipeline.sh` | Exit `0`; Frigate publishes, `frigate_bridge` ingests ≥1 event, encrypted `witness.db` non-empty | script stdout |
 | A3 | Verify the live log cryptographically | `cargo run --bin log_verify -- --db <witness.db>` (with the deployment's DB key seed) | Hash chain + Ed25519 signatures **valid** | verify output |
 | A4 | Real RTSP camera (not the fixture) | point Frigate at a live camera; trigger a detection | Event appears in HA as a **verified ✓** witness row | HA screenshot |
-| A5 | Tamper proof, live | mutate one row in the DB, re-run `log_verify` | Verification **fails** at the tampered link | before/after output |
+| A5 | Tamper detection, live | mutate one row in the DB, re-run `log_verify` | Verification **fails** at the tampered link | before/after output |
 
 > A4's HA screenshot is also the **"show, don't tell"** marketing asset the launch review calls
 > for — capture a clean one.

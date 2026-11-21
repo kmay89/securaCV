@@ -16,27 +16,25 @@
 // never reaches a WAP's today, ledger A65), never the fleet.
 //
 // The second rule is about what the password crosses on its way (roadmap
-// row 13): the Bluetooth lane is bonded — encrypted end to end — and an
-// https Canary pinned to its receipt's certificate is too, but a plain-http
-// push puts the router password on the LAN in the clear. So a device that
-// can be reached over the bonded lane takes it even when it is answering
-// over plain http, plain http is offered only when nothing better exists,
-// and then only behind a disclosure the user has to acknowledge. The sheet
-// used to send it in the clear and call the app the safe path.
+// row 13): an https Canary pinned to its receipt's certificate takes it
+// encrypted and checked, but a plain-http push puts the router password on
+// the LAN in the clear, so plain http is offered only behind a disclosure
+// the user has to acknowledge. The Bluetooth lane is encrypted but its peer
+// is whoever claims the device's console id, which the phone cannot check,
+// so the plan never picks it (Candidate.path) until the console proves
+// identity with a nonce signed by the pinned key. The sheet used to send it
+// in the clear and call the app the safe path.
 //
 // Four transports, matched to what each device can actually do right now:
 //   * HTTP (pinned TLS) — a WAP-class Canary answering over https whose
 //     certificate fingerprint came with its pairing receipt. Encrypted and
 //     checked (DeviceAPI pins it); the normal fast path.
-//   * BLE — a WAP-class Canary heard over its bonded provisioning service:
-//     the rescue for one that has gone dark on Wi-Fi, and the preferred lane
-//     for one that is online but not pinned. Empty for a WAP today:
-//     BLEConsole offers the lane only for a peripheral it dialed for
-//     advertising the console service, which a WAP does not advertise
-//     (ledger A65).
-//   * HTTP (cleartext) — a WAP-class Canary answering over plain http with
-//     no bonded lane in range. Works, but the password crosses the LAN
-//     unencrypted; the plan says so and asks first.
+//   * BLE — a WAP-class Canary heard over its provisioning service. Never
+//     chosen today: the console's id is its own claim (G1-08), BLEConsole
+//     offers no device on it, and no WAP advertises the console (ledger A65).
+//   * HTTP (cleartext) — a WAP-class Canary answering over plain http.
+//     Works, but the password crosses the LAN unencrypted; the plan says so
+//     and asks first.
 //   * Hands-on — the display family stores credentials only through its
 //     first-boot portal; the plan says so up front instead of pretending.
 
@@ -74,10 +72,12 @@ enum FleetWiFiRollout {
         var path: Path {
             guard updatable else { return .handsOn }
             if online && tlsPinned { return .http }
-            // Bonded beats cleartext even when the device is answering on
-            // the LAN: an online-but-unpinned Canary in Bluetooth range takes
-            // the encrypted lane, not the one that leaks the password.
-            if bleReachable { return .ble }
+            // Never `.ble`: the Bluetooth lane's peer names itself by a
+            // self-claimed console id the phone cannot check, so a host in
+            // range could take the household password. An online unpinned
+            // Canary rides plain http behind its disclosure; a dark one is
+            // unreachable until the console proves identity with a nonce
+            // signed by the pinned key. `bleReachable` stays recorded.
             if online { return .httpCleartext }
             return .unreachable
         }

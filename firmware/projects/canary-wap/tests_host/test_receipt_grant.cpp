@@ -292,6 +292,11 @@ struct {
 } g_device;
 static bool g_tls_enabled = false;
 static char g_tls_cert_fp_hex[65] = {0};
+// The pin rule's other inputs (tls_after_setup(), cut with the handlers): the
+// certificate persisted, the scheme compiled in, and the setup wizard's state.
+static bool g_tls_cert_persisted = false;
+#define SECURACV_HAS_HTTPS_SERVER 1
+namespace setup_wizard { static bool g_active = false; inline bool is_active() { return g_active; } }
 // The servers, as start_http_server() makes them (session_cookie_header()
 // reads the HTTPS one): nullptr on a plain-HTTP boot. Any two distinct
 // addresses stand in for the handles.
@@ -459,6 +464,8 @@ void reset_device() {
   std::snprintf(g_device.ap_password, sizeof(g_device.ap_password), "%s", kApPass);
   g_tls_enabled = false;
   g_tls_cert_fp_hex[0] = '\0';
+  g_tls_cert_persisted = false;
+  setup_wizard::g_active = false;
   g_https_server = nullptr;
   WiFi = FakeWiFi{};
   canary::net::provisioning_gate::close(g_provisioning_gate);
@@ -2120,6 +2127,7 @@ void test_qr_bearer_serves() {
   // On the home Wi-Fi with TLS on: https at the .local name, with the pin.
   WiFi.connected = true;
   g_tls_enabled = true;
+  g_tls_cert_persisted = true;
   std::snprintf(g_tls_cert_fp_hex, sizeof(g_tls_cert_fp_hex), "%s", std::string(64, 'f').c_str());
   Req secure;
   secure.bearer(kToken);

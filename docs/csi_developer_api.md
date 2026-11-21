@@ -586,7 +586,13 @@ The captive-portal handler at `/` (and the iOS / Android probe URLs that
 the captive-portal popup hits) renders a setup page with a QR code and
 a manual fallback link. Both encode `http://192.168.4.1/companion?token=<64hex>`,
 where the 64-character hex string is a one-shot pairing token minted on
-each render.
+each render. After setup (2.4.20), a link the unit hands out names the
+address the request came in under: `GET /api/pair/token`'s `pair_url` is
+`http://<Host>/companion?token=<64hex>` when the request's Host names the
+device and passes `provisioning_logic::pair_link_host_ok()`, and the bare
+path `/companion?token=<64hex>` otherwise, which the caller resolves
+against the address it already used; the landing page leaves its
+paste-this fallback out when no Host qualifies.
 
 ### Pairing tokens
 
@@ -619,7 +625,7 @@ page reload.
   "ok": true,
   "token": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   "expires_in_sec": 600,
-  "pair_url": "http://192.168.4.1/companion?token=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  "pair_url": "http://canary.local/companion?token=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 }
 ```
 

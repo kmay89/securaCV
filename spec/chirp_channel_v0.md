@@ -55,7 +55,7 @@ This is **NOT** a surveillance system like Ring doorbells. Key differences:
 
 ### 1.2 Design Goals
 
-1. **Human-in-the-Loop**: No automated alerts. Every chirp requires explicit human confirmation
+1. **Human-in-the-Loop**: No automated alerts. Every chirp is meant to need explicit human confirmation. On the canary-wap nothing originates one but its send route (`POST /api/chirp/send`), and the confirmation is the dashboard's "Send this alert?" (§4.1), which a caller of the route who is not using the dashboard skips. The device itself checks the bearer or a landing session any host on the network can mint (F346), the channel on, the presence requirement (§2.5.5), the cooldown (§2.5.4), a set wall clock (GPS-set on the canary-wap) and, at night, a template allowed at night; it checks no hold and no other proof that a person pressed anything
 2. **Ephemeral Identity**: New anonymous identity every session - no tracking
 3. **Soft Witness**: Calm notifications, not panic alarms
 4. **Opt-In Only**: Devices explicitly subscribe to receive community alerts

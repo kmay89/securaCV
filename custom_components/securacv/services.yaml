@@ -106,7 +106,9 @@ export_evidence:
     viewer, a README for the recipient and the witness key. A persistent
     notification carries a download link valid 24 hours; the pack is also
     under Media → SecuraCV evidence. Nothing is added to, removed from or
-    re-serialized in the bundle.
+    re-serialized in the bundle. Older packs from this entry past its
+    Exports to keep limit are removed, oldest first. Administrators only: a
+    signed-in user who is not an administrator is refused.
   fields:
     window_hours:
       name: Window
@@ -137,6 +139,8 @@ staged_update:
     before the next one starts, and the rollout stops at the first node
     that fails or times out. Installs only what each node's own signed-OTA
     engine accepts. Returns what was installed, skipped and not attempted.
+    Administrators only: a signed-in user who is not an administrator is
+    refused.
   fields:
     entity_id:
       name: Update entities

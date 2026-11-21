@@ -60,7 +60,7 @@ The KSK ceremony roles, mapped onto ours. "Trustee" is the SecuraCV word;
 | KSK role | SecuraCV role | Holds | Runs | May not | Status |
 |---|---|---|---|---|---|
 | Ceremony Administrator | **Operator** | access to `DEVICE_KEY_SEED` on the host | `init`, `trustee enroll`, `policy propose` / `set`, `request`, `authorize`, `unseal`, `receipts`, `doctor`, `db-key` (derives the database key for observers), `log_anchor`, `log_verify` | hold a trustee signing key in the same ceremony | **PROC** — nothing stops one person holding both; the record must say so |
-| Crypto Officer | **Trustee** (one of *m*) | one Ed25519 signing-key file (32-byte hex seed, mode 0600) on their own machine | `approve --request`, `policy approve --proposal` | sign anything their own tool did not display | **CODE** — `approve --request` recomputes the hash from the file's fields before signing; `--request-hash` is labeled blind signing |
+| Crypto Officer | **Trustee** (one of *m*) | one Ed25519 trustee key file on their own machine, wrapped under a passphrase (TKG1, mode 0600; a plaintext 64-hex seed still signs, with a warning) | `approve --request`, `policy approve --proposal` | sign anything their own tool did not display | **CODE** — `approve --request` recomputes the hash from the file's fields before signing; `--request-hash` is labeled blind signing |
 | Requester of the act | **Requester** | nothing cryptographic | supplies `--requested-by`, `--reason`, `--case-ref`, `--requester-key` | — | **CODE** — consent-bound and recorded in the receipt; the requester key is recorded, not checked against a registry. The requester is often the operator; write that down |
 | Internal Witness | **Ceremony witness** — a person who is neither trustee nor operator | the exceptions register | nothing on the kernel | approve, operate | **PROC** → §3.4 witness co-signature. No kernel principal exists for this role |
 | Safe Security Controller | **Device-key custodian**; in keyguard mode also the **Vault-passphrase custodian** | where `DEVICE_KEY_SEED` lives; `SECURACV_VAULT_PASSPHRASE` (environment or secrets manager, never on disk) | sets the environment for the operator's commands | — | **CODE** for the on-disk part (the keyguard never writes the plaintext key); custody itself **PROC** |
@@ -171,16 +171,22 @@ decided in advance (see step 2).
    (**CODE**). Copy the fingerprint into `ATTENDANCE.md`: every later receipt
    is signed under this identity.
 2. Per trustee, one of two key paths, chosen in advance and recorded:
-   - **Trustee-generated (preferred).** The trustee mints a 32-byte hex seed
-     on their own machine (mode 0600) and sends only the public half.
-     Operator: `break_glass trustee enroll --id alice --public-key <hex> --db witness.db --device-key-seed "$DEVICE_KEY_SEED"`.
-     **GAP**: there is no `trustee keygen` / public-key-print command; the
-     trustee derives the public hex with an external Ed25519 tool.
-   - **Operator-minted.** `break_glass trustee enroll --id bob --generate --output bob.key --db witness.db --device-key-seed "$DEVICE_KEY_SEED"`
-     → `bob.key` (hex seed, mode 0600, written symlink-safe — **CODE**),
-     handed to Bob in person; the operator's copy is securely deleted
-     (**PROC**). Honest note for the record: the operator transiently held
-     Bob's secret.
+   - **Trustee-generated (preferred).** On their own machine the trustee
+     runs `break_glass trustee keygen --id alice --output alice.tkey`
+     (**CODE**): the key is wrapped under their passphrase (TKG1: Argon2id,
+     ChaCha20-Poly1305, bound to the id and public key), written mode 0600,
+     and the tool prints the public key and its fingerprint, never the
+     secret. The trustee sends only the public key. Operator:
+     `break_glass trustee enroll --id alice --public-key <hex> --db witness.db --device-key-seed "$DEVICE_KEY_SEED"`.
+     A trustee who already holds a plaintext key wraps it with
+     `break_glass trustee wrap --signing-key alice.key --id alice --output alice.tkey`,
+     then destroys the plaintext file (**PROC**; the tool does not delete it).
+   - **Operator-minted (deprecated).** `break_glass trustee enroll --id bob --generate --output bob.key --db witness.db --device-key-seed "$DEVICE_KEY_SEED"`
+     → `bob.key` (plaintext hex seed, mode 0600, written symlink-safe —
+     **CODE**), handed to Bob in person; the operator's copy is securely
+     deleted (**PROC**), and Bob wraps it with `trustee wrap`. The tool
+     prints a deprecation warning, because the operator transiently held
+     Bob's secret; say so in the record.
    A reused public key is refused (**CODE**).
 3. Read-back. Each trustee confirms their own public-key fingerprint from the
    draft over the precommitted channel (**PROC** → §3.7 enrollment
@@ -227,7 +233,7 @@ anchor).
 | Complete-roster commit | **CODE** |
 | Bootstrap labeling in history | **CODE** |
 | Distinct trustee keys | **CODE** |
-| Trustee key at rest is a plaintext file | **GAP** → §3.7 (wrapping, hardware keys) |
+| Trustee key wrapped at rest | **PROC** + **CODE** tool → §3.7: `trustee keygen` / `trustee wrap` wrap it (TKG1); whether each trustee does is declared per trustee in the record. Hardware keys: **GAP** |
 | Verification / duress phrases | **PROC** → §3.3 |
 | Enrollment attestation | **PROC** → §3.7 |
 
@@ -257,8 +263,12 @@ incoming trustee (if any) for read-back.
 2. Each current trustee, on their own machine, offline:
    ```sh
    break_glass --ui plain policy approve --proposal change.proposal \
-     --trustee alice --signing-key alice.key --output alice.policy-approval
+     --trustee alice --signing-key alice.tkey --output alice.policy-approval
    ```
+   A wrapped key asks for its passphrase on the terminal with echo off; with
+   no terminal, pass `--passphrase-fd N`. It is never read from the command
+   line or an environment variable (**CODE**). A plaintext key still signs
+   but prints a warning naming `trustee wrap`: record it as an E-entry.
    The tool recomputes the change hash from the proposal's full contents and
    displays the diff; a tampered proposal is refused, not signed; the
    signature domain is disjoint from unlock approvals (**CODE**).
@@ -317,8 +327,9 @@ script hash, and a procedural cooling-off.
 3. Each trustee, on their own machine:
    ```sh
    break_glass --ui plain approve --request unlock.request \
-     --trustee alice --signing-key alice.key --output alice.approval
+     --trustee alice --signing-key alice.tkey --output alice.approval
    ```
+   The passphrase is asked for as in C2 step 2.
    The tool recomputes the request hash from the file's fields and displays
    every field before signing (**CODE**). `--request-hash` prints a
    blind-signing warning: any use is an E-entry, and in the high-stakes
@@ -345,13 +356,19 @@ script hash, and a procedural cooling-off.
    ```sh
    break_glass --ui plain unseal --envelope cam-porch-0007 --token unlock.token \
      --db witness.db --device-key-seed "$DEVICE_KEY_SEED" \
-     --vault-path vault/envelopes --output-dir vault/unsealed
+     --vault-path vault/envelopes --output-dir vault/unsealed \
+     --recipient-file recipient.json
    ```
    → cleartext in `--output-dir` with restricted permissions; the token
    nonce is durably consumed before any cleartext exists, so a replay is
    refused (**CODE**). At the gate the receipt's recorded context must
    re-derive the consented hash and its named trustees must match the valid
-   approvals (**CODE**).
+   approvals (**CODE**). Prefer `--recipient-file` to `--recipient-name`
+   (shell history). After the decrypt the device appends a signed unseal
+   record and writes the handoff sidecar beside the `.raw`, sidecar first,
+   fail-closed (**CODE**). Hand over the file **and** its sidecar. Then
+   anchor the disclosure record right away: `log_anchor … --subject
+   break_glass_receipt_head` (**CODE**; operator-initiated).
 7. Audit:
    ```sh
    break_glass --ui plain receipts --db witness.db \
@@ -360,10 +377,16 @@ script hash, and a procedural cooling-off.
    → per receipt: `prev_hash`, `entry_hash`, signature, and the deterministic
    human-readable record (printed name, UTC bucket, meaning of each
    signature) (**CODE**). Capture it into the ceremony record.
-8. Disclosure handoff (**PROC** → §5 sidecars, **GAP**). Write into
-   `CLOSEOUT.md`: the SHA-256 of every released file, the recipient, the
-   purpose, and the receipt's `entry_hash`. `court_export` packages
-   event-export bundles, not unseal outputs (**GAP**).
+8. Disclosure handoff (**CODE**: `docs/handoff_sidecars.md`). Every
+   released file has its handoff sidecar: the grant, the redemption and the
+   unseal record verbatim, the salted plaintext pairing, the declared
+   recipient fixed by a salted commitment. Record in `CLOSEOUT.md` the
+   SHA-256 of every released file and of its sidecar, and the unseal record
+   hash `unseal` printed; the receiving party runs `handoff_sidecar verify
+   --file <raw> --public-key-file device.pub` or the shell recipe. To
+   forward a sidecar without the recipient's name, `handoff_sidecar redact`.
+   `court_export` packages event-export bundles, not unseal outputs
+   (**GAP**).
 
 **Served-console variant** (`break_glass_serve --addr 127.0.0.1:8800 --db witness.db --device-key-seed "$DEVICE_KEY_SEED" --vault-path vault/envelopes --output-dir vault/unsealed --token-path serve.token`).
 The operator connects with the capability token from `--token-path`; the
@@ -399,7 +422,7 @@ securely delete it — it is sensitive and useless once consumed.
 | Truthful trustee attribution in the record | **CODE** |
 | Precommitted channels | **PROC** → §3.3 |
 | Cooling-off, notify-all, veto, emergency profile | **PROC** → §3.5 |
-| Handoff sidecars for unseal outputs | **GAP** → §5 |
+| Handoff sidecars for unseal outputs | **CODE** (`docs/handoff_sidecars.md`) |
 
 ### C4 — Rehearsal
 
@@ -426,8 +449,8 @@ is never evidence.
 ### C5 — Anchoring (RFC 3161)
 
 **Subjects** (**CODE**): `chain_head` (default), `export_receipt_head`,
-`break_glass_receipt_head`, `policy_head` (`--subject`), and `digest`
-(`--digest <hex>` / `--file <path>`). A head subject anchors the newest
+`break_glass_receipt_head`, `policy_head`, `clock_provenance_head`
+(`--subject`), and `digest` (`--digest <hex>` / `--file <path>`). A head subject anchors the newest
 `entry_hash` of that ledger; `--file` hashes a file's bytes in-tool (the
 export-bundle digest `court_export` looks for). The subject is what the row
 *claims*; `verify` re-derives membership from the ledger the row names.
@@ -466,6 +489,29 @@ log_anchor --db witness.db --device-key-seed "$DEVICE_KEY_SEED" anchor-all --pol
 log_anchor --db witness.db --device-key-seed "$DEVICE_KEY_SEED" import --policy anchor-policy.json --response out/*.tsr
 log_anchor --db witness.db --device-key-seed "$DEVICE_KEY_SEED" verify --policy anchor-policy.json
 ```
+**OpenTimestamps leg** (**CODE**; header source **PROC**): add an `ots`
+block to the policy — only once every policy reader, the observer's binary
+included, is upgraded:
+```json
+"ots": { "calendars": [ { "name": "alice", "url": "https://alice.btc.calendar.opentimestamps.org" },
+                        { "name": "bob",   "url": "https://bob.btc.calendar.opentimestamps.org" } ],
+         "required": false }
+```
+On the same cron (a build with `--features tsa,ots`), `anchor-all` submits
+`|subjects| × |calendars|` nonced commitments and polls earlier pending
+proofs; offline, `--offline-dir` also writes the `.ots-request.json` /
+`.ots-commitment` / `.ots-upgrade.json` files and the curl lines, and
+`import --policy anchor-policy.json --ots-dir out/` brings the `.otsr`
+answers back. The observer verifies with a header file from a node they run:
+```sh
+for h in <heights>; do echo "$h $(bitcoin-cli getblockheader $(bitcoin-cli getblockhash $h) false)"; done > headers.txt
+log_anchor --db witness.db --db-key "$SECURACV_DB_KEY" verify --policy anchor-policy.json --bitcoin-headers headers.txt
+```
+`confirmed in Bitcoin block N against the supplied header` is the only line
+that counts toward coverage; with `"required": true`, `verify --policy`
+refuses to run without `--bitcoin-headers`. The proof-of-work check on each
+header is a sanity check, not evidence of the real chain.
+
 Bring the responses back within the retention window (default 7 days); a
 head pruned before import can only be stored as `digest`. `import` labels the
 anchor by the ledger the response's imprint is found in: a hit in any ledger
@@ -485,7 +531,18 @@ anchor `UNVERIFIED` (**CODE** — without `--ca` or `--policy` nothing is
 cryptographically verified and the tool says so; `verify --policy` refuses to
 run without the `openssl` CLI rather than degrade). `current head: NO` is
 normal between ceremonies (the chain head moves with every heartbeat); at
-close-out pass `--require-current`.
+close-out pass `--require-current`. `witnessd` writes the clock-provenance
+ledger, one record per anchor row it observes — this run's own rows included
+— so `clock_provenance_head` reads current when every record after the
+covered hash seals a later anchor row: `current head: yes (advanced since
+only by N record(s) of later anchor rows; …)` (**CODE**;
+`docs/timestamping.md`). On a new database, and on the first `anchor-all`
+after the upgrade that added the clock-provenance ledger, that ledger is empty
+and only its sentinel is anchored; `witnessd` then seals records, and the
+subject reads `NOT covered` until the next run. **At upgrade, run `anchor-all`
+twice, the second about 5 s after the first, before this check** (**PROC**).
+A policy that lists `clock_provenance_head` in `subjects` is refused by an
+older `log_anchor`; omit `subjects`, or upgrade every policy reader first.
 
 **Version mix:** upgrade `witnessd` before anchoring chain heads with these
 tools — an older `witnessd` prunes anchored heads at every retention pass
@@ -518,8 +575,22 @@ given, with two-TSA count / distinctness under `--policy` — the kernel never
 links a CMS implementation, so a `valid` ledger verdict says the anchored
 states are present, not that a TSA vouched for them (**GAP** → §4;
 `ENTERPRISE_CUSTODY.md` §2). The anchors table is not itself chained: export
-`tsa_anchors.token_der` with every backup (**PROC**). An OpenTimestamps leg and clock-provenance
-events are **GAP** (§4). No shipped image enables the `tsa` feature: online
+`tsa_anchors.token_der` with every backup (**PROC**). Clock provenance is
+**CODE**: `witnessd` seals one device-signed record per anchor row (the
+device clock against the token's `genTime`), `log_anchor verify` prints a
+`clock:` line under every anchor and fails on a record whose anchor was
+deleted or replaced, and `--policy` counts offsets beyond
+`max_clock_offset_s` into `NOT SATISFIED` (`docs/timestamping.md`, "Clock
+provenance"). The anchoring host's clock still needs the NTP check above
+(**PROC**): a `note: host clock:` line names a disagreement, it does not fix
+one. The OpenTimestamps leg is **CODE** for per-device subjects (the fleet
+aggregate of §4 stays **GAP**): with an `ots` block in the policy,
+`anchor-all` also submits a nonced commitment of every subject to every
+declared calendar and upgrades earlier pending proofs (at most one fetch per
+pending row younger than 7 days), and `verify --bitcoin-headers headers.txt`
+says `confirmed` only against a header the observer supplied
+(`docs/timestamping.md`, "The OpenTimestamps leg"). The header source and the
+cadence are **PROC**: the observer brings `headers.txt` from a node they run. No shipped image enables the `tsa` feature: online
 `anchor-all` runs from an operator host (**PROC**). The Debian-based
 `witnessd` image carries the `openssl` CLI (via `ca-certificates`), so
 `verify --ca` / `--policy` can run inside it against a mounted CA or policy
@@ -646,6 +717,11 @@ rotate per bucket automatically.
    before and after the ceremony.
 2. Anchor (C5): `anchor-all --policy` then `verify --policy
    --require-current` — `SATISFIED`, nothing `UNVERIFIED`.
+   `clock_provenance_head` reads `current head: yes (advanced since only by
+   N record(s) of later anchor rows; …)` while `witnessd` runs — the records
+   it sealed for this run's own rows — and that counts as current. Right
+   after the upgrade that added the ledger, run `anchor-all` twice first
+   (C5, "Check").
 3. `CLOSEOUT.md`: participants, script hash, every artifact with its SHA-256
    (`MANIFEST.sha256`), the exceptions summary, the witness statement, anchor
    ids and TSA `genTime`.
@@ -665,7 +741,7 @@ rotate per bucket automatically.
 | Token file | `authorize` | nobody — record its SHA-256, then delete | — | that a token existed and was consumed |
 | Receipts | kernel database (authoritative); `receipts --verbose` capture | operator; capture in the record | life of the database; captures per legal hold | every attempt, its outcome, its context |
 | Policy history | kernel database; `policy history` capture | operator | life of the database | the roster's lineage |
-| Anchor tokens (`tsa_anchors.token_der`, `.tsq`, `.tsr`) | `log_anchor` | operator; exported with every backup | life of the deployment | that a state existed no later than a third party's time |
+| Anchor tokens (`tsa_anchors.token_der`, `.tsq`, `.tsr`) and OpenTimestamps proofs (`ots_anchors.proof`, `.ots`, `.otsr`, the request and upgrade files, the observer's `headers.txt`) | `log_anchor` | operator; exported with every backup; the observer keeps `headers.txt` | life of the deployment | that a state existed no later than a third party's time, or before a Bitcoin block |
 | High-water-mark copies | kernel (`SECURACV_HWM_PATH`) | operator, external media | rolling; snapshots at each ceremony | that the log was never shorter than this |
 | `doctor`, `log_verify`, drill outputs | the tools | ceremony record | per ceremony | the state of the system on the day |
 | `SCRIPT.md` + hash, `EXCEPTIONS.md`, `CLOSEOUT.md` + witness signature, `BUILD.md` | the ceremony | ceremony record | life of the deployment | what was supposed to happen, what did, who saw it |
@@ -691,6 +767,7 @@ rotate per bucket automatically.
 | Two-TSA distinctness, count, and declared roles | **CODE** (attribution by CA under openssl; pins for CA overlap) / **PROC** (legal qualification) | `log_anchor verify --policy` |
 | Receipt heads anchored as typed subjects | **CODE** | `--subject`, `anchor-all` |
 | Constant per-run anchor request count (no event-correlated egress) | **CODE** | `anchor-all`: subjects × TSAs, empty-ledger sentinel |
+| OpenTimestamps leg (nonced commitments; Bitcoin confirmation against an operator-supplied header file) | **CODE** / **PROC** (header source, cadence) | anchor-all, log_anchor verify --bitcoin-headers |
 | Verdict honesty | **CODE** | `valid` vs `self-consistent; identity unverified`; `receipts` / `policy history` print `Verifying key: pinned out of band` vs `read from the audited database` |
 | Observer verification without the signing seed | **CODE** | `--db-key` / `SECURACV_DB_KEY` on every verifier, including `policy history` / `policy show`; `break_glass db-key` derives it |
 | History verified under the rotation lineage | **CODE** | `policy history` checks each row against every validated lineage key |
@@ -702,14 +779,16 @@ rotate per bucket automatically.
 | Precommitted channels | **PROC** → §3.3 | CPS §3.6 |
 | Verification / duress phrases | **PROC** → §3.3 | ceremony record |
 | Cooling-off, notify-all, veto, emergency profile | **PROC** → §3.5 | before-request announcement and wait |
-| Trustee key wrapping, hardware keys, enrollment attestation | **GAP** → §3.7 | plaintext 0600 key files; read-back |
+| Trustee key wrapping | **PROC** + **CODE** tool → §3.7 | `trustee keygen` / `trustee wrap` (TKG1, passphrase from the terminal or `--passphrase-fd`); a plaintext key still signs, with a warning; declared per trustee in the record (the policy cannot check it) |
+| Hardware trustee keys, enrollment attestation | **GAP** → §3.7 | read-back of the fingerprint |
 | Recovery quorum | **GAP** → §2.3 | none — loss of quorum has no in-band recovery |
 | Proactive resharing, liveness attestations | **GAP** → §2.4 | recorded rehearsals (C4b) |
 | Anchors cross-bound into full verify (`log_verify`) | **CODE** (structural) / **GAP** (countersignature) → §4 | every anchor row's shape, imprint and declared-ledger membership are part of the ledger verdict (`anchor_regression`); the TSA countersignature stays with `log_anchor verify --ca` |
-| Handoff sidecars for unseal outputs | **GAP** → §5 | `CLOSEOUT.md` digests |
+| Clock provenance sealed per anchor | **CODE** | `witnessd` seals the device-clock-vs-`genTime` record of every anchor row; `log_anchor verify` (`clock:` lines, `max_clock_offset_s` under `--policy`), `log_verify` (`=== Clock Provenance ===`), `court_export` (`clock_provenance/`, "Time source") |
+| Handoff sidecars for unseal outputs | **CODE** | `break_glass unseal` writes `<file>.securacv-handoff.json` (signed grant, redemption, unseal record; salted pairing; declared recipient); `handoff_sidecar verify` / the shell recipe; `CLOSEOUT.md` records both digests |
 | Device-key rotation and database re-key commands | **CODE** | `break_glass rotate-identity`, `break_glass rekey-db` |
 | Device seed file private to its owner | **CODE** | a seed file with any group/other permission bit is refused, naming `chmod 600` |
-| Trustee key generation / public-key helper | **GAP** | external Ed25519 tool |
+| Trustee key generation / public-key helper | **CODE** | `break_glass trustee keygen` (run by the trustee; prints the public key and fingerprint, never the secret), `break_glass trustee pubkey` |
 | Keyguard migration and passphrase rotation | **GAP** | new vault only |
 | `doctor` awareness of `master.keyguard` | **GAP** | manual keyguard record |
 | Signed audit-trail review (`log_review attest`) | **GAP** → §4 | review log in the record store |
@@ -717,7 +796,8 @@ rotate per bucket automatically.
 ## 9. Keeping this document honest
 
 Every command, flag, file format id, and quoted message above is taken from
-the shipped source (`src/break_glass/cli.rs`, `src/bin/break_glass_serve.rs`,
+the shipped source (`src/break_glass/cli.rs`, `src/break_glass/trustee_key.rs`,
+`src/crypto/passphrase.rs`, `src/bin/break_glass_serve.rs`,
 `src/bin/log_anchor.rs`, `src/bin/log_verify.rs`, `src/crypto/mod.rs`, `src/vault/mod.rs`,
 `src/log/high_water_mark.rs`, `src/ui.rs` for the stage markers). When a badge here says **PROC** or **GAP** and
 the code later enforces the control, the badge changes in the same pull

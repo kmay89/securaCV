@@ -359,7 +359,7 @@ pairing_state_report() {
     else
         echo "- paired: no"
         echo "  - Pair Home Assistant: docker exec securacv pair, then enter the code it prints"
-        echo "    in Settings → Devices & Services → the discovered 'SecuraCV sidecar' card → Configure."
+        echo "    in Settings → Devices & Services → the 'SecuraCV sidecar' card under Discovered → Add."
     fi
     expires=$(pairing_code_expires)
     now=$(date +%s)
@@ -662,7 +662,7 @@ pair() {
     printf 'SecuraCV pairing code: %s   (valid %s minutes, %s attempts)\n' "$code" "$minutes" "$attempts"
     printf 'Kernel key fingerprint: %s   (Home Assistant shows the same fingerprint before it pairs)\n' "$fingerprint"
     printf 'Kernel URL to confirm in Home Assistant: http://%s:%s\n' "$(announce_host_for_url)" "$API_PORT"
-    printf 'In Home Assistant: Settings → Devices & Services → the discovered "SecuraCV sidecar" card → Configure → enter the code.\n'
+    printf 'In Home Assistant: Settings → Devices & Services → the "SecuraCV sidecar" card under Discovered → Add → enter the code.\n'
 
     if [ "$API_BIND_MODE" != "all" ]; then
         log "SECURACV_API_BIND=$API_BIND_MODE: Home Assistant cannot reach this API to redeem the code. Set SECURACV_API_BIND=all and publish the port (ports: - \"8799:8799\" in compose)."

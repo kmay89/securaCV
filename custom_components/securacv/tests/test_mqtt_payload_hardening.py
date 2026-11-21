@@ -150,6 +150,46 @@ def test_parse_mqtt_json_only_returns_objects() -> None:
     assert parse_mqtt_json(None) is None
 
 
+def _too_deep(*_args, **_kwargs):
+    raise RecursionError("maximum recursion depth exceeded while decoding a JSON document")
+
+
+def test_parse_mqtt_json_takes_nesting_past_the_interpreters_limit_as_junk(monkeypatch) -> None:
+    """64 KiB of `[` fits the cap and json.loads raises RecursionError on
+    it, which is no ValueError: it left every @callback that reads the
+    topic as a traceback, one per delivery, with the payload in the log."""
+    import json
+
+    deep = "[" * 20000 + "]" * 20000
+    assert len(deep) < MAX_MQTT_PAYLOAD_BYTES
+    for payload in (deep, deep.encode(), '{"a":' + deep + "}"):
+        try:
+            json.loads(payload)
+        except RecursionError:
+            assert parse_mqtt_json(payload) is None
+        else:  # an interpreter with a deeper stack reads it; an array is still no object
+            assert parse_mqtt_json(deep) is None
+    # Wherever this interpreter's limit lies, a decoder that hits it is junk.
+    monkeypatch.setattr(json, "loads", _too_deep)
+    assert parse_mqtt_json('{"a": 1}') is None
+    assert parse_mqtt_json(b'{"a": 1}') is None
+
+
+def test_no_handler_raises_on_nesting_past_the_interpreters_limit(monkeypatch) -> None:
+    import json
+
+    monkeypatch.setattr(json, "loads", _too_deep)
+    gps = _entity(sensor_platform.SecuraCVCanaryGPSSensor)
+    gps._handle_message(_msg('{"gps": {"fix_type": "3d"}}'))
+    assert gps.writes == []
+    health = _entity(sensor_platform.SecuraCVCanaryHealthSensor)
+    health._handle_message(_msg('{"free_heap": 1}'))
+    assert health._attr_native_value == "unknown"
+    online = _entity(bs_platform.SecuraCVCanaryOnlineSensor)
+    online._handle_message(_msg('{"online": true}'))
+    assert online._attr_is_on is False and online.writes == []
+
+
 def test_parse_mqtt_json_enforces_the_cap() -> None:
     """The untrusted-broker cap applies BEFORE any decode, in every path."""
     assert len(OVERSIZE) > MAX_MQTT_PAYLOAD_BYTES

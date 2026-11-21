@@ -36,6 +36,7 @@
 #include "provision.h"
 #include "provision_core.h"  // shared onboarding pure helpers (common/)
 #include "tz_auto.h"  // the zone the portal collects, applied on join
+#include "tz_rule.h"  // the fleet's IANA -> POSIX table and rule grammar (common/)
 #include "runtime_config.h"
 #include "wifi_join_policy.h"  // shared join-failure vocabulary (common/)
 #include "wifi_credential_policy.h"  // the one credential rule + the words beside the field (common/)
@@ -548,10 +549,21 @@ void handle_join() {
   // sends no tz and the compiled seed stands. A malformed one is dropped the
   // same way — refusing the whole join over a bad time zone would trade a
   // wrong clock for no network at all.
+  //
+  // The field is a POSIX rule (the portal page's picker) or an IANA name
+  // (the iPhone sends its zone as "America/New_York"). Resolved here through
+  // the fleet's one table, the way the canary-wap's join does: a valid POSIX
+  // rule is kept, a known IANA name is mapped to its rule, anything else
+  // keeps the compiled seed. Storing the name itself used to mark the zone
+  // "chosen by a human" while newlib could not parse it — the glass ran on
+  // UTC, and nothing ever corrected it.
   {
     const String tz = g->server.arg("tz");
-    if (tz_rule_printable(tz)) {
-      snprintf(g->join_tz, sizeof(g->join_tz), "%s", tz.c_str());
+    char rule[tz_rule::MAX_POSIX_LEN + 1];
+    if (tz_rule_printable(tz) &&
+        tz_rule::resolve(tz_rule::posix_valid(tz.c_str()) ? tz.c_str() : nullptr,
+                         tz.c_str(), rule) == tz_rule::Resolve::OK) {
+      snprintf(g->join_tz, sizeof(g->join_tz), "%s", rule);
     } else {
       g->join_tz[0] = '\0';
     }

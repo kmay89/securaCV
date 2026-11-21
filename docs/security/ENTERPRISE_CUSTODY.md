@@ -125,6 +125,10 @@ truncation but can never cause a false verify failure.
   (receipt-chain heads as leaves = the cross-binding item below), C2SP
   checkpoint notes, fleet-internal witness cosigning as the default, and one
   fleet-level aggregate checkpoint anchored outward (TSA + OpenTimestamps).
+  The per-device OpenTimestamps leg has shipped (`anchor-all` with an `ots`
+  policy block; `docs/design/opentimestamps_leg.md`), and the structural fold
+  into `run_full_verify` covers both anchor tables; the fleet aggregate stays
+  open.
   *Design specified:* `spec/quorum_unseal_v2.md` §4; standards research
   `PROVENANCE_INTEROP.md` §1.5.
 - **Fold anchor verification into `run_full_verify`.** *Shipped (structural):*
@@ -140,6 +144,22 @@ truncation but can never cause a false verify failure.
   via `log_anchor verify --ca` — the kernel never links a CMS implementation
   (see §4) — so the ledger verdict says the anchored states are present, not
   that a TSA vouched for them.
+- **Clock provenance at every anchor.** *Shipped:* `witnessd` seals one
+  device-signed, hash-chained, never-pruned record per anchor row — the
+  device clock measured against the token's `genTime` in whole clamped
+  seconds, with the measured poll gap that bounds it, bound to the token by
+  its SHA-256 — and the ledger's head is the fifth anchor subject
+  (`clock_provenance_head`), so the next scheduled `anchor-all` fixes every
+  record in external time. The chain and signatures are part of the
+  `run_full_verify` verdict; a record that names a deleted or replaced
+  anchor, or an offset beyond one bucket, is a warning there and a failure
+  or `NOT SATISFIED` (`max_clock_offset_s`) under `log_anchor verify`;
+  `court_export` packages the record of every packaged token
+  (`docs/timestamping.md`, "Clock provenance"; design:
+  `docs/design/clock_provenance.md`). *Still tracked:* the record is the
+  device's own statement; a challenge to the device clock that also claims
+  key compromise before the next `clock_provenance_head` anchor is answered
+  by that anchor's cadence, not by the record.
 - **Cross-bind the receipt chains.** *Partly shipped:* every receipt-ledger
   head is an anchor subject of its own (`log_anchor --subject`, `anchor-all`),
   `court_export` packages the disclosure's own receipt-head token, and
@@ -147,6 +167,14 @@ truncation but can never cause a false verify failure.
   remains a declaration). Binding the heads *into* the sealed-event chain
   (Merkle leaves) remains tracked — it is also what removes the last
   TSA-visible imprint residual of scheduled anchoring.
+- **The disclosure seam.** *Shipped:* every unseal leaves three
+  device-signed rows (grant, redemption, `Unsealed` record) and every quorum
+  export names its grant (`authorizing_receipt`); the verifiers check those
+  links (`token_redemption`, `export_authorization`). The file that crosses
+  the custody boundary carries them in its handoff sidecar
+  (`docs/handoff_sidecars.md`), checkable with `sha256sum`, `openssl` and
+  `jq`. The recipient in a sidecar is a declaration fixed by a salted
+  commitment, not a verified identity.
 
 ---
 
@@ -206,17 +234,21 @@ further tier, mirroring `load_server_config_mtls` in the webhook module).
 
 **State today.** The PWK setup wizard (`privacy_witness_kernel/serve_wizard.py`)
 binds `0.0.0.0:8788` and is served to the user through the Home Assistant
-Supervisor **ingress** proxy (which authenticates the user). Its `do_POST`
-handlers — `/api/save` (writes config and mints `device_key_seed`),
-`/api/restart-ha`, `/api/test-camera`, and the `/api/mesh/pair/*` device
-proxies — carry **no auth check of their own**, so any process that can reach
-the container's port directly on the Supervisor Docker network (a malicious
-sibling add-on, or SSRF from one) can invoke them, bypassing ingress. The
-2026-08 pass already minimized secret *disclosure* on `/api/status` and closed
-the SSRF/loopback and YAML-injection vectors on this surface; the mutating
-endpoints are the remaining item.
+Supervisor **ingress** proxy (which authenticates the user). Shipped:
+`do_GET` and `do_POST` both open with
+`_refuse_untrusted_client()`, which answers `403` to any connection that did
+not come from the ingress proxy's address (`172.30.32.2`, where the
+Supervisor's watchdog probe also arrives), the add-on's own loopback, or an
+address listed in `WIZARD_TRUSTED_CLIENT_IPS`. So a malicious sibling add-on,
+or SSRF from one, that reaches the port directly on the Supervisor Docker
+network can no longer reach `/api/save` (which writes config and mints
+`device_key_seed`), `/api/restart-ha`, `/api/test-camera` or the
+`/api/mesh/pair/*` proxies. **The residual:** it is an address check, not a
+Supervisor-session check. Anything that can originate a connection from
+`172.30.32.2` or from inside the add-on is trusted, and the request itself
+carries no proof that Home Assistant authenticated a user.
 
-**Design to close it.** Verify that a mutating request actually arrived through
+**Design to close the residual.** Verify that a mutating request actually arrived through
 the authenticated ingress path rather than directly on the port — the robust
 form is to require the Supervisor-injected ingress session (HA sets an
 `X-Ingress-Path`/session the add-on can validate against `SUPERVISOR_TOKEN`),
@@ -272,9 +304,9 @@ audit-centralization).
 | HSM / secure-element key custody | Missing on host | §1 item 2 |
 | PKI / mutual-TLS device identity | Missing | CA + certificate lifecycle + revocation; SPIFFE/x.509 |
 | RBAC + least privilege | Missing | Role model (operator / auditor / admin) atop the quorum |
-| Audit export to SIEM (CEF/syslog/OTLP) | Absent by design | Opt-in, tier-only export that does not violate non-queryability |
+| Audit export to SIEM (CEF/syslog/OTLP) | Absent by design | Opt-in, tier-only export that does not violate non-queryability; design: the read-only FHIR R4 AuditEvent projection, [`docs/compliance/SIEM_PROJECTION.md`](../compliance/SIEM_PROJECTION.md) |
 | Tamper detection + response (host) | Firmware only | Host-side key zeroization on tamper |
-| Formal compliance mapping | None | SSP + SOC-2 / ISO 27001 / NIST 800-53 / CC / CJIS mapping |
+| Formal compliance mapping | In part | Part 11, Annex 11, ALCOA+, HIPAA 164.312, US evidence, eIDAS ledgers, C2PA program, BS 10008 and FIPS-vocabulary maps in [`docs/compliance/`](../compliance/README.md); SSP, SOC 2, ISO 27001, NIST 800-53, CC and CJIS remain unmapped |
 
 ---
 
@@ -289,17 +321,27 @@ Flip the gate only after each is either bumped or given a real justification:
 
 | Advisory | Crate | Class | Note |
 |---|---|---|---|
-| RUSTSEC-2026-0161 | `pqcrypto-traits` | unmaintained | trait defs only; PQ crates are behind non-default `pqc-*` features |
-| RUSTSEC-2026-0162 | `proc-macro-error` | unmaintained | build-time proc-macro helper; not in the runtime binary |
-| RUSTSEC-2024-0370 | `rustls-pemfile` | unmaintained | small stable PEM parser; TLS-feature builds only |
-| RUSTSEC-2025-0134 | `memmap2` | unsound | confirm the pulling path and whether the aliasing pattern is reachable |
-| RUSTSEC-2026-0186 | `spin` | yanked | prefer a lockfile bump to a maintained version |
+| RUSTSEC-2024-0370 | `proc-macro-error` | unmaintained | build-time proc-macro helper under `c2pa` (`c2pa-export` builds only); not in the runtime binary |
+| RUSTSEC-2025-0134 | `rustls-pemfile` | unmaintained | small stable PEM parser; TLS-feature builds only |
+| RUSTSEC-2026-0543 | `chrono` | unmaintained | under `c2pa` and its `rasn` ASN.1 crates; `c2pa-export` builds only |
 
-Toolchain/image supply-chain items handled in this pass and remaining:
-the PWK builder now pins an exact Rust toolchain (was the moving `stable`).
-Still open: pin `BUILD_FROM`/`alpine:3.18` by `@sha256:` digest (mirror the root
-`Dockerfile`) and add a sha256 check of the rustup installer and the cargo-chef
-tarball.
+That is everything `cargo audit` reports for the root `Cargo.lock` as of
+2026-11-21: three unmaintained crates, none with a fixed release, and no
+unsound or yanked entry. Closed since this table was first written: the
+unmaintained `pqcrypto-*` crates (RUSTSEC-2026-0161, -0162, -0163 and -0166)
+left the tree when the kernel moved to `ml-dsa` and `ml-kem`, and `paste`
+(RUSTSEC-2024-0436) left with them; lockfile bumps took the fixed `memmap2`
+0.9.12 (RUSTSEC-2026-0186), `rustix` 1.1.6 (RUSTSEC-2026-0486) and `tokio`
+1.54.1 (RUSTSEC-2026-0386), all three unsound, and replaced the yanked `spin`
+0.9.8 and `chacha20` 0.10.0 with 0.9.9 and 0.10.2.
+
+Toolchain/image supply-chain items handled in this pass: the PWK builder
+pins an exact Rust toolchain (was the moving `stable`), every `FROM` in
+`privacy_witness_kernel/Dockerfile` carries a literal tag and `@sha256:` digest
+(the runtime bases and the build stage, now on Alpine 3.22), and the rustup
+installer and the cargo-chef tarball are checked against pinned sha256 values
+before they run (`RUSTUP_INIT_SHA256_*`, `CARGO_CHEF_SHA256_*`; 2026-11-06,
+#1932, the base moved to 3.22 in the 0.9.1 add-on).
 
 ---
 

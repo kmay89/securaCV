@@ -109,6 +109,19 @@ void tz_boot_string(const char* seed, char* out, unsigned cap) {
     fixed = p.getUChar("fixed", 0);
     p.end();
   }
+  if (out[0] && !tz_rule::posix_valid(out)) {
+    // A value an earlier build stored without the grammar gate: a display
+    // set up from the phone kept the IANA name it was handed, newlib could
+    // not read it, and the glass ran on UTC. Map a known name to its rule
+    // for this boot; drop anything else, so the seed applies and the
+    // learner stays armed.
+    const char* rule = tz_rule::posix_for_iana(out);
+    if (rule) {
+      strlcpy(out, rule, cap);
+    } else {
+      out[0] = '\0';
+    }
+  }
   if (out[0]) {
     // A fixed-offset fallback boots with the stored value but leaves the
     // learner armed; only a full rule ends the search.
@@ -131,6 +144,12 @@ bool tz_set_manual(const char* posix) {
   // callers, the ZONES table's widest rule); refuse rather than store a
   // string that would come back truncated into an invalid TZ.
   if (strlen(posix) >= 48) return false;
+  // The grammar gate (common/time/tz_rule.h): newlib's tzset abandons a
+  // rule it cannot parse part-way through and leaves the previous zone in
+  // force, so a rule this device would not read to the end is refused —
+  // an IANA name, a typo on the web page's /api/tz — rather than persisted
+  // as a human's final word. Both callers treat false as a refusal.
+  if (!tz_rule::posix_valid(posix)) return false;
   // final_rule=true: a human said so. That marks the zone learned, which
   // also stops tz_auto_tick from ever looking it up again — an explicit
   // choice outranks the network, the same way CD_TZ_EXPLICIT does.

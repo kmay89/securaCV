@@ -718,6 +718,59 @@ def yaml_child_keys(text: str, path: tuple) -> list | None:
     return children
 
 
+def yaml_value_at(text: str, path: tuple) -> str | None:
+    """The scalar value of the key at `path` (`enabled: true` -> "true"), or
+    None when the path is absent or the key holds a block, not a value. A
+    one-level flow mapping on the parent (`record: {enabled: true}`) is read
+    too. Same walk, same rules as yaml_child_keys."""
+    lines = list(_yaml_lines(text))
+    index = 0
+    level_indent = 0
+    parent_indent = -1
+    for depth, want in enumerate(path):
+        if depth > 0:
+            if index >= len(lines) or lines[index][0] <= parent_indent:
+                return None
+            level_indent = lines[index][0]
+        while index < len(lines):
+            line_indent, key, rest = lines[index]
+            if line_indent < level_indent:
+                return None
+            if line_indent == level_indent and key == want:
+                parent_indent = line_indent
+                index += 1
+                if depth == len(path) - 1:
+                    return rest or None
+                if rest:
+                    if depth == len(path) - 2 and rest.startswith("{") and rest.endswith("}"):
+                        for pair in rest[1:-1].split(","):
+                            k, sep, v = pair.partition(":")
+                            if sep and k.strip().strip("'\"") == path[-1]:
+                                return v.strip().strip("'\"") or None
+                    return None
+                break
+            index += 1
+        else:
+            return None
+    return None
+
+
+def _yaml_bool(value: str) -> bool | None:
+    """A YAML boolean as Frigate's config reads it, or None when the value
+    is not one this reader can read (an alias, a tag, a template)."""
+    word = value.strip().strip("'\"").lower()
+    if word in ("true", "yes", "on", "1"):
+        return True
+    if word in ("false", "no", "off", "0"):
+        return False
+    return None
+
+
+# Anchors, aliases and merge keys (`&defaults`, `*defaults`, `<<:`) can carry
+# a record setting this small reader does not resolve.
+_YAML_INDIRECTION_RE = re.compile(r"(?:^|[\s:\[{,-])[&*][^\s,\]}]+|<<\s*:", re.M)
+
+
 # ---------------------------------------------------------------------------
 # Frigate: find its config, read its camera list
 # ---------------------------------------------------------------------------
@@ -762,6 +815,86 @@ def frigate_camera_names(path) -> list | None:
         if name and name not in seen:
             seen.append(name)
     return seen
+
+
+def frigate_recording(path, selected: list) -> tuple | None:
+    """Which of the cameras SecuraCV seals Frigate records, read from
+    Frigate's own config: (recording, not_recording), by camera name. A
+    camera's own `record.enabled` wins over the top-level one, and Frigate's
+    default is off. `selected` empty means every camera the config declares.
+    None when the wizard cannot tell: the file cannot be read, declares no
+    cameras, uses YAML anchors, aliases or merge keys, or holds a record
+    value that is not a plain boolean. The person's choice then stands: a
+    setting this reader did not see is never taken for "off"."""
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    if _YAML_INDIRECTION_RE.search(text):
+        return None
+    declared = yaml_child_keys(text, ("cameras",)) or []
+    wanted = {camera_slug(name) for name in selected}
+    names = [name for name in declared if not wanted or camera_slug(name) in wanted]
+    if not names:
+        return None
+    top = yaml_value_at(text, ("record", "enabled"))
+    default = _yaml_bool(top) if top is not None else False
+    if default is None:
+        return None
+    recording, not_recording = [], []
+    for name in names:
+        own = yaml_value_at(text, ("cameras", name, "record", "enabled"))
+        records = default if own is None else _yaml_bool(own)
+        if records is None:
+            return None
+        (recording if records else not_recording).append(name)
+    return recording, not_recording
+
+
+def frigate_mqtt_images(path) -> list | None:
+    """The cameras in Frigate's own config that leave its per-camera MQTT
+    images on, in file order: every declared camera whose `mqtt.enabled` is
+    not false. Frigate publishes them unless the camera turns them off (the
+    top-level `mqtt:` is the broker connection and has no say), and
+    `snapshots.enabled` does not cover them. None when the wizard cannot
+    tell: the file cannot be read, declares no cameras, uses YAML anchors,
+    aliases or merge keys, or holds an mqtt value that is not a plain
+    boolean. The wizard then says nothing rather than guess."""
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    if _YAML_INDIRECTION_RE.search(text):
+        return None
+    declared = yaml_child_keys(text, ("cameras",)) or []
+    if not declared:
+        return None
+    left_on = []
+    for name in declared:
+        own = yaml_value_at(text, ("cameras", name, "mqtt", "enabled"))
+        publishes = True if own is None else _yaml_bool(own)
+        if publishes is None:
+            return None
+        if publishes and name not in left_on:
+            left_on.append(name)
+    return left_on
+
+
+def frigate_mqtt_images_note(config_path) -> str:
+    """The done screen's line where Frigate keeps its own config and leaves
+    its per-camera MQTT images on; "" when every camera turns them off or
+    the wizard cannot tell (frigate_mqtt_images)."""
+    left_on = frigate_mqtt_images(config_path) if config_path is not None else None
+    if not left_on:
+        return ""
+    which = "that camera" if len(left_on) == 1 else "each of those cameras"
+    return (
+        "Frigate's config leaves its MQTT snapshot images on for "
+        + ", ".join(left_on)
+        + ": for each object they track, Frigate publishes a cropped JPEG to "
+        "the broker, which keeps it as a retained message. To stop that, add "
+        f"mqtt: {{enabled: false}} under {which} in {config_path}, then restart Frigate."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -887,6 +1020,55 @@ def _setup_digest_automation(digest_time: str) -> dict:
 # ---------------------------------------------------------------------------
 # Frigate config destination (modern add-on path vs. legacy fallback)
 # ---------------------------------------------------------------------------
+
+# Said on the done screen when "Only Frigate alerts" was asked for on the
+# path where the wizard writes Frigate's camera config (_handle_save). The
+# bridge's reviews mode listens to `<prefix>/reviews` INSTEAD of
+# `<prefix>/events`, and Frigate creates review items only for a camera
+# that records (its review maintainer skips a camera whose `record.enabled`
+# is false), so with the detection-only config written here that choice
+# would leave the witness log with heartbeats and no events.
+ALERTS_ONLY_NOT_APPLIED_NOTE = (
+    '"Only Frigate alerts" was not applied — every tracked object is sealed '
+    "instead. Frigate creates alerts only for cameras that record, and the "
+    "camera config this wizard writes keeps recording off. To seal alerts "
+    "only: turn recording on in Frigate, then turn on frigate.enable_reviews "
+    "in this app's Configuration tab."
+)
+
+
+# The same rule on the path where Frigate keeps its own config: alerts-only
+# is stored as asked unless Frigate's config records on none of the cameras
+# SecuraCV seals, which would leave the log with heartbeats and no events.
+ALERTS_ONLY_NO_RECORDING_NOTE = (
+    '"Only Frigate alerts" was not applied — every tracked object is sealed '
+    "instead. Frigate creates alerts only for cameras that record, and its "
+    "config records none of the cameras SecuraCV seals. To seal alerts only: "
+    "turn recording on for them in Frigate, then turn on "
+    "frigate.enable_reviews in this app's Configuration tab."
+)
+
+
+def alerts_only_on_frigate_config(config_path, selected: list) -> tuple:
+    """(enable_reviews, note) for "Only Frigate alerts" where Frigate keeps
+    its own config. Refused, with ALERTS_ONLY_NO_RECORDING_NOTE, only when
+    the config is read and records none of the sealed cameras; a note names
+    the cameras that will seal nothing when only some record."""
+    verdict = frigate_recording(config_path, selected) if config_path is not None else None
+    if verdict is None:
+        return True, ""
+    recording, not_recording = verdict
+    if not recording:
+        return False, ALERTS_ONLY_NO_RECORDING_NOTE
+    if not_recording:
+        return True, (
+            'With "Only Frigate alerts", nothing is sealed from '
+            + ", ".join(not_recording)
+            + ": Frigate creates alerts only for cameras that record, and its "
+            + ("config does not record it." if len(not_recording) == 1 else "config does not record them.")
+        )
+    return True, ""
+
 
 def _frigate_config_destination() -> tuple:
     """Pick where the generated Frigate config goes.
@@ -1348,7 +1530,10 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
           "frigate_detected": bool   (the cameras came from Frigate's own
                                       config: nothing to write for Frigate),
           "retention_days": int,
-          "enable_reviews": bool     (seal only Frigate alerts),
+          "enable_reviews": bool     (seal only Frigate alerts; not
+                                      accepted when this save writes
+                                      Frigate's config, which keeps
+                                      recording off — see below),
           "digest_enabled": bool,
           "digest_time": "HH:MM",
           "device_key_seed": str  (optional; omitted = keep/generate)
@@ -1370,6 +1555,29 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                 cameras = []
             frigate_detected = bool(payload.get("frigate_detected", False))
             retention_days = int(payload.get("retention_days", 7))
+
+            # A Frigate camera config is written only when the wizard
+            # collected RTSP cameras itself (the write is further down).
+            rtsp_cameras = [c for c in cameras if isinstance(c, dict) and c.get("url")]
+            writes_frigate_config = bool(
+                mode == "frigate" and rtsp_cameras and not frigate_detected
+            )
+            # "Only Frigate alerts" needs recording on in Frigate, and the
+            # config written on that path is detection-only: accepting the
+            # choice there would leave a log of heartbeats and a done screen
+            # promising a first sealed event. The default (every tracked
+            # object) is stored instead and the response says why
+            # (ALERTS_ONLY_NOT_APPLIED_NOTE).
+            reviews_requested = bool(payload.get("enable_reviews", False))
+            enable_reviews = reviews_requested and not writes_frigate_config
+            # Where Frigate keeps its own config, read it: alerts-only on
+            # cameras it does not record seals nothing either.
+            reviews_note = ""
+            if enable_reviews and mode == "frigate" and frigate_detected:
+                selected = [str(c["name"]) for c in cameras if isinstance(c, dict) and c.get("name")]
+                enable_reviews, reviews_note = alerts_only_on_frigate_config(
+                    find_frigate_config(), selected
+                )
             device_key_seed = str(payload.get("device_key_seed", "") or "").strip()
 
             # The sealed log's identity is bound to the existing seed, so a
@@ -1474,7 +1682,7 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                     "mqtt_port": mqtt_port,
                     "mqtt_topic": "",
                     "topic_prefix": str(payload.get("frigate_topic_prefix", "") or "frigate"),
-                    "enable_reviews": bool(payload.get("enable_reviews", False)),
+                    "enable_reviews": enable_reviews,
                     "mqtt_username": mqtt_username,
                     "mqtt_password": mqtt_password,
                     "min_confidence": float(min_confidence) if min_confidence is not None else 0.5,
@@ -1557,8 +1765,7 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
             # Frigate's own config there is nothing to write — Frigate
             # already has them — and nothing to merge later.
             frigate_note = ""
-            rtsp_cameras = [c for c in cameras if isinstance(c, dict) and c.get("url")]
-            if mode == "frigate" and rtsp_cameras and not frigate_detected:
+            if writes_frigate_config:
                 target, frigate_note = _frigate_config_destination()
                 if target is not None:
                     discovered = _discover_mqtt()
@@ -1573,12 +1780,13 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                     )
                     self._write_frigate_config(
                         rtsp_cameras,
-                        retention_days,
                         broker_host,
                         broker_port,
                         needs_auth,
                         dest=target,
                     )
+                if reviews_requested:
+                    frigate_note = f"{frigate_note} {ALERTS_ONLY_NOT_APPLIED_NOTE}".strip()
             elif mode == "frigate" and frigate_detected:
                 frigate_note = (
                     "Frigate keeps its own camera config — nothing was written "
@@ -1586,6 +1794,13 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                     + (", ".join(camera_slugs) if camera_slugs else "every camera Frigate reports")
                     + "."
                 )
+                # The one thing the wizard did not write and still checks:
+                # Frigate's per-camera MQTT images, on unless a camera says off.
+                images_note = frigate_mqtt_images_note(find_frigate_config())
+                if images_note:
+                    frigate_note = f"{frigate_note} {images_note}"
+                if reviews_note:
+                    frigate_note = f"{frigate_note} {reviews_note}"
 
             # NOTE: the add-on restart is deliberately NOT triggered here —
             # do_POST schedules it (_restart_addon_soon) after the response is
@@ -1611,7 +1826,6 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
     def _write_frigate_config(
         self,
         cameras: list,
-        retention_days: int,
         broker_host: str = "core-mosquitto",
         broker_port: int = 1883,
         needs_auth: bool = False,
@@ -1630,6 +1844,20 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
 
         Cameras are named by the shared slug (camera_slug, C8) so the name
         Frigate publishes is the one frigate_bridge's allowlist holds.
+
+        The config is detection-only: each input carries the `detect` role
+        alone and `record.enabled` is written false, so Frigate keeps no
+        footage because of this file. Recording, and snapshots (off by
+        Frigate's default; this file does not set them), are the person's
+        choice in Frigate. The wizard's `retention_days` is the witness
+        log's retention, never a video retention, and is not passed here.
+
+        Each camera also gets `mqtt.enabled: false`. That camera-level key
+        is not the broker block at the top: it is Frigate's per-camera image
+        publishing, on by default, which sends a cropped JPEG of each
+        tracked object to `frigate/<camera>/<label>/snapshot` as a retained
+        message, whatever `snapshots.enabled` says. Frigate's `frigate/events`
+        messages, the ones SecuraCV seals, are published either way.
         """
         # Emit a string as a single-quoted YAML scalar (doubling embedded
         # quotes), the same treatment the camera URL below gets. `broker_host`
@@ -1682,16 +1910,19 @@ class WizardHandler(http.server.BaseHTTPRequestHandler):
                 f"        - path: {yaml_url}",
                 "          roles:",
                 "            - detect",
-                "            - record",
                 "    detect:",
                 "      width: 1280",
                 "      height: 720",
                 "      fps: 5",
+                "    # Detection only. To keep footage, give the input above the",
+                "    # record role as well, and switch this block on:",
+                "    # https://docs.frigate.video/configuration/record",
                 "    record:",
-                "      enabled: true",
-                "      retain:",
-                f"        days: {retention_days}",
-                "        mode: motion",
+                "      enabled: false",
+                "    # Frigate publishes a JPEG of every object it tracks to the",
+                "    # broker unless this says off. Events still flow either way.",
+                "    mqtt:",
+                "      enabled: false",
                 "",
             ]
         lines += [

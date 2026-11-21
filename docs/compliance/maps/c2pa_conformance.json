@@ -1,0 +1,212 @@
+{
+  "schema": "securacv-compliance-map:v1",
+  "regime": {
+    "id": "c2pa_conformance",
+    "title": "C2PA conformance program — generator-product topics",
+    "kind": "program",
+    "determination_by": "the C2PA conformance program, and each relying party's validator configuration",
+    "source": {
+      "citation": "C2PA conformance program",
+      "access": "blocked",
+      "note": "program documents not fetched (c2pa.org and spec.c2pa.org were unreachable); rows are the generator topics the item-6 profile addresses"
+    }
+  },
+  "last_reviewed": "2026-11",
+  "rows": [
+    {
+      "id": "shipped-sidecar",
+      "clause": "generator: signed manifest",
+      "clause_verified": false,
+      "requirement": "A generator emits a signed C2PA manifest a validator can check.",
+      "mechanism": "A C2PA sidecar over an export bundle, signed under the device-derived certificate (compiled under the c2pa-export feature).",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/c2pa_export.rs",
+          "test": "sidecar_roundtrip_verifies_trusted"
+        },
+        {
+          "kind": "code",
+          "path": "src/c2pa_export.rs",
+          "symbol": "pub fn sign_export_sidecar("
+        }
+      ],
+      "limits": "A v0 pre-freeze sidecar; its test runs under --features c2pa-export."
+    },
+    {
+      "id": "profile-shape",
+      "clause": "generator: manifest profile",
+      "clause_verified": false,
+      "requirement": "A generator's manifests follow a stated profile.",
+      "mechanism": "The witness-manifest profile v1.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "docs/design/c2pa_export.md"
+        }
+      ],
+      "depends_on": [
+        "item6:CC1"
+      ]
+    },
+    {
+      "id": "stock-validator-interop",
+      "clause": "generator: interoperability",
+      "clause_verified": false,
+      "requirement": "Manifests read correctly in other validators.",
+      "mechanism": "Recorded display in stock tools.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "docs/design/c2pa_export.md"
+        }
+      ],
+      "depends_on": [
+        "item6:CC2"
+      ]
+    },
+    {
+      "id": "time-stamp",
+      "clause": "generator: time stamp",
+      "clause_verified": false,
+      "requirement": "Claim signatures carry a trusted time stamp.",
+      "mechanism": "A claim time stamp from the anchor TSA.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "docs/design/c2pa_export.md"
+        }
+      ],
+      "depends_on": [
+        "item6:CC3"
+      ]
+    },
+    {
+      "id": "disclosed-frames",
+      "clause": "generator: media assets",
+      "clause_verified": false,
+      "requirement": "Media assets carry their own manifests.",
+      "mechanism": "Manifests on frames disclosed through an unseal.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "docs/design/c2pa_export.md"
+        }
+      ],
+      "depends_on": [
+        "item6:CC4"
+      ]
+    },
+    {
+      "id": "typed-redactions",
+      "clause": "generator: redactions",
+      "clause_verified": false,
+      "requirement": "Redactions are declared rather than hidden.",
+      "mechanism": "Typed redactions for privacy filtering.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "docs/design/c2pa_export.md"
+        }
+      ],
+      "depends_on": [
+        "item6:CC5"
+      ]
+    },
+    {
+      "id": "court-kit-section",
+      "clause": "generator: packaging",
+      "clause_verified": false,
+      "requirement": "Manifests travel with the evidence they describe.",
+      "mechanism": "A c2pa/ section in the court kit.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "docs/design/c2pa_export.md"
+        }
+      ],
+      "depends_on": [
+        "item6:CC6"
+      ]
+    },
+    {
+      "id": "trust-list-enrollment",
+      "clause": "generator: trust list",
+      "clause_verified": false,
+      "requirement": "Generator certificates chain to the program's trust list.",
+      "mechanism": "A self-signed device CA with the private-credential-store path.",
+      "status": "not-pursued",
+      "evidence": [
+        {
+          "kind": "decision",
+          "path": "docs/design/c2pa_export.md",
+          "anchor": "4-what-this-deliberately-does-not-do-v1"
+        }
+      ],
+      "reason": "A self-signed device CA with the private-credential-store pinning path is the design; trust-list enrollment is declined (item-6 rejection 19)."
+    },
+    {
+      "id": "soft-bindings",
+      "clause": "generator: soft bindings",
+      "clause_verified": false,
+      "requirement": "Manifests can be recovered through soft bindings (watermarks or fingerprints).",
+      "mechanism": "No soft binding is written.",
+      "status": "not-pursued",
+      "evidence": [
+        {
+          "kind": "decision",
+          "path": "docs/security/PROVENANCE_INTEROP.md",
+          "anchor": "3-what-we-deliberately-do-not-adopt"
+        }
+      ],
+      "reason": "A soft binding is a content-comparable correlation substrate, which Invariants II and IV rule out."
+    },
+    {
+      "id": "key-protection",
+      "clause": "generator: key protection",
+      "clause_verified": false,
+      "requirement": "Generator signing keys are protected.",
+      "mechanism": "The device seed derives the signing keys; its protection is the deployment's.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/security/CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md",
+          "anchor": "6-technical-security-controls"
+        },
+        {
+          "kind": "tracker",
+          "path": "docs/security/ENTERPRISE_CUSTODY.md",
+          "anchor": "6-regulated-market-assurance-tier"
+        }
+      ],
+      "operator_action": "Protect the device seed per the CPS.",
+      "limits": "The program's assurance requirements were not read."
+    },
+    {
+      "id": "cawg-identity",
+      "clause": "CAWG identity assertion",
+      "clause_verified": false,
+      "requirement": "A named person can co-sign a manifest with an identity assertion.",
+      "mechanism": "A CAWG identity assertion naming the person the cited receipt records.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "docs/compliance/CAWG_COSIGNING.md"
+        }
+      ],
+      "depends_on": [
+        "item7:CP5",
+        "upstream:c2pa-cawg-cde"
+      ]
+    }
+  ]
+}

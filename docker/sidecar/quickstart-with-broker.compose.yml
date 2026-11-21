@@ -120,7 +120,7 @@ services:
       MQTT_USERNAME: "${SECURACV_MQTT_PASSWORD:+securacv}"
       MQTT_PASSWORD: "${SECURACV_MQTT_PASSWORD:-}"
       # FRIGATE_TOPIC_PREFIX: "frigate"
-      # FRIGATE_ENABLE_REVIEWS: "true"    # seal Frigate's review ALERTS instead of every tracked object (0.14+)
+      # FRIGATE_ENABLE_REVIEWS: "true"    # seal Frigate's review ALERTS instead of every tracked object (0.14+; needs recording on in Frigate)
       # FRIGATE_LABELS: "person,car,dog,cat"
       # RETENTION_DAYS: "7"
       # This docker host's LAN address. The announce then names it, so Home

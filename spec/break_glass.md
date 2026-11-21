@@ -72,7 +72,7 @@ break_glass policy propose \
 # a tampered proposal is refused, not signed.
 break_glass policy approve \
   --proposal change.proposal --trustee alice \
-  --signing-key alice.key --output alice.policy-approval
+  --signing-key alice.tkey --output alice.policy-approval
 
 # Operator: apply with the collected approvals (within the same
 # 10-minute freshness window the proposal was created in)
@@ -184,7 +184,7 @@ hash" social-engineering call has nothing the tool will accept.
 break_glass approve \
   --request unlock.request \
   --trustee alice \
-  --signing-key /path/to/alice.signing.key \
+  --signing-key /path/to/alice.tkey \
   --output alice.approval
 ```
 
@@ -236,6 +236,12 @@ answers who asked and why. Verification re-derives the request hash from
 those recorded fields and refuses a receipt whose recorded context is not
 what the trustees signed.
 
+The approvals recorded on a receipt are those over its request hash, in the
+order they were presented. An approval over another hash (a stale file for an
+earlier request, handed in beside the right ones) never counts and is neither
+committed nor stored; one over this hash from a trustee whose signature does
+not verify is recorded but never counted.
+
 ## Unsealing
 
 Use the token file to unseal the envelope. The output is written to the
@@ -257,10 +263,39 @@ DEVICE_KEY_SEED=devkey:your-seed \
 token writes a device-signed receipt (below), so a holder of the database key
 alone cannot redeem one.
 
+Name who receives the file with `--recipient-file r.json`
+(`{"name": …, "organization"?: …, "key"?: …}`, preferred: it stays out of
+shell history) or `--recipient-name` / `--recipient-org` / `--recipient-key`.
+The recipient is **declared** — the device does not check who received the
+file — and is validated before anything is spent.
+
+After the burn and a successful decrypt, and before any byte is written, the
+device appends one more signed row, `Unsealed { redemption_entry_hash,
+plaintext_commitment, recipient_commitment? }`: the device decrypted that
+redemption's envelope to the plaintext the salted commitment fixes. The
+salts exist only in the **handoff sidecar** written beside the file
+(`<envelope>.raw.securacv-handoff.json`, 0600), never in the database, so the
+never-pruned ledger holds no media fingerprint and no recipient name. The
+order is fail-closed: before the burn an earlier sidecar at the output path
+is moved aside — restored on any later failure, deleted once the new unseal
+succeeds — and the sidecar path is proven writable (a failure refuses with
+nothing recorded); the `Unsealed` row, then
+the sidecar, then the `.raw` — a failure at any step discards the cleartext
+and writes nothing (`docs/handoff_sidecars.md` names every message). Anchor
+the disclosure record afterwards (`log_anchor … --subject
+break_glass_receipt_head`), not the media digest.
+
+**Upgrade order.** `Unsealed` is a new receipt variant: a reader built before
+it fails on such a row, and a `witnessd` of that era boots into safe mode.
+Upgrade `witnessd`, `break_glass`, `log_verify`, `envelope_verify`,
+`court_export` and every observer host before the first unseal recorded by
+this build — the same rule `TokenRedeemed` carried.
+
 ### Redemption — single use, recorded twice
 
 A token is spent exactly once, and the spending is recorded **before any
-cleartext exists**, in one transaction, in this order:
+cleartext exists**, in one transaction, in this order (and the decrypt is
+recorded once more, by the `Unsealed` row above):
 
 1. **Burn.** The token's nonce is inserted into the unsigned
    `consumed_break_glass_tokens` table. A nonce already there, or already
@@ -291,7 +326,12 @@ one.
 
 Receipts form an append-only, signed chain in the kernel database. Use the
 `break_glass receipts` command (or `log_verify`) to validate the chain and
-confirm that approvals align with the stored quorum policy. Verification
+confirm that approvals align with the stored quorum policy. An approval that
+does not count (over another request hash, from a trustee outside the
+receipt's policy era, or with a signature that does not verify) is skipped,
+never a failure, on every outcome: a `Granted` receipt still needs `n`
+distinct valid approvals and must name exactly the trustees whose approvals
+verify. Verification
 also re-derives each receipt's request hash from its recorded purpose and
 operator context. The audit path tolerates a receipt that recorded no
 context (a pre-§3.6 build's row has nothing to bind and is reported as it
@@ -315,7 +355,21 @@ token redemptions, and fails (`FailureKind::TokenRedemption`) when:
   with no signed redemption row behind it — a token the ledger shows was
   spent by a build that wrote no redemption rows, or whose row was removed
   from the chain tail — or a redemption row has no burn row (the two are
-  written together, so a missing burn row was deleted).
+  written together, so a missing burn row was deleted);
+- an `Unsealed` row names no earlier redemption (U1), is the second for one
+  redemption (U2), completes the redemption of an `export:events` token
+  (U3), does not restate its redemption's envelope, ruleset, request hash or
+  bucket (U4), or carries approvals or named trustees (U5).
+
+Export receipts that name the Granted receipt whose token authorized them
+(`authorizing_receipt`) are checked against this chain by every walk that
+holds both ledgers, and fail as `FailureKind::ExportAuthorization`
+(`export_authorization`) when (R0) the field is not a 32-byte array, (R1) the
+receipt's `auth_mode` is not `break_glass`, (R2) no Granted receipt has that
+hash, (R3) the grant is for another envelope than `export:events`, (R4) the
+grant was never redeemed, (R5) two export receipts name one grant, or (R6)
+the receipt restates an operator context beside it (a quorum export's
+operator is its grant's).
 
 An evidence envelope carries the chain but not the burn table, so the last
 rule runs only against the database itself. A database unsealed by a build
@@ -327,4 +381,7 @@ and denied counts.
 deterministic human-readable record — printed name, UTC time, and the
 meaning of every signature (the 21 CFR 11.50 triad) — so the same receipt
 renders as the same record on every tool. A redemption row renders as
-`TOKEN REDEEMED`, naming the nonce and the grant it spent.
+`TOKEN REDEEMED`, naming the nonce and the grant it spent; an unseal row as
+`UNSEALED`, naming its redemption, with the recipient commitment labeled
+"declared by the operator, not verified". The receipts list labels it
+`UNSEALED` and the total counts the unseal records.

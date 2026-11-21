@@ -66,14 +66,18 @@ ceremony — who is in the room, what is read aloud, what is retained — see
 DEVICE_KEY_SEED=devkey:your-seed \
   cargo run --bin break_glass -- init --threshold 2 --trustees 3 --db witness.db
 
-# Import a trustee who generated their own key and sent you the public half:
+# Each trustee, on their own machine, makes a passphrase-wrapped key and sends
+# you only the public key it prints:
+cargo run --bin break_glass -- trustee keygen --id alice --output alice.tkey
+
+# Import it:
 DEVICE_KEY_SEED=devkey:your-seed \
   cargo run --bin break_glass -- trustee enroll --id alice --public-key 0123... --db witness.db
-
-# …or mint a keypair for them (writes the signing key at mode 0600 to hand over):
-DEVICE_KEY_SEED=devkey:your-seed \
-  cargo run --bin break_glass -- trustee enroll --id bob --generate --output bob.key --db witness.db
 ```
+
+`trustee enroll --generate --output bob.key` (the operator mints the key and
+hands it over) still works but is deprecated and says so: it leaves you holding
+the trustee's secret, as a plaintext file.
 
 The draft is a plain file next to the database (`<db>.setup-draft.json`, override with
 `--draft`). It holds only public keys and counts — no secrets. It is kept **separate**
@@ -100,6 +104,48 @@ DEVICE_KEY_SEED=devkey:your-seed \
 
 Trustee entries use the format `id:HEX_PUBLIC_KEY`, where the public key is the hex-encoded
 32-byte Ed25519 verifying key.
+
+### Trustee keys at rest (`trustee keygen`, `wrap`, `pubkey`)
+
+A trustee's signing key lives on the trustee's own machine, never the hub's.
+These three commands are run by the trustee:
+
+```bash
+# Mint a key, wrapped under a passphrase (typed twice, echo off); prints the
+# public key and its fingerprint, never the secret:
+break_glass trustee keygen --id alice --output alice.tkey
+
+# Wrap an existing plaintext (64-hex) key file; the plaintext file is left in
+# place for you to destroy once the wrapped one works:
+break_glass trustee wrap --signing-key alice.key --id alice --output alice.tkey
+
+# Print the public key a file signs with (a wrapped file asks for its passphrase):
+break_glass trustee pubkey --signing-key alice.tkey
+```
+
+A wrapped file is one line, `securacv-trustee-key:v1 <hex>`, mode 0600: the
+seed under ChaCha20-Poly1305 with an Argon2id key (64 MiB, 3 passes, 1 lane —
+any other parameters are refused before derivation), bound to the trustee id
+and public key, so a renamed or re-keyed file does not open. `approve`,
+`policy approve` and `trustee pubkey` read either form from `--signing-key`:
+a wrapped file asks for its passphrase, and a plaintext one still works but
+prints a warning naming `trustee wrap`.
+
+The passphrase comes from the terminal with echo off, or from a file
+descriptor you name with `--passphrase-fd N` (one line per passphrase; for
+example `--passphrase-fd 0` with the passphrase piped in from a password
+manager). An fd that is itself a terminal is read the same way as the
+terminal: echo off, and a new passphrase typed twice. It is never read from
+the command line or an environment variable. With neither a terminal nor
+`--passphrase-fd`, the command refuses. While echo is off, Ctrl-C (or
+SIGTERM, SIGHUP) puts it back before the command dies, Ctrl-Z is ignored,
+and a line over 1024 bytes is refused and discarded from the terminal so the
+shell never reads the rest of it.
+
+The quorum policy records nothing about wrapping: the hub cannot check that a
+trustee's key is wrapped, so whether each trustee uses a wrapped key is a
+procedure the ceremony record declares per trustee
+([`security/CEREMONY_RUNBOOK.md`](security/CEREMONY_RUNBOOK.md) C1).
 
 **Auditing without the signing seed.** `receipts`, `policy history`, and `policy show`
 open the encrypted database with either `--device-key-seed` or the database key alone
@@ -138,7 +184,9 @@ cargo run --bin break_glass -- drill --threshold 2 --trustees 3
 **throwaway sandbox** — a temporary database, a temporary vault, and ephemeral
 trustee keys, all discarded when it finishes. It touches nothing real. It seals a
 dummy payload behind a fresh `n`-of-`m` quorum, unseals it with a second quorum
-token, and confirms the recovered bytes match byte-for-byte, then prints
+token, records the unseal and verifies its handoff sidecar under the drill's
+device key (`✓ recorded the unseal and verified its handoff sidecar`), and
+confirms the recovered bytes match byte-for-byte, then prints
 **DRILL PASSED** (exit 0) or fails non-zero. Use it to confirm a build/host can
 actually execute break-glass, and to let trustees practice the flow with zero risk.
 
@@ -166,7 +214,7 @@ cargo run --bin break_glass -- request \
 cargo run --bin break_glass -- approve \
   --request unlock.request \
   --trustee alice \
-  --signing-key /path/to/alice.signing.key \
+  --signing-key /path/to/alice.tkey \
   --output alice.approval
 
 DEVICE_KEY_SEED=devkey:your-seed \
@@ -183,8 +231,30 @@ cargo run --bin break_glass -- unseal \
   --db witness.db \
   --ruleset-id ruleset:v0.3.0 \
   --vault-path vault/envelopes \
-  --output-dir vault/unsealed
+  --output-dir vault/unsealed \
+  --recipient-file recipient.json
 ```
+
+`--recipient-file` (`{"name": "…", "organization": "…"}`, optionally `"key"`)
+names who receives the file; prefer it to `--recipient-name` /
+`--recipient-org` / `--recipient-key`, which land in shell history. The
+recipient is declared, not verified, and is checked before anything is
+spent. After the decrypt the device appends a signed **unseal record** and
+writes a **handoff sidecar** beside the file — first, then the `.raw`, both
+0600:
+
+```
+Unsealed envelope written to vault/unsealed/<envelope>.raw
+  sha256:          <hex> (<n> bytes)
+  unseal record:   <16 hex>… appended to the receipt chain (device-signed; pairs this file to its grant)
+  handoff sidecar: vault/unsealed/<envelope>.raw.securacv-handoff.json (mode 0600; hand it over with the file)
+  recipient:       committed in the signed unseal record; named only in the handoff sidecar
+```
+
+Hand over the file and its sidecar together; the receiving party checks them
+with `handoff_sidecar verify --file <raw> --public-key-file <device.pub>` or
+the shell recipe in [`handoff_sidecars.md`](handoff_sidecars.md). Then anchor
+the disclosure record: `log_anchor … --subject break_glass_receipt_head`.
 
 ### Break-glass web console
 
@@ -217,7 +287,10 @@ that walks the same four phases without file shuffling, after a one-time setup:
    their key seed and sends you back the signature to paste. Offline trustees can keep using
    `break_glass approve --request`.
 4. **Quorum & unseal** — status now auto-refreshes every few seconds with a per-trustee
-   signed/pending table and a progress bar; **Unseal** enables when quorum is met.
+   signed/pending table and a progress bar; **Unseal** enables when quorum is met. A granted
+   unseal writes the file and its handoff sidecar side by side on the server (the reply's
+   `handoff_sidecar` names it; the page says "hand it over with the evidence file"). The console
+   takes no recipient yet, so its sidecar names none.
 
 Every attempt, granted or denied, is recorded as a tamper-evident receipt either way.
 
@@ -239,6 +312,17 @@ DEVICE_KEY_SEED=devkey:your-seed \
   --self-export \
   --output witness_export.json
 ```
+
+A self-export can record who exported it and why — `--requested-by "Dana Owner" --reason
+owner-recovery [--case-ref HOA-114] [--requester-key <hex>]` — signed into the receipt as a
+**declared** context (it is the device-key holder's own statement, not trustee-consented), and
+either mode can name a recipient (`--recipient-file`, or `--recipient-name` with `--recipient-org`
+/ `--recipient-key`), committed into the receipt salted and named only in the **handoff sidecar**
+written beside the bundle (`<output>.securacv-handoff.json`, 0600). A quorum export refuses
+`--requested-by` (exit 2, nothing spent): its requester is the one the grant recorded, named by
+reference — the receipt's `authorizing_receipt` is the grant's entry hash. If the sidecar cannot
+be written the bundle is kept, the tool exits 1, and the error prints the recovery command
+(`handoff_sidecar emit --file <bundle> --db <db>`).
 
 **Break-glass export** — trustee-quorum authorization for the same artifact, when you want a
 disclosure countersigned by your trustees (e.g. handing evidence to a third party).
