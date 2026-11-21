@@ -154,7 +154,7 @@ async function main() {
       "The Grove Vision AI V2 is a self-contained vision inference machine: a Himax HX6538 " +
       "with an Ethos-U55 NPU runs the detection model on-module, and the ESP32 host only " +
       "ever hears semantic results over I2C. The vendor's own CAD below — the same viewer " +
-      "the Board Room uses.");
+      "the Boards bench uses.");
     if (boardsData) s.append(buildBoardLab(boardsData, "canary-vision"));
     else s.append(el("p", "muted", "Board catalog unavailable — run tools/gen_boards.py."));
     const facts = el("div", "wap-facts");
@@ -258,7 +258,7 @@ async function main() {
       ["The getting-started walkthrough", "unboxing → aimed and publishing, ~45 minutes", d.docs.getting_started],
       ["The device guide", "ports, wiring, protocol, recovery — the deep reference", d.docs.device_guide],
       ["The Vision firmware", "the code this page is parsed from", d.docs.firmware_readme],
-      ["The Board Room", "pin flags + wiring on this exact board", "canary-local/boards.html"],
+      ["Boards", "pin flags + wiring on this exact board", "canary-local/boards.html"],
       ["Flash a Canary", "the in-browser flasher for the ESP32 host", "canary-local/flash.html"],
       ["The Hub", "Home Assistant on a Raspberry Pi — where these entities land", "canary-local/homeassistant.html"],
     ];

@@ -285,36 +285,73 @@ were not the owner's after all and are closed below.
   three releases behind, and the Witness Wall's vendored verifier predated
   the handoff-sidecar work, so the hosted Wall called a genuine export from
   a current kernel a failed one. `scripts/carry_to_site.py` was run from
-  main and its output is in the site's PR #267. The cause is in the owner's
-  list below, item 11.
+  main and its output is in the site's PR #267. The CAD carry was stale the
+  same way (four case sources and the builder data, since at least
+  2026-11-16, when the job built the carry and could not open its pull
+  request) and is the site's PR #268. The cause is in the owner's list
+  above, item 11.
 - **The social queue, again.** Two queued posts still said "a 24-hour
   memory" and "clips auto-delete after 24 hours" in a title, a card and two
   by-hand channels. The site's social desk now refuses the claim the way its
   pages do.
+- **Lab bench names.** The manifest had renamed seven benches (it keeps the
+  old names as `wasNamed`) and the page titles had followed; the pages' own
+  headlines had not, so a tab that said "Flash over USB" opened "The Canary
+  Nursery" and "Boards" opened "The Board Room". The room led with "Canary
+  Lab" under an "ERRERLabs" kicker and the site map with a slogan. Each
+  headline now leads with the name its title leads with, the links between
+  benches use it, and `canary-local/tools/gen_head.py --check` refuses a
+  headline that does not. The flasher's own screens still call it the
+  Nursery, a nickname its lede now introduces.
+- **iOS and tvOS strings.** Two iPhone screens said "nothing leaves your
+  home" about a Bluetooth search, and the Wall's searching card said
+  "nothing leaves this room" where a hub address somewhere else is a
+  supported input. Each now says what the search does, and
+  `scripts/tests/test_device_copy_claims.py` reads the three apps' sources.
+  The edits are string literals; nothing here could build the apps, and
+  their own workflows do.
 
 ## Backlog, in order
 
-1. **One map for the six stages.** The site's journey page should render
-   from the Lab's manifest instead of restating it.
-2. **Lab bench names.** The page titles lead with the manifest's name for
-   each bench; seven benches still carry the old name in their own headline
-   and in links from other benches.
-3. **The device status vocabulary.** The site has four words and a ladder;
-   the Lab's catalogs say "released" and "in development". One vocabulary,
-   carried.
-4. **Fold four pages.** The Story into the Showroom, the Maker Corps into
+The first three are choices about how the product is drawn and named, not
+defects with one right fix; each is stated as the choice it is.
+
+1. **One map for the six stages.** Three surfaces draw the journey and no
+   two agree. The Lab's stage rail (`stages` in `canary-local/build-line.json`)
+   says Choose, Build, Flash, Sense, Home, Prove. The Lab's room
+   (`canary-local/assets/room.js`) says Choose, Enclosure, Board, Sense,
+   Home, Proof, and its third station is "Wire & flash". The site's `/lab`
+   deck says Pick, Case, Wire, Switch on, Home, Check, and puts flashing
+   under "Switch on". So the site's stop 4 opens a page the Lab's rail
+   files under stage 3, and "Watch it work" is a Check on the site and a
+   Home bench in the Lab. The Lab's own landing page shows two of the sets
+   at once: the room's chips read Choose, Enclosure, Board, Sense, Home,
+   Proof, and the cards under them Choose, Build, Flash. Taking the rail's
+   six means one station redrawn in the room and one scene in the deck;
+   taking the older six means re-sorting the rail. After the choice, the
+   deck should be held to the manifest by a test and a carried copy, not
+   restated by hand.
+2. **The device status vocabulary.** The site's four words (Available, Maker
+   build, Preview, Concept) are each mapped onto the ladder
+   `canary-local/devices/figures.json` derives. The Lab has two more
+   vocabularies. Its catalogs carry a status key (`released`,
+   `in-development`, `coming-soon`) that pages branch on and print as
+   "released · print-validated", "in development" and "coming soon ·
+   concept". Its device registry carries a sentence that leads with the
+   same three words, except two entries that fit none ("phase 2 complete"
+   for the Sense, "adapter shipped" for the vehicle adapter). The three
+   line up with Maker build, Preview and Concept; choosing one set is a
+   change to code and tests as well as copy.
+3. **Fold four pages.** The Story into the Showroom, the Maker Corps into
    Build, Feedback into Contact, the Demo Board into News. Each is a page
-   that exists because it was built, not because a reader needs two.
-5. **The Home Assistant app's own store text.** Its documentation tab ends in
+   that exists because it was built, not because a reader needs two. It
+   removes pages someone made, so it waits for a yes.
+4. **The Home Assistant app's own store text.** Its documentation tab ends in
    a link to the issue tracker and nothing else, and two option descriptions
    still say "add-on". It should link the site's Home Assistant page and the
    Help Desk. Left for the change that moves the base image (owner item 10):
    any edit under `privacy_witness_kernel/` republishes its image on merge,
    and a wording fix is not a reason to ship one.
-6. **iOS and tvOS strings.** Three screens say "nothing leaves your home" or
-   "this room" about a Bluetooth search or a LAN read. Each is true in its
-   scope and none was changed here, because nothing in this pass could
-   build those apps; they are not held by the device-copy test either.
 
 ## The test
 

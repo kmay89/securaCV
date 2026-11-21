@@ -278,7 +278,7 @@ async function main() {
       celebration.append(
         el("div", "start-complete-bird", "🎉"),
         el("h3", null, "Path complete — every step ✓"),
-        el("p", "muted", "Your witness is standing. The record it keeps now is one nobody — including you — can silently edit."));
+        el("p", "muted", "Your witness is standing. In the record it keeps now, an edit shows — yours included."));
       const next = data.missions[(data.missions.indexOf(m) + 1) % data.missions.length];
       const row = el("div", "start-complete-row");
       const b = el("button", "primary small", "next path: " + next.glyph + " " + next.title + " →");

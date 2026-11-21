@@ -339,7 +339,7 @@ def main():
                             "variants": {"all": {"links": [
                                 {"label": "Find your Canary (4 questions)", "href": "choose.html"},
                                 {"label": "Meet the Canaries (live firmware)", "href": "fleet.html"},
-                                {"label": "The Board Room (wiring)", "href": "boards.html"},
+                                {"label": "Boards (wiring)", "href": "boards.html"},
                             ]}},
                         },
                         {

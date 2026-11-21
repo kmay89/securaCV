@@ -211,7 +211,8 @@ action:
           - service: "{{ notify_target }}"
             data:
               title: "SecuraCV — {{ device_name }} battery recovered"
-              message: "Battery back to {{ battery_pct }}% ({{ charge_state }}) at {{ now().strftime('%H:%M') }}."
+              message: >-
+                {% if state_attr(health_sensor, 'battery_percent') is number %}Battery back to {{ battery_pct }}%{% else %}Back to healthy, with no charge reading{% endif %} ({{ charge_state }}) at {{ now().strftime('%H:%M') }}.
               data:
                 tag: "securacv-battery-low"
                 group: "securacv-power"

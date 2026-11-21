@@ -3,12 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Drive the SecuraCV Witness Wall on a simulated Apple TV, right in your browser — the tvOS focus engine, an on-screen remote, Home and Business editions, one-tap incident capture, break-glass by quorum, and the ambient witness screensaver.">
+  <meta name="description" content="Drive the Witness Wall on a simulated Apple TV in your browser: the focus engine, an on-screen remote, and the Home and Business editions. A staged demo.">
   <meta name="theme-color" content="#2563eb">
-  <meta property="og:title" content="Witness Wall — Apple TV emulator — SecuraCV">
   <meta property="og:description" content="Steer the signed record on a simulated Apple TV: focus engine, an on-screen remote, two editions, and the real interactions. No install.">
+  <!-- head:derived — written by scripts/make-head.mjs from js/site.js and this page’s own title and description. Edit those, then re-run it. -->
+  <link rel="canonical" href="https://securacv.com/witness-wall">
+  <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1">
+  <meta name="author" content="Errer Labs">
+  <meta property="og:site_name" content="SecuraCV">
+  <meta property="og:locale" content="en_US">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://securacv.com/witness-wall">
+  <meta property="og:title" content="Apple TV Emulator — drive the Witness Wall">
   <meta property="og:image" content="https://securacv.com/share-card.jpg">
   <meta property="og:image:width" content="2400">
   <meta property="og:image:height" content="1260">
@@ -16,9 +22,8 @@
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:image" content="https://securacv.com/share-card.jpg">
   <meta name="twitter:image:alt" content="Canary, SecuraCV's yellow bird mascot, holding a notepad beside the words: Records what happened. Never who. An open-source home camera with no cloud, no subscription, and no face recognition.">
-  <meta name="author" content="Errer Labs">
-  <link rel="canonical" href="https://securacv.com/witness-wall">
-  <title>Witness Wall — Apple TV emulator — SecuraCV</title>
+  <!-- /head:derived -->
+  <title>Apple TV Emulator — drive the Witness Wall — SecuraCV</title>
   <style>
     :root {
       --bg: #fafafa; --surface: #ffffff; --border: #e4e4e7; --border-strong: #d4d4d8;
@@ -91,6 +96,10 @@
     .topbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-bottom: 12px; border-bottom: 1px solid var(--tv-line); flex-wrap: wrap; }
     .verified { font-family: var(--mono); font-size: clamp(.7rem,1.5vw,.86rem); color: var(--verified); display: inline-flex; align-items: center; gap: .5em; }
     .hb { width: 8px; height: 8px; border-radius: 50%; background: var(--verified); box-shadow: 0 0 0 0 var(--verified); animation: hb 3.2s ease-in-out infinite; }
+    /* A live fleet is presence, not a checked chain: the line loses its
+       pass color and its pulse, the way a live tile's toast loses its tick. */
+    .verified.plain { color: var(--tv-muted); }
+    .verified.plain .hb { background: var(--tv-muted); animation: none; box-shadow: none; }
     @keyframes hb { 0%,100% { box-shadow: 0 0 0 0 rgba(116,198,161,.5); } 50% { box-shadow: 0 0 0 7px rgba(116,198,161,0); } }
     .clock { font-family: var(--mono); font-size: clamp(.7rem,1.5vw,.86rem); color: var(--tv-muted); font-variant-numeric: tabular-nums; }
     .switch { display: inline-flex; gap: 6px; padding: 4px; background: rgba(255,255,255,.04); border: 1px solid var(--tv-line); border-radius: 999px; }
@@ -377,7 +386,7 @@
       <span class="eyebrow">Apple TV · emulator · drivable</span>
       <h1>Drive the <em>Witness Wall</em>, right here.</h1>
       <p>Like the Lab, for the living-room screen: an Apple TV emulator you steer with the arrow keys or the on-screen remote. Try three profiles — <b>Home</b>, <b>Business</b> and <b>Apartment</b>: a doorbell over your show, a monitoring board, a peek through the peephole. The native Apple TV app is built and tested, but not on the App Store yet.</p>
-      <p>The real Wall is a web app that works today — <a href="https://securacv.com/tv/">open it in your browser</a>; it also packages for Samsung and LG TVs and casts to Chromecast. Its checks come from a verifier that actually runs, never a hardcoded string.</p>
+      <p>The emulator on this page is a demo: until you connect a kernel below, its fleet and its “verified” line are sample data, and they say so. The real Wall is a web app whose checks come from a verifier that actually runs, never a hardcoded string; it packages for Samsung and LG TVs and casts to Chromecast, and a packaged app is what can reach a hub on your home network. <a href="https://securacv.com/tv/">The copy on this site</a> shows you its setup screen and stops there: a browser will not let a page served from a website reach a device on your network.</p>
       <p class="live-line" id="liveLine"><span class="live-dot demo" id="liveDot"></span><span id="liveText">Demo fleet — not connected to a kernel</span> · <a href="#connect">connect yours</a></p>
       <div class="skinbar" id="skinbar" role="group" aria-label="Screen skin">
         <span class="lbl">Skin</span>
@@ -395,7 +404,7 @@
         <div class="tv" id="tv" tabindex="0" aria-label="Apple TV emulator. Hover or click to engage, then use arrow keys to move focus, Enter to select, Escape for Menu.">
           <div class="screen">
             <div class="topbar">
-              <span class="verified"><span class="hb"></span><span id="verifiedTime">verified through 4:02 PM</span></span>
+              <span class="verified" id="recordLine"><span class="hb"></span><span id="verifiedTime">demo · verified through 4:02 PM</span></span>
               <div class="switch" role="tablist" aria-label="Profile">
                 <span class="seg f" data-action="edition:home" data-on="1" tabindex="-1">Home</span>
                 <span class="seg f" data-action="edition:business" data-on="0" tabindex="-1">Business</span>
@@ -425,7 +434,7 @@
             <canvas id="saverCanvas" aria-hidden="true"></canvas>
             <div class="center">
               <div class="big" id="saverLine">all is well</div>
-              <div class="sub">fleet breathing · chain intact · verified through 4:02 PM</div>
+              <div class="sub" id="saverSub">demo · fleet breathing · chain intact</div>
             </div>
             <div class="hint">press any key or the remote to wake</div>
           </div>
@@ -438,7 +447,7 @@
           </div>
 
           <div class="pip" id="doorbell" role="alertdialog" aria-label="Doorbell">
-            <div class="pip-cam" aria-hidden="true"><span class="figure"></span><span class="parcel" id="pipParcel">📦</span><span class="live">● LIVE</span><span class="camcap">coarse view · raw stays on device</span></div>
+            <div class="pip-cam" aria-hidden="true"><span class="figure"></span><span class="parcel" id="pipParcel">📦</span><span class="live">● DEMO</span><span class="camcap">an illustration · no camera is connected</span></div>
             <div class="pip-body">
               <div class="pip-title"><span class="bell">🔔</span> <b id="pipKind">Front Door</b> <span class="pip-time" id="pipTime">7:14 PM</span></div>
               <div class="pip-sub" id="pipSub">Someone's at the door</div>
@@ -465,9 +474,9 @@
           </div>
           <p class="note">Hover the screen to engage the keyboard (so arrow keys still scroll the page elsewhere). Then explore the three profiles:</p>
           <ul class="note-list">
-            <li><b>Home</b> — pick <b>Watch a show</b>, then <b>Ring doorbell</b>: the alert takes over your movie as a picture-in-picture — the "your food's here" moment, no phone needed. <b>View</b> shows a coarse peek; raw video never leaves the device.</li>
+            <li><b>Home</b> — pick <b>Watch a show</b>, then <b>Ring doorbell</b>: the alert takes over your movie as a picture-in-picture — the "your food's here" moment, no phone needed. <b>View</b> and <b>Talk</b> are drawn here to show the idea; the Wall shipping today shows the record, not a picture, and has no two-way audio.</li>
             <li><b>Business</b> — flip <b>Glance → Monitor</b> for the heavy ops board: a live feed you can <b>acknowledge</b>, zone status, open incidents wired to dispute-pack, a shift/hours/compliance banner, and a multi-site rollup.</li>
-            <li><b>Apartment</b> — a battery Canary on the peephole. Hit <b>Knock</b>, then <b>Peek</b> to see who's there from the couch — built for anyone who can't easily get to the door.</li>
+            <li><b>Apartment</b> — a concept, not a device you can build yet: a battery Canary on the peephole. Hit <b>Knock</b>, then <b>Peek</b> to see who's there from the couch — an idea for anyone who can't easily get to the door.</li>
           </ul>
         </div>
 
@@ -509,7 +518,7 @@
 
     <section class="connect-panel" id="connect" aria-label="Connect your fleet">
       <h2>Connect your fleet <span class="exp">experimental</span></h2>
-      <p class="cp-sub">This really fetches a kernel over HTTP and shows its Canaries in place of the demo fleet. Hit <b>Try a live demo kernel</b>, or enter your own kernel's address — a browser can't scan your LAN. It keeps watching the three well-known ones (<code>canary.local:8099</code>, the kernel's own <code>canary.local:8799</code>, then <code>canary.local</code> — a fresh Canary answers there with no hub at all), so when one shows up you get to flip the switch.</p>
+      <p class="cp-sub">This really fetches a kernel over HTTP and shows its Canaries in place of the demo fleet. Hit <b>Try a live demo kernel</b>, or enter your own kernel's address — a browser can't scan your LAN. Opened over plain <code>http</code> on your own network, it keeps watching the three well-known ones (<code>canary.local:8099</code>, the kernel's own <code>canary.local:8799</code>, then <code>canary.local</code> — a fresh Canary answers there with no hub at all), so when one shows up you get to flip the switch. On this <code>https</code> site that watch is off: a browser will not let an https page reach an http device.</p>
       <div class="cp-row">
         <button class="cp-btn golive" id="goLiveBtn" type="button" hidden>✨ Go live</button>
         <button class="cp-btn" id="liveDemoBtn" type="button">▶ Try a live demo kernel</button>

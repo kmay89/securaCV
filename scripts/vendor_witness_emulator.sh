@@ -13,6 +13,12 @@ set -euo pipefail
 #
 #   - drop the site chrome: favicon links, Google Fonts, css/site.css,
 #     <header class="site">…</header>, <footer class="site">…</footer>, js/site.js
+#   - drop what only the site's own address needs: its structured-data block
+#     (JSON-LD names anchors of securacv.com, which mean nothing inside an app
+#     and which scripts/lint_site_links.py rightly reads as links nobody
+#     answers), and the preload of the site-hosted font. Absolutized, that
+#     preload would make every app open fetch a file from securacv.com; the
+#     apps drop the site's fonts with its stylesheet and fall back as before.
 #   - flatten the script path (js/tv-emulator.js → tv-emulator.js)
 #   - absolutize root-relative links (href="/…" → https://securacv.com/…) so a
 #     link tapped inside an app webview opens the real site instead of 404ing
@@ -51,6 +57,8 @@ sed -E \
   -e '/rel="icon"/d' \
   -e '/rel="apple-touch-icon"/d' \
   -e '/fonts\.googleapis\.com/d' \
+  -e '/type="application\/ld\+json"/d' \
+  -e '/rel="preload"[^>]*href="\/fonts\//d' \
   -e '/href="css\/site\.css[^"]*"/d' \
   -e '/<header class="site">/,/<\/header>/d' \
   -e '/<footer class="site">/,/<\/footer>/d' \
@@ -79,7 +87,8 @@ app copy in one pass, so the Flasher and the Lab can never drift apart —
 scripts/check_witness_emulator_sync.sh enforces that in CI).
 
   witness.html      <- witness-wall.html, one deterministic transform: site
-                       chrome removed (header/footer/fonts/site.css/site.js),
+                       chrome removed (header/footer/fonts/site.css/site.js,
+                       the structured-data block, the site font preload),
                        script path flattened, root-relative links absolutized.
   tv-emulator.js    <- js/tv-emulator.js  (byte-identical; window.witnessWall +
                        the witness:appear/connect/fleet/skin/profile API)

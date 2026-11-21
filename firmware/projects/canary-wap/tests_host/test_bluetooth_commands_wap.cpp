@@ -59,7 +59,10 @@
 // the library's default answered every Numeric Comparison yes. Both now
 // install through one dispatcher (ble_server_dispatch.h); the FULL tests
 // build both inits (Opera's real header) over the stand-in, whose default
-// server callbacks answer as NimBLE-Arduino 2.5.0's do, in either order.
+// server callbacks answer as NimBLE-Arduino 2.5.0's do. The channel's init()
+// comes first on a device; since sweep F449 the other order (a tap's init()
+// after a refused boot one, once ble_manager's Opera took NimBLE's one
+// server) is refused before it touches the stack.
 //
 // And the review of F172: NimBLE refuses to forget a bond that carries the
 // phone's IRK while it advertises or scans (ble_gap_unpair(): BLE_HS_EBUSY),
@@ -2754,6 +2757,10 @@ const char* const kStillStarting = "Bluetooth is still starting; try again in a 
 const char* const kNimBLEFailed = "NimBLE stack init failed (controller/host bring-up)";
 const char* const kHeapRefused =
     "Not started: internal RAM too low (largest block 20 KB/48 KB, free 30 KB/96 KB)";
+// A server the channel did not make (sweep F449): on FULL, Opera's.
+const char* const kDiscoveryServer =
+    "Not started: Bluetooth Discovery started its server this boot; restart to pair";
+const char* const kDiscoveryServerLog = "BLE not started: Bluetooth Discovery started its server this boot";
 const Handler kAdvertise = bluetooth_api::handle_bluetooth_advertise_start;
 const Handler kPair = bluetooth_api::handle_bluetooth_pair_start;
 const char* started_message(Handler h) { return h == kAdvertise ? "Advertising started" : "Pairing mode started"; }
@@ -3699,20 +3706,32 @@ void test_full_profile_the_owner_answers_every_pairing() {
   std::printf("PASS full_profile_the_owner_answers_every_pairing\n");
 }
 
-// The other order: Opera's init() first, the channel's after it (a REST
-// handler's bring_up() after a boot whose channel init failed or lost the
-// race). Before F171 the channel's setCallbacks() then replaced Opera's,
-// and Opera never counted a link. Either order ends with the dispatcher
-// installed, both owners reached, and the passkey shown being the channel's
-// (not the library's 123456), which reaches the PIN box.
-void test_full_profile_either_init_order() {
+// The other order: Opera's init() first, the channel's after it. Since F259
+// a handler brings the stack up only after the boot bring-up is over, so
+// this order arises only when the worker's channel init() was refused and
+// ble_manager's then brought NimBLE up and Opera took the server: sweep
+// F449's case, which the channel now refuses (the device path, with the
+// worker and a tap, is a_late_init_on_discoverys_server_is_refused). F171
+// held this order to the dispatcher (the channel's setCallbacks() had
+// replaced Opera's, and Opera never counted a link); refused, the channel
+// attaches nothing, so the dispatcher stays installed with Opera alone:
+// Opera counts the link, a Numeric Comparison is answered no and the
+// passkey shown is one nobody sees (not the library's yes and 123456),
+// and nothing reaches the channel. The channel-first order, the one a
+// device runs, is full_profile_the_owner_answers_every_pairing.
+void test_full_profile_the_other_init_order_is_refused() {
   boot(/*bring_up=*/false);
   opera_init();
+  const size_t opera_services = host_sim::server->services();
   host_sim::task = "httpd";                                  // bring_up() on a handler's task
-  CHECK(bc::init());
+  CHECK(!bc::init());
   host_sim::task = "loop";
+  CHECK(strcmp(bc::init_fail_reason(), kDiscoveryServer) == 0 && !bc::is_initialized());
+  CHECK(host_sim::server->services() == opera_services);    // nothing registered on Opera's server
+  CHECK(host_sim::device_callbacks == &host_sim::default_device_callbacks);   // the stack untouched
+  loop_pass();
+  CHECK(!bc::g_initialized);
   const uint32_t opera_total = ble_opera::getConnectionsTotal();
-  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_START)).r.ok);
   NimBLEConnInfo phone = link(9, 0xB2);
   host_sim::server->peers = {9};
   host_sim::server->link_up(phone);
@@ -3720,22 +3739,16 @@ void test_full_profile_either_init_order() {
   CHECK(ble_opera::getConnectionsTotal() == opera_total + 1);
   uint32_t shown = 0;
   on_nimble([&] { shown = host_sim::server->callbacks()->onPassKeyDisplay(); });
-  CHECK(shown != 123456 && shown < 1000000);
-  loop_pass();
-  CHECK(bc::g_connection.connected && bc::g_connection_handle == 9);
-  CHECK(bc::g_pairing.state == bc::PAIR_PIN_DISPLAYED && bc::g_pairing.pin_code == shown);
+  CHECK(shown != 123456 && shown >= 1000000 && shown < 2000000);
   on_nimble([&] { host_sim::server->callbacks()->onConfirmPassKey(phone, 135790); });
-  CHECK(host_sim::passkey_answers.empty());
-  loop_pass();
-  CHECK(bc::g_pairing.state == bc::PAIR_CONFIRMING && bc::g_pending_pair_active);
-  CHECK(rest(cmd_of(bc::BT_CMD_PAIR_REJECT)).r.ok);          // the owner says no
   CHECK(host_sim::passkey_answers.size() == 1 && !host_sim::passkey_answers[0].accept);
-  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0x13); });
-  CHECK(ble_opera::getConnectedNow() == 0);
+  CHECK(bc::g_events.waiting() == 0);
   loop_pass();
-  CHECK(!bc::g_connection.connected && host_sim::conn_heap == 0);
+  CHECK(!bc::g_connection.connected && bc::g_pairing.state == bc::PAIR_NONE);
+  on_nimble([&] { host_sim::server->callbacks()->onDisconnect(host_sim::server.get(), phone, 0x13); });
+  CHECK(ble_opera::getConnectedNow() == 0 && host_sim::conn_heap == 0);
   the_dispatcher_is_installed();
-  std::printf("PASS full_profile_either_init_order\n");
+  std::printf("PASS full_profile_the_other_init_order_is_refused\n");
 }
 
 // With no pairing owner (Opera alone: a build without the pairing channel,
@@ -5925,12 +5938,16 @@ void test_a_late_bring_up_says_what_it_left_out() {
   CHECK(t.status == "200 OK" && health_says(kLateLog) == 1);   // once
   CHECK(host_sim::server->services() > 0 && host_sim::count("svc_create", "loop") == 0);   // nothing registered late
 
-  // The worker's channel init() refused, but on FULL ble_manager brought
-  // NimBLE up on its own and registered Opera's: only ble_status is missing.
+  // The worker's channel init() refused, and on FULL ble_manager brought
+  // NimBLE up on its own and reported Discovery with no server of Opera's
+  // (its createServer() failed; ble_manager::init() goes on): only
+  // ble_status is missing. When Opera did make its server, the tap is
+  // refused instead (F449: a_late_init_on_discoverys_server_is_refused).
   boot_bring_up_refused(/*heap_low=*/true);
   // (boot_bring_up_refused() marks the end itself; the worker's report came before it on a device)
-  bc::g_boot_services_registered = bc::BT_BOOT_SVC_DISCOVERY;
   heap_recovers();
+  CHECK(NimBLEDevice::init("SCV-F6A7") && host_sim::server == nullptr);   // ble_manager's, no server
+  bc::g_boot_services_registered = bc::BT_BOOT_SVC_DISCOVERY;
   t = tap(bluetooth_api::handle_bluetooth_enable);
   CHECK(t.status == "200 OK" && t.body == succeeded_with("Bluetooth enabled") && t.inits == 1);
   bc::read_status(&st);
@@ -5946,6 +5963,142 @@ void test_a_late_bring_up_says_what_it_left_out() {
   bc::read_status(&st);
   CHECK(st.late_bring_up && st.services_missing == bc::BOOT_SERVICES && health_says(kLateLog) == 1);
   std::printf("PASS a_late_bring_up_says_what_it_left_out\n");
+}
+
+// The FULL boot worker after its channel init() was refused (sweep F449),
+// as canary_wap.ino's ble_bringup_task() runs it: refused by the heap guard
+// (`heap_low`) or by NimBLE's own init (else); then ble_manager::init(),
+// whose heap guard and NimBLEDevice::init() pass now (the heap recovered,
+// the failure was the retryable kind), brings NimBLE up under Opera's name,
+// and Opera takes NimBLE's one server; the worker reports Discovery, and
+// the finalize stage starts Opera's advertising (operaStart()) and ends the
+// boot bring-up.
+void boot_refused_then_discovery_takes_the_server(bool heap_low) {
+  boot(/*bring_up=*/false);
+  loop_pass();                                     // the first pass: saved on, loaded
+  if (heap_low) {
+    host_sim::internal_largest_block = 20 * 1024;
+    host_sim::internal_free = 30 * 1024;
+  } else {
+    host_sim::nimble_init_fails = true;
+  }
+  bc::bringup_worker_started();
+  host_sim::task = "bringup";
+  CHECK(!bc::init());
+  CHECK(host_sim::server == nullptr);              // the channel's refusal left no server
+  heap_recovers();
+  host_sim::nimble_init_fails = false;
+  CHECK(NimBLEDevice::init("SCV-F6A7"));           // ble_manager::init(): NimBLE was down
+  CHECK(ble_opera::init("A3F7B2C1D4E5F6A7", "9.9.9", &g_opera_chain_height, g_opera_chain_head));
+  bc::boot_service_registered(bc::BT_BOOT_SVC_DISCOVERY);
+  host_sim::task = "loop";
+  bc::bringup_worker_finished();
+  ble_opera::startAdvertising();                   // the finalize stage's operaStart()
+  bc::boot_bring_up_finished();
+  loop_pass();
+  CHECK(host_sim::server != nullptr && host_sim::advertising.isAdvertising());
+  CHECK(strcmp(bc::init_fail_reason(), heap_low ? kHeapRefused : kNimBLEFailed) == 0);
+  host_sim::calls.clear();
+}
+
+// Sweep F449: after a refused boot init() on FULL, ble_manager could bring
+// NimBLE up on its own and Opera take NimBLE's one server and start
+// advertising. A later tap's init() found NimBLE up, skipped its heap
+// guard, set the stack's power and security under Opera's links, and
+// registered the channel's service and every export on that server, which
+// may already have started (F167's case from the other side), and answered
+// that pairing had started. Now init() refuses a server it did not make,
+// before it touches the stack: the tap answers the reason, one health
+// WARNING says it, nothing is registered on Opera's server, the stack's
+// power and device callbacks are as Opera left them, Opera keeps
+// advertising, and GET /api/bluetooth names the reason. Each tap asks
+// again and is refused again (a server stays until a reboot). The refusal
+// fires on nothing else: a clean boot, and a refused boot init() a tap
+// retries with no server of Discovery's (NimBLE left down, or brought up by
+// the Scout or by a ble_manager whose Opera made none), come up as before
+// with no such line, the latter's late bring-up still listing what it left
+// out.
+void test_a_late_init_on_discoverys_server_is_refused() {
+  for (const bool heap_low : {true, false}) {
+    for (const Handler first : {kPair, kAdvertise, bluetooth_api::handle_bluetooth_enable}) {
+      boot_refused_then_discovery_takes_the_server(heap_low);
+      const size_t opera_services = host_sim::server->services();
+      const int8_t power = host_sim::tx_power;
+      Tap t = tap(first);
+      CHECK(t.status == "200 OK" && t.body == refused_with(kDiscoveryServer));
+      CHECK(t.inits == 0 && t.sleeps == 0);                  // no NimBLE init, nothing submitted
+      CHECK(!bc::is_initialized() && !bc::g_initialized);
+      CHECK(strcmp(bc::init_fail_reason(), kDiscoveryServer) == 0);
+      CHECK(host_sim::server->services() == opera_services && host_sim::count("svc_create") == 0);
+      CHECK(host_sim::count("set_power") == 0 && host_sim::tx_power == power);
+      CHECK(host_sim::device_callbacks == &host_sim::default_device_callbacks);
+      CHECK(host_sim::advertising.isAdvertising() && host_sim::count("adv_stop") == 0);   // Opera stays on air
+      CHECK(health_says(kDiscoveryServerLog) == 1);
+      CHECK(health_level(kDiscoveryServerLog) == SCV_LOG_WARNING);
+      CHECK(health_detail(kDiscoveryServerLog) == "restart to pair");
+      CHECK(health_says(kLateLog) == 0);                     // nothing came up late
+      Tap status = tap(bluetooth_api::handle_bluetooth_status);
+      CHECK(status.body.find(std::string("\"init_fail_reason\":\"") + kDiscoveryServer + "\"") != std::string::npos);
+      json_strict::Value parsed;
+      CHECK(json_strict::parse(status.body, &parsed));
+      // The next tap is refused the same way, and says so once more.
+      t = tap(kPair);
+      CHECK(t.status == "200 OK" && t.body == refused_with(kDiscoveryServer) && t.inits == 0);
+      CHECK(health_says(kDiscoveryServerLog) == 2 && host_sim::count("svc_create") == 0);
+      loop_pass();
+      CHECK(!bc::g_initialized && bc::g_commands.queued() == 0);
+    }
+  }
+
+  // The refusal fires only on a server the channel did not make. A clean
+  // boot: up, no such line.
+  boot();
+  CHECK(bc::is_initialized() && bc::g_initialized && health_says(kDiscoveryServerLog) == 0);
+  // A refused boot init() and NimBLE left down (no ble_manager, or one
+  // whose own guard or init refused too): the tap retries and comes up,
+  // late, as before.
+  boot_bring_up_refused(/*heap_low=*/true);
+  CHECK(host_sim::server == nullptr);
+  heap_recovers();
+  Tap t = tap(kPair);
+  CHECK(t.status == "200 OK" && t.body == succeeded_with("Pairing mode started") && t.inits == 1);
+  CHECK(bc::is_initialized() && health_says(kDiscoveryServerLog) == 0);
+  bc::BluetoothStatus st;
+  bc::read_status(&st);
+  CHECK(st.late_bring_up && st.services_missing == bc::BOOT_SERVICES && health_says(kLateLog) == 1);
+  // The same after NimBLE's own init failed at boot, twice more, then came up.
+  boot_bring_up_refused(/*heap_low=*/false);
+  t = tap(kAdvertise);
+  CHECK(t.body == refused_with(kNimBLEFailed) && t.inits == 1);
+  host_sim::nimble_init_fails = false;
+  t = tap(kAdvertise);
+  CHECK(t.body == succeeded_with("Advertising started") && t.inits == 1);
+  CHECK(bc::is_initialized() && health_says(kDiscoveryServerLog) == 0);
+  // A refused boot init() and NimBLE up with no server: the Scout's
+  // nimble_scan_init() at finalize, on the loop task (it brings the stack
+  // up itself when it is down and the heap allows), or a ble_manager::init()
+  // whose NimBLE init passed while Opera made no server. The refusal is
+  // keyed on a server, not on the stack being up: the tap's init() skips
+  // its heap guard and comes up, late, with no Discovery-server line.
+  for (const bool heap_low : {true, false}) {
+    boot_bring_up_refused(heap_low);
+    heap_recovers();
+    host_sim::nimble_init_fails = false;
+    CHECK(NimBLEDevice::init("securacv-scout") && NimBLEDevice::isInitialized());
+    CHECK(host_sim::server == nullptr);
+    t = tap(kPair);
+    CHECK(t.status == "200 OK" && t.body == succeeded_with("Pairing mode started") && t.inits == 1);
+    CHECK(bc::is_initialized() && bc::g_initialized && health_says(kDiscoveryServerLog) == 0);
+    CHECK(host_sim::server != nullptr && host_sim::count("svc_create") > 0);   // the channel's own server
+    bc::read_status(&st);
+    CHECK(st.late_bring_up && st.services_missing == bc::BOOT_SERVICES && health_says(kLateLog) == 1);
+  }
+  // And a stack the channel brought up answers true at once, whoever
+  // registered on its server afterwards (the worker's Opera, on FULL).
+  boot();
+  opera_init();
+  CHECK(bc::init() && health_says(kDiscoveryServerLog) == 0);
+  std::printf("PASS a_late_init_on_discoverys_server_is_refused\n");
 }
 
 // ── A passkey shown only in pairing mode (sweep F191) ───────────────────
@@ -7212,6 +7365,7 @@ const Test kTests[] = {
     {"the_worker_never_meets_a_taps_bring_up", test_the_worker_never_meets_a_taps_bring_up},
     {"every_tap_waits_for_the_boot_bring_up", test_every_tap_waits_for_the_boot_bring_up},
     {"a_late_bring_up_says_what_it_left_out", test_a_late_bring_up_says_what_it_left_out},
+    {"a_late_init_on_discoverys_server_is_refused", test_a_late_init_on_discoverys_server_is_refused},
     {"threads_a_tap_meets_the_bring_up", test_threads_a_tap_meets_the_bring_up},
     {"commands_while_init_runs_are_kept", test_commands_while_init_runs_are_kept},
     {"the_advertising_waits_for_the_bring_up_worker", test_the_advertising_waits_for_the_bring_up_worker},
@@ -7219,7 +7373,7 @@ const Test kTests[] = {
     {"a_command_the_loop_never_reaches_is_withdrawn", test_a_command_the_loop_never_reaches_is_withdrawn},
     {"a_full_ring_answers_busy", test_a_full_ring_answers_busy},
     {"full_profile_the_owner_answers_every_pairing", test_full_profile_the_owner_answers_every_pairing},
-    {"full_profile_either_init_order", test_full_profile_either_init_order},
+    {"full_profile_the_other_init_order_is_refused", test_full_profile_the_other_init_order_is_refused},
     {"no_pairing_owner_fails_closed", test_no_pairing_owner_fails_closed},
     {"remove_forgets_the_bond_by_its_identity", test_remove_forgets_the_bond_by_its_identity},
     {"an_address_prints_most_significant_first_and_round_trips",

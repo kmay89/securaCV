@@ -474,6 +474,23 @@ async def _setup_mqtt_sensors(
             new_entities.append(
                 SecuraCVCanaryGPSSensor(prefix, device_id, entry)
             )
+
+        # SD Wear Estimate (HA46): only for a device whose health carries the
+        # `sd` object, so a device that never sends one grows no sensor that
+        # stays unknown. Today only the canary base sends it, on every health
+        # from boot, built with diagnostics (FEATURE_DIAGNOSTICS, on by
+        # default); every other Canary's health has none (the canary-wap's
+        # carries only sd_mounted). Created by the first health that carries
+        # it, a later one included (a unit updated to firmware that adds the
+        # object, or a broker's older retained copy first), as Event ID Space
+        # Low (HA24) is; health is retained, so the new sensor's own
+        # subscription is sent the broker's copy of the health that created it.
+        if (
+            topic_type == TOPIC_HEALTH
+            and "sd_wear" not in entities_added[device_id]
+            and canary_sd(parse_mqtt_json(msg.payload)) is not None
+        ):
+            entities_added[device_id].add("sd_wear")
             new_entities.append(
                 SecuraCVCanarySDWearSensor(prefix, device_id, entry)
             )
@@ -1411,8 +1428,9 @@ class SecuraCVCanarySDWearSensor(SecuraCVCanarySensorBase):
     """Estimated SD-card wear reported by a Canary device.
 
     Conservative estimate from NVS-persisted lifetime write counters
-    against the configured endurance rating; stays empty on firmware
-    that does not yet report the `sd` health object.
+    against the configured endurance rating. Created only for a device
+    whose health carries the `sd` object (HA46, _setup_mqtt_sensors); a
+    later health without it leaves the sensor as it was.
     """
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC

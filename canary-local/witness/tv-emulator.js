@@ -386,8 +386,8 @@ if (tv && stage) {
     else if (a === 'doorbell') { warmAudio(); fireAlert('doorbell'); }
     else if (a === 'knock') { warmAudio(); aptKnocking = true; aptLog.unshift({ t: hexTime(simMin), w: 'Knock · Front Door' }); if (aptLog.length > 4) aptLog.pop(); render(); showToast('Someone’s knocking · Front Door'); showPip({ kind: 'Front Door', sub: 'Someone’s knocking — peek when ready', parcel: false }, false); }
     else if (a === 'peek') { warmAudio(); showPip({ kind: 'Front Door', sub: 'Live peek · nobody has to get up', parcel: false }, true); }
-    else if (a === 'pip-view') { pip.classList.add('expanded'); pipSub.textContent = 'Coarse live view · two-way ready · raw stays on device'; }
-    else if (a === 'pip-talk') { showToast('Talk · two-way audio (demo)'); }
+    else if (a === 'pip-view') { pip.classList.add('expanded'); pipSub.textContent = 'An illustration · no camera is connected to this demo'; }
+    else if (a === 'pip-talk') { showToast('Talk · drawn to show the idea — the Wall has no two-way audio today', true); }
     else if (a === 'pip-dismiss') { closePip(); }
     else if (a === 'incident') { captureIncident(); }
     else if (a === 'disputepack') { showToast('Dispute pack exported · checkable offline ✓'); }
@@ -492,7 +492,20 @@ if (tv && stage) {
   const kernelUrl = $('kernelUrl'), connectBtn = $('connectBtn'), demoBtn = $('demoBtn'), liveDemoBtn = $('liveDemoBtn'),
     goLiveBtn = $('goLiveBtn'), flashBtn = $('flashBtn'), cpStatus = $('cpStatus'), cpDevices = $('cpDevices'), cpJson = $('cpJson'), liveDot = $('liveDot'), liveText = $('liveText');
   function setStatus(msg, cls) { if (!cpStatus) return; cpStatus.textContent = msg; cpStatus.className = 'cp-status' + (cls ? ' ' + cls : ''); }
-  function setLive(on, host) { if (!liveDot) return; liveDot.className = 'live-dot ' + (on ? 'live' : 'demo'); liveText.textContent = on ? ('Live — ' + (liveFleet ? liveFleet.length : 0) + ' Canaries from ' + host) : 'Demo fleet — not connected to a kernel'; }
+  /* The top bar and the screensaver each carry one line about the record.
+   * In the demo it is the demo's simulated claim, and is labeled as one. With
+   * a live fleet nothing here read a chain, so both lines say what /api/fleet
+   * is — presence — in the words the tiles already use. These two were the
+   * last strings on the screen that kept saying "verified" after a real
+   * fleet replaced the sample one. */
+  const DEMO_RECORD = 'demo · verified through 4:02 PM', LIVE_RECORD = 'presence only — not verified';
+  function recordLines(on) {
+    const line = $('recordLine'), top = $('verifiedTime'), sub = $('saverSub');
+    if (line) line.classList.toggle('plain', !!on);
+    if (top) top.textContent = on ? LIVE_RECORD : DEMO_RECORD;
+    if (sub) sub.textContent = on ? 'fleet breathing · ' + LIVE_RECORD : 'demo · fleet breathing · chain intact';
+  }
+  function setLive(on, host) { recordLines(on); if (!liveDot) return; liveDot.className = 'live-dot ' + (on ? 'live' : 'demo'); liveText.textContent = on ? ('Live — ' + (liveFleet ? liveFleet.length : 0) + ' Canaries from ' + host) : 'Demo fleet — not connected to a kernel'; }
   function renderDevices() { if (!cpDevices) return; cpDevices.innerHTML = liveFleet ? liveFleet.map((d) => `<span class="dv${d.online ? '' : ' off'}"><span class="d"></span>${esc(d.name)}${d.online ? '' : ' · offline'}${d.born ? ' · ' + esc(d.born) : ''}</span>`).join('') : ''; }
   function showJson(data) { if (!cpJson) return; if (data) { cpJson.innerHTML = highlightJSON(data); cpJson.classList.add('show'); } else { cpJson.classList.remove('show'); cpJson.textContent = ''; } }
 

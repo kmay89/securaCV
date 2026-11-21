@@ -214,7 +214,7 @@ function rebuildBar(bar, M, route, at) {
   if (entry) {
     crumbs.push(
       h("span", { class: "scv-sep", "aria-hidden": "true" }, "/"),
-      h("span", { class: "scv-crumb" }, entry.stage.n + " · " + entry.stage.name),
+      h("span", { class: "scv-crumb scv-stage" }, entry.stage.n + " · " + entry.stage.name),
       h("span", { class: "scv-sep", "aria-hidden": "true" }, "›"),
     );
     if (at.depth) {
@@ -241,7 +241,7 @@ function rebuildBar(bar, M, route, at) {
     if (next) nav.append(h("a", { class: "scv-pn", href: next.bench.lab, title: "Next on the build line — " + next.stage.name }, h("span", { class: "scv-pn-lb" }, next.bench.noun), " ›"));
   }
   nav.append(
-    h("a", { href: SITE_ORIGIN + "/glossary" }, "Glossary"),
+    h("a", { class: "scv-gloss", href: SITE_ORIGIN + "/glossary" }, "Glossary"),
     // "Help" opens the Help Desk — the same page the static bar this module
     // replaces says, and the same page securacv.com's own header opens. It
     // used to open /canary here, the page a plugged-in Canary opens for
@@ -250,7 +250,9 @@ function rebuildBar(bar, M, route, at) {
     h("span", { class: "scv-where" }, whereText),
   );
 
-  const fresh = h("nav", { class: "scv-bar scv-bar-lab", "aria-label": "Lab navigation" },
+  // A depth page carries three crumbs (stage › bench › this page), and the bar
+  // never wraps: lab-nav.css drops the stage crumb first on such a page.
+  const fresh = h("nav", { class: "scv-bar scv-bar-lab" + (at && at.depth ? " scv-deep" : ""), "aria-label": "Lab navigation" },
     h("a", { class: "scv-back", href: slug ? "lab.html#" + slug : "lab.html" }, "‹ The Lab"),
     h("span", { class: "scv-sep", "aria-hidden": "true" }, "·"),
     h("a", { class: "scv-home", href: SITE_ORIGIN + "/" }, "SecuraCV"),

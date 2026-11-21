@@ -116,6 +116,183 @@
   **GAP** to **PROC** + **CODE** tool, and the practice statement's 6.2
   declares key protection per trustee. Hardware trustee keys remain a gap.
 
+### The witness refuses a hash that failed and a key draw that came out flat, a Chirp suppress vote needs a presence row, canary-wap reads settings keys as keys and measures its answers, Bluetooth refuses what its own link did not set up, an Opera joiner keeps its opera from a stranger, the dashboards hold their raw splices, Home Assistant reads only what was sent, the Vision app asks for a `.local` name, the slot check warns early, and the parity ledgers say what the code does (#1966, wave 25)
+
+- **The witness refuses a SHA-256 that failed (F455).** The canary (PIO)
+  tree's SHA-256 helpers and the common witness core (`witness_chain.h`)
+  report whether every mbedTLS step ran (the `_ret` names on core 2.0.17's
+  mbedTLS 2.28, the plain names on core 3, picked by
+  `MBEDTLS_VERSION_NUMBER`) and zero their output when one fails. A failed
+  hash makes no record, adopts no SD tail and reads red in `chain_ok`; a
+  fingerprint or genesis head that did not compute stops provisioning; a
+  certificate hash that did not compute means no HTTPS and no pin, where it
+  could hand out a pin of 32 zero bytes. canary-sense, canary-vision and
+  canary-sentinel turn signing off on a failed fingerprint or genesis head
+  and advance no chain on a failed link.
+- **A first-boot key draw that came out flat is refused (F38, in part).**
+  `firmware/common/identity/key_draw_check.h` makes all five keygens refuse
+  an identity key draw whose bytes are all equal or whose popcount is
+  outside 48..208 (a uniform draw is refused with odds of about 2^-82.5),
+  and `regression_check.sh` requires the check in every keygen file. On the
+  WAP a refused draw also refuses that boot's chain: nothing is signed under
+  the zeroed key and no chain state is persisted.
+- **canary-wap Chirp: a suppress vote needs a presence row (F234's floor,
+  F232 pinned).** A vote counts only from a session key whose nearby row is
+  ten minutes old, the rule an ACK has met since F311. Fresh keys suppress
+  nothing, and a receiver with 0 to 2 nearby rows can never suppress a
+  chirp; a receiver also ignores votes from neighbors it has heard for less
+  than ten minutes, for example right after it boots. That is the fail-safe
+  direction, and a delay rather than a price: keys one radio beacons for ten
+  minutes still vote, an emergency template included. Whether that can
+  happen at all stays a decision.
+- **canary-wap settings: keys are read as keys (F462).** `POST
+  /api/settings` reads each key only as a member of the body's own JSON
+  object, so a value spelled like a key no longer stores the privacy
+  ceiling, pet mode, the transmitter filter or a preset, and a value spelled
+  `"tz"` no longer answers 400. A body holding a NUL byte now answers 400
+  "body is not JSON" and stores nothing.
+- **canary-wap answers are measured (F464).** `check_wap_json_answers.py`
+  measures `csi_integration.cpp`'s and `csi_mqtt.cpp`'s `snprintf()`
+  answers. `GET /api/csi/window` is composed and refused whole if it cannot
+  fit, the Tuning Lab's coefficient and preset GETs send no row past its
+  buffer, and `POST /api/mqtt/test` refuses an answer past its buffer.
+- **Bluetooth refuses what its own link did not set up (F460; F447 and F449
+  in part).** On a Sense or a Vision the hub hand-off is taken only from the
+  link that sent the Wi-Fi settings, so a client that connects after the
+  phone dropped mid-join is refused it, and a refused second Wi-Fi write is
+  logged as refused. On a canary-wap FULL build, after a refused boot
+  bring-up, the pairing channel refuses a server Bluetooth Discovery made
+  ("Not started: Bluetooth Discovery started its server this boot; restart
+  to pair"), so a late Pair or Advertise tap waits for a reboot. A new host
+  suite holds the WAP's Chirp sender to the golden advert bytes.
+- **canary-wap Opera pairing (F318's guard, F140 and F445 in part).** A
+  Canary that holds an opera and its members refuses a pairing COMPLETE from
+  another opera's initiator it does not hold, before adding anyone, and logs
+  why; a re-pair with a held member into another opera still goes through
+  and keeps the joiner's other members (spec §5.2). Two pairing lines that
+  reached `GET /api/logs` cut at 79 bytes are now message plus detail, no
+  word changed. A host test holds every other `mesh_network.cpp` health line
+  to the ring's fields; the CONFIRM-mismatch line, its one recorded
+  exception, still reaches `GET /api/logs` cut (F445).
+- **Dashboards (F465; F468 and F443 in part).** The WAP dashboard's
+  acknowledge dialog shows a refused acknowledgment as text ("Not
+  acknowledged: Log entry not found") and stays open, where it closed as if
+  the entry were acknowledged. Both dashboards' raw splices into markup are
+  held by shrink-only ledgers (`html_splices.js`): a new one in a shape the
+  scanner reads fails (the script's header names what it does not see). The
+  Sensing dashboard's reading-grade gate strips `COPY`'s comments before it
+  grades: 89 strings at 3.35, where it graded 84 at 3.46.
+- **Home Assistant reads only what was sent (HA60 and HA46 in part).** The
+  Health sensor's `battery_percent` no longer shows 100 for a unit that says
+  it has a battery and sends no number for its charge (no shipping firmware
+  sends that body). 2.4.20 had already made every no-reading case unknown,
+  mains units included (HA60, "Honest names"); this adds the sign-spelled
+  charge to the readings that are no number, and its tests. The battery blueprint
+  alerts on low battery only for a charge the unit sent; a copy imported by
+  URL or placed by `scripts/install.sh` keeps the old text until you
+  re-import it. SD Wear Estimate is created only for a device whose health
+  carries the `sd` object, today the canary base alone; an existing install
+  keeps the entity each other Canary was given, shown unavailable and
+  restored until you delete it.
+- **canary-vision asks for a `.local` name instead of an IP its CSP refuses
+  (F448, the code half).** Manual entry, "Add with token", a pasted or
+  scanned receipt and a prefilled host answer "enter its .local name" for an
+  IP other than the page's own and make no request; a device already stored
+  under such an IP says it needs its `.local` name instead of calling itself
+  offline.
+- **CI: the OTA slot check warns before an image runs out of room (F367, the
+  code half).** `check_slot_budget.py` prints a `::warning::` when an image
+  fits its slot with less than 5% free, and firmware.yml's two PR size
+  checks run that script instead of their own copies, so the PR checks and
+  the release apply one budget and one floor. fw-v2.4.16's C6 nightstand
+  (2,832 B free) would have warned; what it drops is the open decision.
+- **Docs: the parity ledgers, a forced flag and two comments say what the
+  code does (F20 slice c, F467; the text halves of F219 and F147).**
+  `FEATURES.md`'s dashboard SD storage and export rows read canary (PIO) ⚠️
+  (the flagship makes `/HEALTH` and `/EXPORT` and writes neither), and
+  `CONSOLIDATION.md` gains gap #17, the SD health log tier. The canary-wap's
+  `sys_monitor.h` no longer forces `FEATURE_SYS_MONITOR` over
+  `BUILD_PROFILE_MINIMAL`'s 0 (no shipped build changes). The daily
+  summary's comments no longer claim a card renders its note, and
+  `FAULT_MODEL.md` §2.3 says the canary-wap's QoS 0 watermark loses the rows
+  a stalled link aborts.
+- **Backlog:** F455, F460, F462, F464, F465 and F467 are closed, and F250's
+  open half is F282's. F38, F232, F234, F140, F318, F445, F447, F448, F449,
+  F443, F468, F367, F20, F219, F147, F254, F364 and HA46 now say what
+  remains (HA60 was closed on main by 2.4.20, and stays closed). New from the wave: F469-F478, D23 and CI28, among them the
+  flagship's `/EXPORT` (F476) and two calls on a hash that fails at
+  provisioning or at a link (F477, F478).
+- Host-tested here: the canary-wap host suite under g++, clang++ 18 and
+  ASan/UBSan, `test_sha_fail_flagship` in both mbedTLS spellings, both
+  dashboards' and the Vision app's node tests, the Vision app in headless
+  Chromium, Home Assistant's tests on real cores 2026.10.1 and 2026.5.0, and
+  the slot check's workflow steps under bash. The ESP32 PlatformIO and
+  Arduino compiles are CI's, and `BUILD_PROFILE_MINIMAL` is compiled by no
+  job. Nothing was run on a device, and no new bench row has been run.
+
+### One name per Lab bench, no Lab page that scrolls sideways, and three app screens say what their search does
+
+- **The Lab's benches.** `canary-local/build-line.json` renamed seven benches
+  and keeps the old names as `wasNamed`; the page titles followed in #1991
+  and the pages' own headlines had not. A tab that said "Flash over USB"
+  opened a page headed "The Canary Nursery", "Boards" opened "The Board
+  Room", "Set up break-glass" opened "The Operator's Bench", and the same
+  went for Meet the fleet, First boot, Watch it work and What the mic hears.
+  The room led with "Canary Lab" under an "ERRERLabs" kicker, and the site
+  map with a slogan. Each `<h1>` now leads with the name its `<title>`
+  leads with, and the links between benches use it (the fleet page's
+  buttons, five footers, four "next" lists, and `gen_start.py`'s wiring
+  link). `tools/gen_head.py --check` refuses a headline that does not, and
+  `tests/head.test.js` holds the rule on its own reading of the pages. The
+  flasher keeps "where Canaries hatch"; its screens still call it the
+  Nursery, and its lede now introduces the nickname.
+- **Pages that scrolled sideways.** The Lab's landing page scrolled 142px
+  sideways at 1280 wide and 99px on a 390px phone: a decorative glow bled
+  past its box and widened the document. The break-glass bench scrolled
+  168px on a phone and 295px on a tablet, the House 80px, the Vision 54px
+  and the radar school 49px on a phone, the case finder 21px on a tablet,
+  and every bench 22px at 320. Five causes, each a line or two of CSS: the
+  glow is clipped by the main column; grid tracks may no longer be as wide
+  as their widest item; a value that is one long token may break; two
+  control rows may wrap; and the Lab bar, which never wraps, drops its
+  stage crumb on a depth page below 900px and its Glossary link at 320.
+  Measured in Chromium with a fresh load at each of twelve widths from 320
+  to 1440: no page scrolls sideways.
+- **Boxes that spilled out of their cards.** The same causes showed on a
+  desktop with no scrolling at all. The radar dev bench's three mount cards
+  printed their facts over each other (a two-column fact grid in a 230px
+  card), the break-glass bench's four command cards stuck out of their
+  section, and the radar school squeezed values under 100px: 22
+  page-and-width pairs had a box that spilled or a value that narrow. The
+  fact grid now takes two columns only where each can be 260px, and a mount
+  card's name keeps clear of its source badge. After: none, at six widths
+  from 390 to 1440. `tests/sideways_scroll.test.js` holds these fixes at the
+  source; no CI job measures a layout.
+- **The apps.** Two iPhone screens said "nothing leaves your home" about a
+  Bluetooth search, and the Witness Wall's searching card said "nothing
+  leaves this room" while its settings screen takes a hub address somewhere
+  else. They now say "a short-range search that uses no internet" and "The
+  search stays on your network." `scripts/tests/test_device_copy_claims.py`
+  reads the iPhone, watch and Apple TV sources and takes "this room" with
+  "your home". The edits are string literals and were not compiled here; the
+  iOS and tvOS workflows build them.
+
+### The desktop apps' lockfiles take four fixed releases, and the one advisory with no fix has a written answer
+
+- **Bumped** in `desktop/src-tauri`, `desktop-lab/src-tauri` and
+  `desktop/flash-engine`: `tokio` 1.53.1 → 1.54.1 (RUSTSEC-2026-0386,
+  unsound), `event-listener` 5.4.1 → 5.4.2 (RUSTSEC-2026-0221, unsound), and
+  two yanked versions, `chacha20` 0.10.1 → 0.10.2 and `async-executor`
+  1.14.0 → 1.14.1. `cargo audit` prints an unsound or yanked crate as a
+  warning and exits 0, so the gate had stayed green over all four. Only
+  those package entries changed; no manifest did.
+- **`glib` 0.18.5 (RUSTSEC-2024-0429, unsound) stays.** It is required by
+  `gtk` 0.18, which every release of Tauri's Linux window stack still
+  requires; the fixed `glib` arrives with `gtk` 0.19, which that stack does
+  not take yet. `SECURITY.md` Group 8 records why no code in either app
+  reaches the affected type, and backlog A135 the step that is a repository
+  admin's: dismissing the Dependabot alert whose update fails on every run.
+
 ### Compliance maps say which mechanism stands behind which clause, and never more
 
 - **`docs/compliance/`** (roadmap item 7, CP1): eleven closed clause → mechanism → status maps (21 CFR Part 11, EU GMP Annex 11, ALCOA+, HIPAA 164.312, US evidence rules, eIDAS qualified electronic ledgers, the C2PA conformance program, BS 10008 by topic, the FIPS split-knowledge vocabulary, and the capture-provenance and enterprise-assurance trackers), each row with one status from the new `compliance_map_status` block of `spec/witness_dictionary.json`; the README's pinned posture paragraph (maps, never determinations); the verification methodology; the BS 10008 operator pack and its template; the capture-provenance note; and the design notes for the SIEM projection, validation sheets and CAWG co-signing. Every regime clause is marked unverified: no regime source could be fetched.

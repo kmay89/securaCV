@@ -1435,10 +1435,9 @@ const COPY = {
      * there: the per-row reset in the Lab removes it. The words name those
      * three buttons, not the modes: Pet Mode and Quiet hours keep working
      * whatever is saved. The third source has no note: then the buttons
-     * and the slider are what the canary runs. No apostrophe or quote in
-     * this comment: microcopy_fkgl.py reads every quoted span in COPY,
-     * comments too, so one would pair with the next string and skew the
-     * grade. */
+     * and the slider are what the canary runs. Comments in COPY are not
+     * graded: microcopy_fkgl.py strips them before it reads the strings
+     * (sweep F465), so a quote or an apostrophe here is safe. */
     stored: "Saved levels from a calibration or the Tuning Lab are in charge. Sensitive, Balanced, Quiet and this slider change nothing. To get them back, reset motion, active and breathing in the Tuning Lab.",
     mixed:  "Some saved levels from a calibration or the Tuning Lab are in charge. Sensitive, Balanced, Quiet and this slider set only the rest. To get them all back, reset motion, active and breathing in the Tuning Lab.",
   },
