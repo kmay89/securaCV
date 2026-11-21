@@ -1200,7 +1200,14 @@ button.ghost.small.bench-ff { font-size: 12px; }
 .wap-check-ok { color: var(--ok); font-weight: 700; }
 
 /* ── facts strip ── */
-.wap-facts { margin-top: 18px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px 20px; }
+/* Two columns where each can be 260px, one where it cannot: the same grid
+   sits in a 930px section and in a 230px mount card, and a fixed `1fr 1fr`
+   either spilled out of the card (its tracks were as wide as their longest
+   word) or, once the tracks were allowed to shrink, left 18px for a value.
+   max(260px, 50% - 10px) caps it at two columns; min(100%, ...) keeps a
+   container narrower than 260px from being overflowed. */
+.wap-facts { margin-top: 18px; display: grid; gap: 8px 20px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, max(260px, calc(50% - 10px))), 1fr)); }
 .wap-fact { display: flex; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--edge); font-size: 13px; min-width: 0; }
 .wap-fact-k { flex: none; width: 76px; color: var(--canary); font-weight: 600; }
 /* A value is often one long token (a topic, a path, a model name): let it
@@ -1266,7 +1273,7 @@ button.ghost.small.bench-ff { font-size: 12px; }
 .wap-sandbox-read { margin-top: 14px; min-height: 1.4em; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
 
 @media (max-width: 720px) {
-  .wap-two, .wap-facts, .wap-mqtt-cols, .wap-mqtt-ents { grid-template-columns: 1fr; }
+  .wap-two, .wap-facts, .wap-mqtt-cols, .wap-mqtt-ents { grid-template-columns: minmax(0, 1fr); }
   .wap-mqtt-cols { gap: 10px; background: transparent; }
 }
 

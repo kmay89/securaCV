@@ -184,8 +184,17 @@
   control rows may wrap; and the Lab bar, which never wraps, drops its
   stage crumb on a depth page below 900px and its Glossary link at 320.
   Measured in Chromium with a fresh load at each of twelve widths from 320
-  to 1440: no page scrolls sideways. `tests/sideways_scroll.test.js` holds
-  the five fixes at the source; no CI job measures a layout.
+  to 1440: no page scrolls sideways.
+- **Boxes that spilled out of their cards.** The same causes showed on a
+  desktop with no scrolling at all. The radar dev bench's three mount cards
+  printed their facts over each other (a two-column fact grid in a 230px
+  card), the break-glass bench's four command cards stuck out of their
+  section, and the radar school squeezed values under 100px: 22
+  page-and-width pairs had a box that spilled or a value that narrow. The
+  fact grid now takes two columns only where each can be 260px, and a mount
+  card's name keeps clear of its source badge. After: none, at six widths
+  from 390 to 1440. `tests/sideways_scroll.test.js` holds these fixes at the
+  source; no CI job measures a layout.
 - **The apps.** Two iPhone screens said "nothing leaves your home" about a
   Bluetooth search, and the Witness Wall's searching card said "nothing
   leaves this room" while its settings screen takes a hub address somewhere

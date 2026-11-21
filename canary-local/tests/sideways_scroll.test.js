@@ -1,16 +1,21 @@
 // canary-local/tests/sideways_scroll.test.js — the causes of a page that
-// scrolls sideways, held at the source.
+// scrolls sideways, or of a box that spills out of its card, held at the
+// source.
 //
 // Measured in Chromium on 2026-11-21, fresh load at each width: the Lab's
 // landing page scrolled 142px sideways at 1280 wide and 99px on a 390px
 // phone; the break-glass bench 168px on a phone and 295px on a tablet; the
 // House 80px, the Vision 54px and the radar school 49px on a phone; the case
-// finder 21px on a tablet; and every bench 22px at 320. Five causes, each a
-// one-line fix, and each one easy to undo without noticing: nothing on the
-// page looks wrong until it is opened at that width.
+// finder 21px on a tablet; and every bench 22px at 320. The same causes
+// showed without any scrolling on a desktop: the radar dev bench's three
+// mount cards printed their facts over each other, the break-glass bench's
+// command cards stuck out of their section, and 22 page-and-width pairs in
+// all had a box that spilled or a value squeezed under 100px. Six causes,
+// each a line or two, and each easy to undo without noticing: nothing looks
+// wrong until the page is opened at that width.
 //
 // This file reads source text only. It cannot measure a layout; it keeps the
-// five fixes from being edited away. The measurement is a browser's.
+// fixes from being edited away. The measurement is a browser's.
 
 const { test } = require("node:test");
 const assert = require("node:assert");
@@ -48,6 +53,23 @@ test("a grid track is not allowed to be as wide as its widest item", () => {
   assert.match(rule(base, ".wap-fact"), /min-width:\s*0/);
   assert.match(css("house.css"), /@media \(max-width: 940px\)\s*\{\s*\.house-main\s*\{\s*grid-template-columns:\s*minmax\(0, 1fr\)/,
     "the House's one-column layout must not take the panel's width");
+});
+
+test("the fact grid takes two columns only where each can hold a fact", () => {
+  // The same .wap-facts grid sits in a 930px section and in a 230px mount
+  // card. A fixed `1fr 1fr` spilled out of the card while its tracks were as
+  // wide as their longest word, and left 18px for a value once the tracks
+  // were allowed to shrink (the first fix here did exactly that to the radar
+  // dev bench). max(260px, 50% - 10px) caps the grid at two columns;
+  // min(100%, ...) keeps a container narrower than 260px whole.
+  const base = css("canary-local.css");
+  assert.match(rule(base, ".wap-facts"),
+    /grid-template-columns:\s*repeat\(auto-fit, minmax\(min\(100%, max\(260px, calc\(50% - 10px\)\)\), 1fr\)\)/);
+  assert.doesNotMatch(rule(base, ".wap-facts"), /grid-template-columns:\s*1fr 1fr/);
+  // A name that shares its corner with an out-of-flow badge keeps clear of it.
+  const rdev = css("radar-dev.css");
+  assert.match(rule(rdev, ".rdev-mount .sense-src"), /position:\s*absolute/);
+  assert.match(rule(rdev, ".rdev-mount > strong"), /padding-right:\s*\d\dpx/);
 });
 
 test("a value that is one long token may break", () => {
