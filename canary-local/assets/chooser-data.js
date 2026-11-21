@@ -59,7 +59,8 @@ export const QUESTIONS = [
 // Candidate combos. tags = what earns points; requires = every listed
 // answer must be present; excludes = any listed answer kills it.
 // status mirrors the catalog ("released" = print-validated enclosure +
-// shipped firmware path; anything else says exactly what it is).
+// published firmware; it says nothing about a box in the mail: nothing is
+// sold yet. Anything else says exactly what it is).
 export const CANDIDATES = [
   {
     id: "wap-compact-indoor",

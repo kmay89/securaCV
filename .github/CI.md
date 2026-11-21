@@ -61,8 +61,10 @@ other filtered workflow.
 
 - **Arduino/ESP32 builds** go through the shared composite action
   `.github/actions/setup-arduino-esp32` — it caches the >1 GB ESP32
-  toolchain (one cache entry shared by every latest-core job, weekly
-  rotation so "latest" can't go stale) and installs libraries fresh
+  toolchain (one cache entry per pinned core; a row that floats names
+  its major with `core-line` and rotates weekly, so it follows the line
+  it ships on and never crosses to the next major unasked) and installs
+  libraries fresh
   (small on purpose, so lib changes never fragment the toolchain cache).
   It restores before the install and saves right after it, so each key
   holds its own core even when one job installs three, and an exclusive

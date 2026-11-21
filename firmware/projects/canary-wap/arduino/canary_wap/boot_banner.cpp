@@ -78,8 +78,8 @@ void boot_scene_banner(const boot_info_t* info) {
     out("              d b          v%s\n", info->fw_version ? info->fw_version : "--");
     boot_blank();
     out("    This is your privacy witness device.\n");
-    out("    It creates tamper-proof records of what it\n");
-    out("    sees, so nobody can change the story later.\n");
+    out("    It keeps tamper-evident records of what it\n");
+    out("    sees, so any edit to the story shows later.\n");
     boot_blank();
     boot_kv("Type",  info->device_type);
     boot_kv("Model", info->model);

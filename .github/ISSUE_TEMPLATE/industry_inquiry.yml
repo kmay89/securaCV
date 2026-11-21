@@ -1,0 +1,22 @@
+name: "Industrial vision inquiry"
+description: "A site, a line or a facility that wants events without a footage archive. securacv.com/industry fills this in for you."
+title: "Industrial vision inquiry"
+labels:
+  - "industry-inquiry"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The industrial side of SecuraCV is a **concept**: there is no
+        product, price list or support contract behind this form, and
+        opening it starts a conversation, nothing more.
+
+        This is a public issue. If the details are sensitive, use the email
+        path on securacv.com/industry instead.
+  - type: textarea
+    id: details
+    attributes:
+      label: What you are looking at
+      description: The setting, what you would want witnessed, and what must never be recorded. If you came from the site, this is already filled in.
+    validations:
+      required: true

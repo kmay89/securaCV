@@ -1,0 +1,222 @@
+{
+  "schema": "securacv-compliance-map:v1",
+  "regime": {
+    "id": "enterprise_assurance",
+    "title": "Regulated-market assurance tier and enterprise-tier projections",
+    "kind": "tracker",
+    "determination_by": "the procuring organization",
+    "source": {
+      "citation": "docs/security/ENTERPRISE_CUSTODY.md §6; docs/security/PROVENANCE_INTEROP.md §2 move 16",
+      "access": "not-attempted",
+      "note": "an internal tracker; no outside source applies, and its clauses are internal ids"
+    }
+  },
+  "last_reviewed": "2026-11",
+  "rows": [
+    {
+      "id": "fips-crypto",
+      "clause": "ENTERPRISE_CUSTODY §6: FIPS cryptography",
+      "clause_verified": false,
+      "requirement": "Procurement asks for validated cryptography.",
+      "mechanism": "None.",
+      "status": "not-pursued",
+      "evidence": [
+        {
+          "kind": "decision",
+          "path": "docs/security/ENTERPRISE_CUSTODY.md",
+          "anchor": "6-regulated-market-assurance-tier"
+        }
+      ],
+      "reason": "Regulated-market assurance controls are absent by design from the consumer kernel and belong to a separate tier; nothing in this tree has CMVP module validation."
+    },
+    {
+      "id": "hsm-custody",
+      "clause": "ENTERPRISE_CUSTODY §6: HSM custody",
+      "clause_verified": false,
+      "requirement": "Keys are held in a hardware security module or secure element.",
+      "mechanism": "Threshold custody of the vault KEK.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "spec/quorum_unseal_v2.md",
+          "anchor": "2-layer-1--threshold-custody-the-lock"
+        }
+      ],
+      "limits": "Threshold custody is not an HSM or secure element: the vault KEK is reconstructed in host memory inside the unseal gate. A hardware-held KEK (ENTERPRISE_CUSTODY §1 item 2) is tracked as missing on the host, with no design record yet, and the device signing seed is outside this row.",
+      "depends_on": [
+        "item5:U"
+      ]
+    },
+    {
+      "id": "pki-mtls",
+      "clause": "ENTERPRISE_CUSTODY §6: PKI / mutual TLS",
+      "clause_verified": false,
+      "requirement": "Devices carry PKI identities and use mutual TLS.",
+      "mechanism": "Device identity is the pinned key.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/security/CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md",
+          "anchor": "6-technical-security-controls"
+        },
+        {
+          "kind": "tracker",
+          "path": "docs/security/ENTERPRISE_CUSTODY.md",
+          "anchor": "6-regulated-market-assurance-tier"
+        }
+      ],
+      "operator_action": "Pin each device key out of band and record it."
+    },
+    {
+      "id": "rbac",
+      "clause": "ENTERPRISE_CUSTODY §6: RBAC",
+      "clause_verified": false,
+      "requirement": "Role-based access control with least privilege.",
+      "mechanism": "Host accounts and the quorum stand in.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/security/CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md",
+          "anchor": "5-facility-management-and-operational-controls"
+        },
+        {
+          "kind": "tracker",
+          "path": "docs/security/ENTERPRISE_CUSTODY.md",
+          "anchor": "6-regulated-market-assurance-tier"
+        }
+      ],
+      "operator_action": "Use host accounts and the trustee quorum to separate duties.",
+      "limits": "No role model exists in the software."
+    },
+    {
+      "id": "siem-export",
+      "clause": "ENTERPRISE_CUSTODY §6: SIEM export",
+      "clause_verified": false,
+      "requirement": "Audit records can be exported to a SIEM.",
+      "mechanism": "A read-only FHIR R4-shaped AuditEvent projection written to a file the operator ships.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "docs/compliance/SIEM_PROJECTION.md"
+        }
+      ],
+      "depends_on": [
+        "item7:CP2"
+      ]
+    },
+    {
+      "id": "siem-push-or-listener",
+      "clause": "ENTERPRISE_CUSTODY §6: SIEM export",
+      "clause_verified": false,
+      "requirement": "The system pushes audit records or answers queries for them.",
+      "mechanism": "No listener, route or push.",
+      "status": "not-pursued",
+      "evidence": [
+        {
+          "kind": "decision",
+          "path": "spec/invariants.md",
+          "anchor": "9-invariant-vii--non-queryability-by-design"
+        }
+      ],
+      "reason": "No listener, route or push exists: the operator's own shipper moves files (Invariant VII)."
+    },
+    {
+      "id": "atna-syslog",
+      "clause": "IHE ATNA / syslog",
+      "clause_verified": false,
+      "requirement": "Audit records travel as syslog in the IHE ATNA manner.",
+      "mechanism": "A documented file transform to RFC 5424 framing; no sender.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "docs/compliance/SIEM_PROJECTION.md"
+        }
+      ],
+      "depends_on": [
+        "item7:CP4"
+      ]
+    },
+    {
+      "id": "host-tamper-response",
+      "clause": "ENTERPRISE_CUSTODY §6: host tamper response",
+      "clause_verified": false,
+      "requirement": "The host detects and responds to tampering.",
+      "mechanism": "Firmware tamper detection only; host compromise is out of scope.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/root_paradox.md",
+          "anchor": "out-of-scope-mitigations"
+        },
+        {
+          "kind": "tracker",
+          "path": "docs/security/ENTERPRISE_CUSTODY.md",
+          "anchor": "6-regulated-market-assurance-tier"
+        }
+      ],
+      "operator_action": "Apply the out-of-scope mitigations the root-paradox note lists."
+    },
+    {
+      "id": "mapping-suite",
+      "clause": "ENTERPRISE_CUSTODY §6: formal mapping",
+      "clause_verified": false,
+      "requirement": "Regime clauses are mapped to the mechanisms behind them.",
+      "mechanism": "These maps, held to the disk by a CI linter.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "scripts/tests/test_lint_compliance_map.py",
+          "test": "test_repo_maps_and_prose_pass"
+        },
+        {
+          "kind": "code",
+          "path": "scripts/lint_compliance_map.py",
+          "symbol": "def main"
+        }
+      ],
+      "limits": "SSP, SOC 2, ISO 27001, NIST 800-53, CC and CJIS are not mapped."
+    },
+    {
+      "id": "cawg-cosigning",
+      "clause": "PROVENANCE_INTEROP move 16: CAWG",
+      "clause_verified": false,
+      "requirement": "A named person co-signs a disclosure.",
+      "mechanism": "A CAWG identity assertion naming the person the cited receipt records.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "docs/compliance/CAWG_COSIGNING.md"
+        }
+      ],
+      "depends_on": [
+        "item7:CP5",
+        "upstream:c2pa-cawg-cde"
+      ]
+    },
+    {
+      "id": "validation-sheets",
+      "clause": "PROVENANCE_INTEROP move 14: validation sheets",
+      "clause_verified": false,
+      "requirement": "Analytic claims carry reliability documentation.",
+      "mechanism": "Per-ruleset validation sheets.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "docs/compliance/VALIDATION_SHEETS.md"
+        }
+      ],
+      "depends_on": [
+        "item7:CP3"
+      ]
+    }
+  ]
+}

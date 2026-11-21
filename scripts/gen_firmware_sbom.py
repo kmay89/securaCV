@@ -58,8 +58,9 @@ the remedy):
   (b) every core a sketch profile pins is a workflow pin, or the Arduino core
       inside that product's PlatformIO platform (PLATFORM_FACTS) — the WAP
       sketch's 3.3.11 tracks the pioarduino platform while firmware.yml's
-      Arduino-CLI PR row builds on the action's "latest", a recorded release
-      decision (firmware/PLATFORMS.md), not a drift;
+      Arduino-CLI PR row floats on the 3.x line (`core-line`: the newest
+      stable 3.x that week), a recorded release decision
+      (firmware/PLATFORMS.md), not a drift;
   (c) every library a workflow row pins on its core line (GFX / lvgl / NimBLE
       split their majors along the core boundary) is pinned to the same
       version by every profile, of a product that row builds, on that core.
@@ -606,7 +607,9 @@ def arduino_core_pins() -> list[dict]:
     setup-arduino-esp32 call in the workflows. A literal `core-version` is a
     pin; `${{ matrix.a.b }}` resolves through the job's strategy.matrix, and
     the row's library pins through the same matrix entry; empty means the
-    action's "latest". `products` are the sketches the row goes on to
+    row floats, on the major its `core-line` names (`line`, e.g. "3": the
+    newest stable 3.x release that week) or, with no line, on the action's
+    "latest". `products` are the sketches the row goes on to
     compile — read off the run: blocks up to the job's next core install,
     because the release jobs install the WAP's core and both display cores
     in one job. A row that names no sketch is refused: the SBOM could not
@@ -647,7 +650,7 @@ def arduino_core_pins() -> list[dict]:
                     for entry in entries:
                         if isinstance(entry, dict) and key in entry:
                             resolved = [_resolve_matrix(ln, axis, entry) for ln in lib_lines]
-                            pins.append({"version": str(entry[key]), "where": where,
+                            pins.append({"version": str(entry[key]), "line": None, "where": where,
                                          "libraries": _library_pins(resolved, where),
                                          "products": products,
                                          "vendored": _vendored_passed(
@@ -657,7 +660,12 @@ def arduino_core_pins() -> list[dict]:
                 if "${{" in raw:
                     raise SystemExit(f"gen_firmware_sbom.py: {where} passes core-version "
                                      f"as an expression this script cannot resolve: {raw}")
-                pins.append({"version": raw or None, "where": where,
+                line = str(with_.get("core-line") or "").strip()
+                if line and (raw or not line.isdigit()):
+                    raise SystemExit(f"gen_firmware_sbom.py: {where} passes core-line "
+                                     f"{line!r}{' beside core-version ' + raw if raw else ''}: "
+                                     f"a line is a major number, on a row that pins no version")
+                pins.append({"version": raw or None, "line": line or None, "where": where,
                              "libraries": _library_pins(lib_lines, where),
                              "products": products,
                              "vendored": _vendored_passed(following, lambda t: t)})
@@ -777,6 +785,12 @@ def check_core_pin_agreement(workflow_pins: list[dict], sketch_pins: list[dict],
     return findings
 
 
+def core_label(version: str | None, line: str | None = None) -> str:
+    """How a core row is named: its pinned version, the line it floats on
+    ("3.x"), or "latest" for a row that names neither."""
+    return version or (f"{line}.x" if line else "latest")
+
+
 def _is_release_row(pin: dict) -> bool:
     return pin["where"].split(":", 1)[0] in RELEASE_WORKFLOWS
 
@@ -794,7 +808,8 @@ def check_release_rows_pinned(workflow_pins: list[dict]) -> list[str]:
             continue
         for name, ver in sorted(wp["libraries"].items()):
             if not ver or set(ver) & _RANGE_CHARS:
-                findings.append(f"{wp['where']} (core {wp['version'] or 'latest'}) installs "
+                findings.append(f"{wp['where']} (core "
+                                f"{core_label(wp['version'], wp.get('line'))}) installs "
                                 f"{name} with no exact version ({name}@{ver or ''}): pin it "
                                 f"as {name}@X.Y.Z, the version the last green build "
                                 f"installed, and the same version in the sketch.yaml "
@@ -1026,11 +1041,12 @@ def build_document(timestamp: str | None = None) -> dict:
             }]
         add(ref, comp)
 
-    def core_path(ver: str | None, path: str) -> str:
+    def core_path(ver: str | None, path: str, line: str | None = None) -> str:
         """Record `path` as a build path of the esp32:esp32 core `ver` (None:
-        the action's "latest"), creating the Boards-Manager component when
-        no PlatformIO platform already brought that core; returns its ref."""
-        ref = f"framework:arduino-esp32@{ver or 'latest'}"
+        a floating row, on the major `line` names or on the action's
+        "latest"), creating the Boards-Manager component when no PlatformIO
+        platform already brought that core; returns its ref."""
+        ref = f"framework:arduino-esp32@{core_label(ver, line)}"
         if ref in components:
             components[ref]["_paths"] = sorted(set(components[ref]["_paths"]) | {path})
             return ref
@@ -1039,7 +1055,10 @@ def build_document(timestamp: str | None = None) -> dict:
             "group": "espressif",
             "name": "arduino-esp32",
             "description": "Arduino core for the ESP32 (esp32:esp32 Boards Manager "
-                           "package, Arduino-CLI build path)",
+                           "package, Arduino-CLI build path)"
+                           + (f"; no fixed version: the newest stable {line}.x release "
+                              "the Boards-Manager index lists the week the row builds"
+                              if line and not ver else ""),
             "licenses": [{"license": {"id": LICENSES["arduino-esp32"]}}],
             "_paths": [path],
         }
@@ -1056,7 +1075,8 @@ def build_document(timestamp: str | None = None) -> dict:
             "gen_firmware_sbom.py: a release row installs a library with no exact "
             "version:\n  - " + "\n  - ".join(unpinned))
     for pin in workflow_pins:
-        dep(ROOT_REF, core_path(pin["version"], f"arduino-cli ({pin['where']})"))
+        dep(ROOT_REF, core_path(pin["version"], f"arduino-cli ({pin['where']})",
+                                pin.get("line")))
 
     by_dir = {Path(v["path"]).name: v for v in vendored}
     for pin in workflow_pins:
@@ -1068,7 +1088,7 @@ def build_document(timestamp: str | None = None) -> dict:
                     f"{THIRD_PARTY_DIR.relative_to(REPO)}/{dirname}, which is not a "
                     f"library directory there")
             link_vendored(v, pin["version"], f"{pin['where']} (core "
-                          f"{pin['version'] or 'latest'})", pin["products"])
+                          f"{core_label(pin['version'], pin.get('line'))})", pin["products"])
             vendored_rows[v["ref"]].add(f"arduino-cli ({pin['where']})")
     for v in vendored:
         envs, rows = sorted(vendored_envs[v["ref"]]), sorted(vendored_rows[v["ref"]])
@@ -1168,7 +1188,7 @@ def build_document(timestamp: str | None = None) -> dict:
             "Move the pin that is wrong — the sketch.yaml profile, or the workflow row's "
             "core-version / library pins (through .github/actions/setup-arduino-esp32) — "
             "and regenerate; firmware/PLATFORMS.md records which axis leads and why the "
-            "WAP's Arduino-CLI PR row floats on the action's latest.")
+            "WAP's Arduino-CLI PR row floats, on the 3.x line.")
     for pin in sketch_pins:
         core_path(pin["version"], f"sketch.yaml ({pin['sketch']}/{pin['profile']})")
 

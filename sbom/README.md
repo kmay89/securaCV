@@ -84,7 +84,7 @@ resolver against PlatformIO's own `pio project config` for every build env
 | `firmware/envs/platformio/platforms.ini` | which pin section each env's platform literal is ([`firmware/PLATFORMS.md`](../firmware/PLATFORMS.md)) |
 | `firmware/common/*/library.json` / `library.properties`, `firmware/canary/lib/*/library.json` | the first-party libraries (name, version, license) the images are built from |
 | `firmware/third_party/*/library.properties` | the upstream libraries built from a patched, committed copy ([`firmware/third_party/README.md`](../firmware/third_party/README.md)): the copy's name and version, and which builds link it — every build env whose `lib_extra_dirs` lists that storage and every Arduino-CLI row that passes the directory with `--library` |
-| `.github/workflows/*.yml` | every `esp32:esp32` core version the Arduino-CLI build path pins through `.github/actions/setup-arduino-esp32` (a literal, a matrix axis, or the action's "latest"), with each row's library pins and the sketch it goes on to compile |
+| `.github/workflows/*.yml` | every `esp32:esp32` core version the Arduino-CLI build path pins through `.github/actions/setup-arduino-esp32` (a literal, a matrix axis, or for a row that floats the major its `core-line` names), with each row's library pins and the sketch it goes on to compile |
 | `firmware/projects/*/arduino/*/sketch.yaml` | the other Arduino axis: the core (`esp32:esp32 (X.Y.Z)`) and library pins of every sketch profile, parsed from YAML — the files' comments quote core numbers too |
 | `firmware/canary/include/canary_config.h` | `FIRMWARE_VERSION` — the one release train (`scripts/lint_fw_version_sync.sh` holds the other six copies to it) |
 
@@ -145,12 +145,15 @@ That leaves one recorded residual, not a drift: the WAP's release rows
 (`firmware-release.yml`, `flasher-release.yml`, `ram_audit.yml`,
 `csi_module_disable_matrix.yml`) pin 3.3.11, the WAP sketch's core and the one
 inside `platform_core3`, so rule 1 holds them to the sketch; `firmware.yml`'s
-PR row still builds on "latest" by design, the early warning for the next
-core, and appears under the `framework:arduino-esp32@latest` component. That
+PR row still floats by design, the early warning for the next core, on the
+3.x line (`core-line: "3"`: the newest stable 3.x release that week, never
+the next major), and appears under the `framework:arduino-esp32@3.x`
+component, which carries no version because it has none. That
 split is a release decision ([`firmware/PLATFORMS.md`](../firmware/PLATFORMS.md),
-#1802), not a lint's. The generator does not refuse a row moved back to
-"latest" (it moves that build path to the `@latest` component, and `--check`
-is red until the document is regenerated); `scripts/tests/test_gen_firmware_sbom.py`
+#1802, bounded to a line on 2026-11-20), not a lint's. The generator does not
+refuse a row moved back to plain "latest" (it moves that build path to an
+`@latest` component, and `--check` is red until the document is regenerated;
+`.github/scripts/test_setup_arduino_esp32.py` is what refuses it); `scripts/tests/test_gen_firmware_sbom.py`
 holds each WAP row to its side of the split.
 
 ### What is still declared by hand
@@ -212,7 +215,7 @@ fails on a match; on a range it cannot read, until its `REVIEWED` table
 records a verdict; and on a third-party component with no exact version or
 no known upstream, so it cannot pass on a component it never compared. The
 one component it leaves unchecked, and says so, is the Arduino core on the
-action's "latest" that only `firmware.yml`'s PR row builds. It needs no
+3.x line (no fixed version) that only `firmware.yml`'s PR row builds. It needs no
 secret (the job's own token, for the rate limit). It does not cover
 Espressif's own advisory page, a CVE with no repository advisory, the
 libraries bundled inside ESP-IDF (not enumerated here) or the libraries'

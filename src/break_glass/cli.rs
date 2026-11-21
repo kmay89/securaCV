@@ -16,7 +16,15 @@ use std::io::IsTerminal;
 use std::io::Write;
 use zeroize::Zeroize;
 
-use crate::crypto::signatures::{SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT};
+use crate::break_glass::trustee_key::{
+    check_trustee_key_id, load_trustee_signer, open_wrapped, parse_trustee_key_file_text,
+    plaintext_key_warning, read_trustee_key_file, tkg1_seal, trustee_key_file_text, TrusteeKeyFile,
+};
+use crate::crypto::passphrase::{PassphraseError, PassphraseInput};
+use crate::crypto::signatures::{
+    SignatureMode, SignatureSet, DOMAIN_BREAK_GLASS_RECEIPT, DOMAIN_POLICY_CHANGE_APPROVAL,
+    DOMAIN_TRUSTEE_APPROVAL,
+};
 use crate::{
     approvals_commitment, break_glass::BreakGlassTokenFile, device_public_key_from_db, hash_entry,
     verify_entry_signature, Approval, BreakGlass, BreakGlassOutcome, BreakGlassToken, Kernel,
@@ -90,8 +98,15 @@ enum Command {
         request_hash: Option<String>,
         #[arg(long)]
         trustee: String,
+        /// Trustee key file: a wrapped key (`trustee keygen`, `trustee wrap`)
+        /// or a plaintext 64-hex seed, which still works with a warning
         #[arg(long)]
         signing_key: String,
+        /// Read a wrapped key's passphrase from this file descriptor (one
+        /// line) instead of the terminal. A passphrase is never taken from
+        /// argv or the environment.
+        #[arg(long, value_name = "N")]
+        passphrase_fd: Option<i32>,
         #[arg(long)]
         output: String,
     },
@@ -345,7 +360,8 @@ enum Command {
         draft: Option<String>,
     },
 
-    /// Manage trustees during setup
+    /// Trustee keys (`keygen`, `wrap`, `pubkey`, run by the trustee) and
+    /// enrollment during setup (`enroll`, run by the operator)
     Trustee {
         #[command(subcommand)]
         command: TrusteeCommand,
@@ -354,15 +370,67 @@ enum Command {
 
 #[derive(Subcommand, Debug)]
 enum TrusteeCommand {
-    /// Enroll one trustee into the setup draft. Either import an existing public
-    /// key (`--public-key`) or mint a fresh keypair (`--generate --output`). The
-    /// quorum policy commits automatically once the roster is complete.
+    /// Run by the TRUSTEE on their own machine: mint a signing key, wrap it
+    /// under a passphrase (TKG1: Argon2id, ChaCha20-Poly1305, bound to the
+    /// trustee id and public key) and write it mode 0600. Prints the public
+    /// key and fingerprint for the operator, never the secret.
+    Keygen {
+        /// Trustee id (bound into the wrapped file)
+        #[arg(long)]
+        id: String,
+        /// Where to write the wrapped key; never overwritten
+        #[arg(long, value_name = "PATH")]
+        output: String,
+        /// Read the new passphrase from this file descriptor (one line)
+        /// instead of the terminal. Never from argv or the environment.
+        #[arg(long, value_name = "N")]
+        passphrase_fd: Option<i32>,
+    },
+
+    /// Wrap an existing plaintext (64-hex) trustee key under a passphrase,
+    /// writing a new file. The plaintext file is left in place: destroy it
+    /// yourself once the wrapped one works.
+    Wrap {
+        /// The plaintext key file to wrap
+        #[arg(long, value_name = "PATH")]
+        signing_key: String,
+        /// Trustee id (bound into the wrapped file)
+        #[arg(long)]
+        id: String,
+        /// Where to write the wrapped key; never overwritten
+        #[arg(long, value_name = "PATH")]
+        output: String,
+        /// Read the new passphrase from this file descriptor (one line)
+        /// instead of the terminal
+        #[arg(long, value_name = "N")]
+        passphrase_fd: Option<i32>,
+    },
+
+    /// Print the public key and fingerprint of a trustee key file. A wrapped
+    /// file is opened with its passphrase, so the key printed is the one the
+    /// file actually signs with.
+    Pubkey {
+        /// The trustee key file (wrapped or plaintext)
+        #[arg(long, value_name = "PATH")]
+        signing_key: String,
+        /// Read the passphrase from this file descriptor (one line) instead
+        /// of the terminal
+        #[arg(long, value_name = "N")]
+        passphrase_fd: Option<i32>,
+    },
+
+    /// Enroll one trustee into the setup draft. Import the public key the
+    /// trustee made with `trustee keygen` (`--public-key`). `--generate
+    /// --output` (operator-minted) is deprecated: it leaves the operator
+    /// holding the trustee's secret. The quorum policy commits automatically
+    /// once the roster is complete.
     Enroll {
         /// Trustee id (a short human label, unique within the quorum)
         #[arg(long)]
         id: String,
-        /// Mint a fresh Ed25519 keypair for this trustee (writes the signing key
-        /// to --output). Mutually exclusive with --public-key.
+        /// DEPRECATED: mint a fresh Ed25519 keypair for this trustee (writes
+        /// the plaintext signing key to --output). Prefer `trustee keygen`,
+        /// run by the trustee. Mutually exclusive with --public-key.
         #[arg(long, conflicts_with = "public_key")]
         generate: bool,
         /// Where to write the newly-minted signing key (required with --generate)
@@ -450,8 +518,13 @@ enum PolicyCommand {
         proposal: String,
         #[arg(long)]
         trustee: String,
+        /// Trustee key file: a wrapped key or a plaintext 64-hex seed
         #[arg(long)]
         signing_key: String,
+        /// Read a wrapped key's passphrase from this file descriptor (one
+        /// line) instead of the terminal
+        #[arg(long, value_name = "N")]
+        passphrase_fd: Option<i32>,
         #[arg(long)]
         output: String,
     },
@@ -505,6 +578,29 @@ enum PolicyCommand {
     },
 }
 
+/// The `--ui` mode a command's stage runs in. `approve` and `policy
+/// approve` may ask for a trustee-key passphrase on the terminal; a spinner
+/// redrawing its line every 120 ms would erase that prompt, so those two
+/// always run their stage plain, whatever `--ui` says.
+fn stage_ui_flag<'a>(command: &Command, ui: &'a str) -> &'a str {
+    if matches!(
+        command,
+        Command::Approve { .. }
+            | Command::Policy {
+                command: PolicyCommand::Approve { .. }
+            }
+    ) {
+        "plain"
+    } else {
+        ui
+    }
+}
+
+/// Printed after each "each trustee runs" line: where the passphrase of a
+/// wrapped key comes from.
+const TRUSTEE_PASSPHRASE_NOTE: &str =
+    "  (a wrapped key's passphrase is read from the terminal, or from --passphrase-fd N)";
+
 pub fn run() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let args = Args::parse();
@@ -517,7 +613,11 @@ pub fn run() -> Result<()> {
                 command: PolicyCommand::Show { .. }
             }
         );
-    let ui = ui::Ui::from_args(Some(&args.ui), is_tty, disable_pretty);
+    let ui = ui::Ui::from_args(
+        Some(stage_ui_flag(&args.command, &args.ui)),
+        is_tty,
+        disable_pretty,
+    );
 
     match args.command {
         Command::Request {
@@ -551,6 +651,7 @@ pub fn run() -> Result<()> {
             request_hash,
             trustee,
             signing_key,
+            passphrase_fd,
             output,
         } => {
             let _stage = ui.stage("Sign approval");
@@ -559,6 +660,7 @@ pub fn run() -> Result<()> {
                 request_hash.as_deref(),
                 &trustee,
                 &signing_key,
+                passphrase_fd,
                 &output,
             )
         }
@@ -682,10 +784,11 @@ pub fn run() -> Result<()> {
                 proposal,
                 trustee,
                 signing_key,
+                passphrase_fd,
                 output,
             } => {
                 let _stage = ui.stage("Approve policy change");
-                cmd_policy_change_approve(&proposal, &trustee, &signing_key, &output)
+                cmd_policy_change_approve(&proposal, &trustee, &signing_key, passphrase_fd, &output)
             }
             PolicyCommand::Show {
                 db,
@@ -783,6 +886,21 @@ pub fn run() -> Result<()> {
             )
         }
         Command::Trustee { command } => match command {
+            TrusteeCommand::Keygen {
+                id,
+                output,
+                passphrase_fd,
+            } => cmd_trustee_keygen(&id, &output, passphrase_fd),
+            TrusteeCommand::Wrap {
+                signing_key,
+                id,
+                output,
+                passphrase_fd,
+            } => cmd_trustee_wrap(&signing_key, &id, &output, passphrase_fd),
+            TrusteeCommand::Pubkey {
+                signing_key,
+                passphrase_fd,
+            } => cmd_trustee_pubkey(&signing_key, passphrase_fd),
             TrusteeCommand::Enroll {
                 id,
                 generate,
@@ -1056,15 +1174,17 @@ fn cmd_request(
             "Send the FILE to each trustee (full context, never a bare hash). Each trustee runs:"
         );
         println!(
-            "  break_glass approve --request {} --trustee <name> --signing-key <hex-key-file> --output <name>.approval",
+            "  break_glass approve --request {} --trustee <name> --signing-key <name>.tkey --output <name>.approval",
             path
         );
+        println!("{TRUSTEE_PASSPHRASE_NOTE}");
     } else {
         println!("Share the request hash with trustees. Each trustee runs:");
         println!(
-            "  break_glass approve --request-hash {} --trustee <name> --signing-key <hex-key-file> --output <name>.approval",
+            "  break_glass approve --request-hash {} --trustee <name> --signing-key <name>.tkey --output <name>.approval",
             hex32(&request_hash)
         );
+        println!("{TRUSTEE_PASSPHRASE_NOTE}");
         println!(
             "Better: re-run with --output-request <file> and send trustees the full context \
              file instead, so their tool can show them what they are signing."
@@ -1074,11 +1194,10 @@ fn cmd_request(
     Ok(())
 }
 
-fn read_signing_key(signing_key_path: &str) -> Result<SigningKey> {
-    let signing_key_hex = std::fs::read_to_string(signing_key_path)
-        .map_err(|e| anyhow!("failed to read signing key {}: {}", signing_key_path, e))?;
-    let signing_key_bytes = parse_hex32(signing_key_hex.trim())?;
-    Ok(SigningKey::from_bytes(&signing_key_bytes))
+/// The passphrase source for one trustee command: `--passphrase-fd`, else
+/// the terminal.
+fn passphrase_input(passphrase_fd: Option<i32>) -> Result<PassphraseInput> {
+    PassphraseInput::new(passphrase_fd).map_err(|e| anyhow!("{e}"))
 }
 
 fn cmd_approve(
@@ -1086,8 +1205,10 @@ fn cmd_approve(
     request_hash_hex: Option<&str>,
     trustee: &str,
     signing_key_path: &str,
+    passphrase_fd: Option<i32>,
     output: &str,
 ) -> Result<()> {
+    let mut passphrase = passphrase_input(passphrase_fd)?;
     let request_hash = match (request_file, request_hash_hex) {
         (Some(path), _) => {
             // Recompute everything locally from the request's FIELDS. The
@@ -1125,18 +1246,16 @@ fn cmd_approve(
         }
     };
 
-    let signing_key = read_signing_key(signing_key_path)?;
+    let signer = load_trustee_signer(signing_key_path, &mut passphrase)?;
     // Domain-separated to DOMAIN_TRUSTEE_APPROVAL so this consent cannot be
     // replayed as (or from) any other signature context.
-    let approval = Approval::signed(TrusteeId::new(trustee), request_hash, &signing_key);
+    let signature = signer.sign(DOMAIN_TRUSTEE_APPROVAL, &request_hash)?;
+    let approval = Approval::new(TrusteeId::new(trustee), request_hash, signature);
     let json = serde_json::to_string_pretty(&approval)?;
     std::fs::write(output, json)?;
 
     println!("Approval written to: {}", output);
-    println!(
-        "Trustee public key: {}",
-        hex32(&signing_key.verifying_key().to_bytes())
-    );
+    println!("Trustee public key: {}", hex32(&signer.public_key()));
     Ok(())
 }
 
@@ -1190,7 +1309,7 @@ fn cmd_authorize_with_bucket(args: AuthorizeArgs<'_>) -> Result<()> {
     let cfg = kernel_config(args.db_path, args.ruleset_id, args.device_key_seed);
     let mut kernel = Kernel::open(&cfg)?;
     let policy = kernel
-        .break_glass_policy()
+        .break_glass_policy_checked()?
         .ok_or_else(|| anyhow!("break-glass quorum policy is not configured"))?
         .clone();
 
@@ -1385,7 +1504,7 @@ fn cmd_policy_set(
 ) -> Result<()> {
     let cfg = kernel_config(db_path, ruleset_id, device_key_seed);
     let mut kernel = Kernel::open(&cfg)?;
-    let current = kernel.break_glass_policy().cloned();
+    let current = kernel.break_glass_policy_checked()?.cloned();
     let policy = build_proposed_policy(threshold, trustees, crypto_mode, current.as_ref())?;
 
     let approvals = match approvals_arg {
@@ -1424,7 +1543,7 @@ fn cmd_policy_propose(
 ) -> Result<()> {
     let cfg = kernel_config(db_path, ruleset_id, device_key_seed);
     let kernel = Kernel::open(&cfg)?;
-    let Some(current) = kernel.break_glass_policy().cloned() else {
+    let Some(current) = kernel.break_glass_policy_checked()?.cloned() else {
         return Err(anyhow!(
             "no policy is stored yet — the first policy is a bootstrap and needs no proposal; \
              run `break_glass policy set` directly"
@@ -1468,9 +1587,10 @@ fn cmd_policy_propose(
         current.n
     );
     println!(
-        "  break_glass policy approve --proposal {} --trustee <name> --signing-key <hex-key-file> --output <name>.policy-approval",
+        "  break_glass policy approve --proposal {} --trustee <name> --signing-key <name>.tkey --output <name>.policy-approval",
         output
     );
+    println!("{TRUSTEE_PASSPHRASE_NOTE}");
     println!("Then apply within the window: break_glass policy set … --approvals <files>");
     Ok(())
 }
@@ -1479,8 +1599,10 @@ fn cmd_policy_change_approve(
     proposal_path: &str,
     trustee: &str,
     signing_key_path: &str,
+    passphrase_fd: Option<i32>,
     output: &str,
 ) -> Result<()> {
+    let mut passphrase = passphrase_input(passphrase_fd)?;
     let json = std::fs::read_to_string(proposal_path)
         .map_err(|e| anyhow!("failed to read proposal {}: {}", proposal_path, e))?;
     let file: PolicyChangeProposalFile = serde_json::from_str(&json)
@@ -1565,19 +1687,15 @@ fn cmd_policy_change_approve(
     );
     println!();
 
-    let signing_key = read_signing_key(signing_key_path)?;
+    let signer = load_trustee_signer(signing_key_path, &mut passphrase)?;
     // Signed under DOMAIN_POLICY_CHANGE_APPROVAL — disjoint from unlock
     // approvals, so this consent authorizes exactly one thing.
-    let signature =
-        crate::break_glass::sign_policy_change_approval(&signing_key, &recomputed).to_vec();
+    let signature = signer.sign(DOMAIN_POLICY_CHANGE_APPROVAL, &recomputed)?;
     let approval = Approval::new(TrusteeId::new(trustee), recomputed, signature);
     std::fs::write(output, serde_json::to_string_pretty(&approval)?)?;
 
     println!("Policy-change approval written to: {}", output);
-    println!(
-        "Trustee public key: {}",
-        hex32(&signing_key.verifying_key().to_bytes())
-    );
+    println!("Trustee public key: {}", hex32(&signer.public_key()));
     Ok(())
 }
 
@@ -2238,9 +2356,25 @@ fn cmd_doctor(db_path: &str, vault_path: &str, device_key_seed: &str) -> Result<
         );
         problems += 1;
     } else {
-        match open_kernel_db_keyed(db_path, device_key_seed)
-            .and_then(|conn| load_break_glass_policy(&conn).map(|p| (conn, p)))
-        {
+        // A stored policy that cannot be parsed or validated is named as such
+        // (`policy: UNREADABLE — …`), apart from a database that will not open:
+        // the kernel opens over it and refuses every break-glass action, and
+        // witnessd boots into safe mode on it. A failure of the SQL read itself
+        // (no policy table in an unprovisioned database, I/O) is not a verdict
+        // on a stored policy and keeps its own message; a stored cell that is
+        // not text, a parse error and a validate error are.
+        match open_kernel_db_keyed(db_path, device_key_seed).and_then(|conn| {
+            load_break_glass_policy(&conn)
+                .map(|p| (conn, p))
+                .map_err(|e| match e.downcast_ref::<rusqlite::Error>() {
+                    Some(
+                        rusqlite::Error::InvalidColumnType(..)
+                        | rusqlite::Error::FromSqlConversionFailure(..),
+                    )
+                    | None => anyhow!("policy: UNREADABLE — {e:#}"),
+                    Some(_) => e,
+                })
+        }) {
             Ok((conn, Some(policy))) => {
                 println!(
                     "  {} quorum policy configured: {}-of-{}",
@@ -2327,8 +2461,9 @@ fn cmd_doctor(db_path: &str, vault_path: &str, device_key_seed: &str) -> Result<
                 problems += 1;
             }
             Err(e) => {
-                // Either the database wouldn't open with this seed, or the stored
-                // policy failed validation — both are hard problems.
+                // The database wouldn't open with this seed, the policy read
+                // failed, or the stored policy could not be loaded (UNREADABLE) —
+                // each is a hard problem.
                 println!("  {} {}", DR_BAD, e);
                 problems += 1;
             }
@@ -2711,6 +2846,29 @@ fn write_secret_file(path: &str, bytes: &[u8]) -> Result<()> {
     std::fs::write(path, bytes).map_err(|e| anyhow!("failed to write {}: {}", path, e))
 }
 
+/// Write a NEW secret file, mode 0600: refuses an existing path (including a
+/// symlink, dangling or not) instead of truncating it, so a key file is
+/// never overwritten. Errors name no path.
+fn write_new_secret_file(path: &str, bytes: &[u8]) -> Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut file = options.open(path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            anyhow!("{OUTPUT_EXISTS}")
+        } else {
+            anyhow!("failed to create the key file: {e}")
+        }
+    })?;
+    file.write_all(bytes)
+        .and_then(|()| file.sync_all())
+        .map_err(|e| anyhow!("failed to write the key file: {e}"))
+}
+
 /// Write a freshly-minted trustee signing key (hex) to `path`, mode 0600 — this
 /// IS a secret, unlike the draft. Matches the format `approve --signing-key`
 /// reads.
@@ -2741,7 +2899,9 @@ fn print_setup_next_steps(draft: &SetupDraft) {
         return;
     }
     println!("  break_glass trustee enroll --id <name> --public-key <HEX>");
-    println!("  break_glass trustee enroll --id <name> --generate --output <name>.key");
+    println!(
+        "  (each trustee makes their key on their own machine: break_glass trustee keygen --id <name> --output <name>.tkey)"
+    );
 }
 
 fn cmd_init(
@@ -2820,6 +2980,166 @@ fn cmd_init(
     Ok(())
 }
 
+/// Printed to stderr by `trustee enroll --generate`.
+const ENROLL_GENERATE_DEPRECATED: &str = "WARNING: trustee enroll --generate is deprecated: \
+     it leaves the operator holding the trustee's secret. Have the trustee run \
+     break_glass trustee keygen on their own machine and enroll the public key it prints \
+     with --public-key.";
+
+/// The refusal when a NEW trustee key's passphrase has no source.
+const NO_NEW_PASSPHRASE_SOURCE: &str =
+    "a new trustee key needs a passphrase: run on a terminal or pass --passphrase-fd";
+
+/// The refusal when `--output` names an existing file.
+const OUTPUT_EXISTS: &str = "the output file already exists; this tool never overwrites a key file";
+
+/// The public-key block every trustee key command prints: the full key
+/// (what the operator enrolls) and the fingerprint (what is read back).
+fn trustee_key_lines(header: &str, public_key: &[u8; 32]) -> String {
+    format!(
+        "{header}\n  public key  {}\n  fingerprint {}\n",
+        hex32(public_key),
+        short_fp(public_key)
+    )
+}
+
+/// What `trustee keygen` prints.
+fn keygen_lines(id: &str, public_key: &[u8; 32]) -> String {
+    let mut out = trustee_key_lines(
+        &format!("trustee key for '{id}': wrapped under your passphrase (Argon2id, mode 0600)"),
+        public_key,
+    );
+    out.push_str(&format!(
+        "Give the operator the public key above for: break_glass trustee enroll --id {id} --public-key <it>\n"
+    ));
+    out.push_str(
+        "Read the fingerprint back when they enroll you. The key file and its passphrase stay with you.\n",
+    );
+    out
+}
+
+/// What `trustee wrap` prints.
+fn wrap_lines(id: &str, public_key: &[u8; 32]) -> String {
+    let mut out = trustee_key_lines(
+        &format!("trustee key for '{id}': wrapped under your passphrase (Argon2id, mode 0600)"),
+        public_key,
+    );
+    out.push_str("now destroy the plaintext file; this tool does not delete it\n");
+    out
+}
+
+/// What `trustee pubkey` prints. `id` is the wrapped file's trustee id;
+/// a plaintext file has none.
+fn pubkey_lines(id: Option<&str>, public_key: &[u8; 32]) -> String {
+    let header = match id {
+        Some(id) => format!("trustee key for '{id}': wrapped (TKG1); the passphrase opened it"),
+        None => "trustee key: plaintext (unwrapped)".to_string(),
+    };
+    trustee_key_lines(&header, public_key)
+}
+
+/// The prompt for a NEW trustee-key passphrase.
+fn new_passphrase_prompt(id: &str) -> String {
+    format!("new passphrase for trustee key '{id}': ")
+}
+
+/// The prompt that asks for a new passphrase a second time.
+const REPEAT_PASSPHRASE_PROMPT: &str = "repeat it: ";
+
+/// Read a NEW passphrase for a trustee key: one line from a plain fd, or
+/// typed twice where a prompt is shown.
+fn read_new_trustee_passphrase(
+    id: &str,
+    input: &mut PassphraseInput,
+) -> Result<zeroize::Zeroizing<String>> {
+    input
+        .read_new(&new_passphrase_prompt(id), REPEAT_PASSPHRASE_PROMPT)
+        .map_err(|e| match e {
+            PassphraseError::NoSource => anyhow!("{NO_NEW_PASSPHRASE_SOURCE}"),
+            PassphraseError::Failed(e) => e,
+        })
+}
+
+/// Seal `seed` for `id` under a new passphrase, prove the result opens to
+/// the same key, and write it to `output` (never overwriting). Returns the
+/// public key.
+fn write_wrapped_trustee_key(
+    seed: &[u8; 32],
+    id: &str,
+    output: &str,
+    input: &mut PassphraseInput,
+) -> Result<[u8; 32]> {
+    let passphrase = read_new_trustee_passphrase(id, input)?;
+    let tkg1 = tkg1_seal(seed, id, &passphrase)?;
+    let text = trustee_key_file_text(&tkg1);
+    // Open what is about to be written before writing it: a file this tool
+    // reports as made must open with the passphrase just given.
+    let check = parse_trustee_key_file_text(&text)?;
+    if *check.open(&passphrase)? != *seed {
+        return Err(anyhow!(
+            "trustee key: the wrapped file did not open to the same key"
+        ));
+    }
+    write_new_secret_file(output, text.as_bytes())?;
+    Ok(check.public_key)
+}
+
+fn cmd_trustee_keygen(id: &str, output: &str, passphrase_fd: Option<i32>) -> Result<()> {
+    check_trustee_key_id(id)?;
+    if std::path::Path::new(output).symlink_metadata().is_ok() {
+        return Err(anyhow!("{OUTPUT_EXISTS}"));
+    }
+    let mut input = passphrase_input(passphrase_fd)?;
+    let mut seed = zeroize::Zeroizing::new([0u8; 32]);
+    rand::rngs::SysRng
+        .try_fill_bytes(&mut seed[..])
+        .map_err(|_| anyhow!("OS RNG unavailable"))?;
+    let public_key = write_wrapped_trustee_key(&seed, id, output, &mut input)?;
+    print!("{}", keygen_lines(id, &public_key));
+    Ok(())
+}
+
+fn cmd_trustee_wrap(
+    signing_key_path: &str,
+    id: &str,
+    output: &str,
+    passphrase_fd: Option<i32>,
+) -> Result<()> {
+    check_trustee_key_id(id)?;
+    let seed = match read_trustee_key_file(signing_key_path)? {
+        TrusteeKeyFile::Plaintext(seed) => seed,
+        TrusteeKeyFile::Wrapped(_) => {
+            return Err(anyhow!(
+                "the signing key file is already wrapped (securacv-trustee-key:v1); nothing to do"
+            ))
+        }
+    };
+    if std::path::Path::new(output).symlink_metadata().is_ok() {
+        return Err(anyhow!("{OUTPUT_EXISTS}"));
+    }
+    let mut input = passphrase_input(passphrase_fd)?;
+    let public_key = write_wrapped_trustee_key(&seed, id, output, &mut input)?;
+    print!("{}", wrap_lines(id, &public_key));
+    Ok(())
+}
+
+fn cmd_trustee_pubkey(signing_key_path: &str, passphrase_fd: Option<i32>) -> Result<()> {
+    let mut input = passphrase_input(passphrase_fd)?;
+    let (id, seed) = match read_trustee_key_file(signing_key_path)? {
+        TrusteeKeyFile::Wrapped(wrapped) => {
+            let seed = open_wrapped(&wrapped, &mut input)?;
+            (Some(wrapped.id), seed)
+        }
+        TrusteeKeyFile::Plaintext(seed) => {
+            eprintln!("{}", plaintext_key_warning(signing_key_path));
+            (None, seed)
+        }
+    };
+    let public_key = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
+    print!("{}", pubkey_lines(id.as_deref(), &public_key));
+    Ok(())
+}
+
 // A CLI handler whose parameters map one-to-one to `trustee enroll` flags; the
 // arguments are all distinct and independently meaningful, so a bag struct would
 // obscure more than it helps.
@@ -2855,6 +3175,7 @@ fn cmd_trustee_enroll(
     // Resolve the trustee's public key: mint a fresh keypair, or import one.
     let public_key_bytes: [u8; 32] = match (generate, public_key) {
         (true, _) => {
+            eprintln!("{ENROLL_GENERATE_DEPRECATED}");
             let out = output.ok_or_else(|| {
                 anyhow!("--generate requires --output <file> to save the trustee's signing key")
             })?;
@@ -2943,6 +3264,11 @@ fn cmd_trustee_enroll(
         let policy = crate::break_glass::QuorumPolicy::new(draft.threshold, entries)?;
         let cfg = kernel_config(db_path, ruleset_id, device_key_seed);
         let mut kernel = Kernel::open(&cfg)?;
+        // A stored policy that cannot be loaded is not a live one: refuse with
+        // the recorded load error (D7), never the "already live / policy
+        // CHANGE" guidance below, whose `policy propose` would refuse too.
+        // The locked re-read inside the gated set stays the backstop.
+        kernel.break_glass_policy_checked()?;
         match kernel.set_break_glass_policy_gated(&policy, &[], TimeBucket::now_10min()?) {
             Ok(_) => println!(
                 "  {} quorum policy is live: {}-of-{}",
@@ -3257,7 +3583,7 @@ fn cmd_unseal(
     let cfg = kernel_config(db_path, ruleset_id, device_key_seed);
     let mut kernel = Kernel::open(&cfg)?;
     let crypto_mode = kernel
-        .break_glass_policy()
+        .break_glass_policy_checked()?
         .map(|policy| policy.vault.crypto_mode)
         .unwrap_or_default();
     let vault = Vault::new(VaultConfig {
@@ -4125,7 +4451,7 @@ mod tests {
 
         // The trustee tool recomputes the hash from the file's FIELDS and
         // signs that — producing a valid, domain-separated approval.
-        cmd_approve(Some(&req_path), None, "alice", &key_path, &out_path)?;
+        cmd_approve(Some(&req_path), None, "alice", &key_path, None, &out_path)?;
         let approval: Approval = serde_json::from_str(&std::fs::read_to_string(&out_path)?)?;
         let file: UnlockRequestFile = serde_json::from_str(&std::fs::read_to_string(&req_path)?)?;
         let expected = parse_hex32(&file.request_hash)?;
@@ -4169,7 +4495,7 @@ mod tests {
         file.purpose = "totally routine, nothing to see".to_string();
         std::fs::write(&req_path, serde_json::to_string_pretty(&file)?)?;
 
-        let result = cmd_approve(Some(&req_path), None, "alice", &key_path, &out_path);
+        let result = cmd_approve(Some(&req_path), None, "alice", &key_path, None, &out_path);
         assert!(
             result.is_err(),
             "a request file whose fields do not hash to its claimed request hash must be refused"
@@ -4199,7 +4525,7 @@ mod tests {
         file.requested_by = Some("Definitely Bob".to_string());
         std::fs::write(&req_path, serde_json::to_string_pretty(&file)?)?;
         assert!(
-            cmd_approve(Some(&req_path), None, "alice", &key_path, &out_path).is_err(),
+            cmd_approve(Some(&req_path), None, "alice", &key_path, None, &out_path).is_err(),
             "a swapped requester name must be refused — it is consent-bound"
         );
         Ok(())
@@ -4245,7 +4571,14 @@ mod tests {
         let key_path = temp.join("alice.key").to_string_lossy().to_string();
         let approval_path = temp.join("alice.approval").to_string_lossy().to_string();
         std::fs::write(&key_path, format!("{}\n", hex_vec(&alice.to_bytes())))?;
-        cmd_approve(Some(&req_path), None, "alice", &key_path, &approval_path)?;
+        cmd_approve(
+            Some(&req_path),
+            None,
+            "alice",
+            &key_path,
+            None,
+            &approval_path,
+        )?;
 
         // Operator: authorize FROM THE FILE — reproduces the consented hash,
         // context included, so the approval counts.
@@ -4450,7 +4783,7 @@ mod tests {
 
         let alice = SigningKey::from_bytes(&[43u8; 32]);
         std::fs::write(&key_path, format!("{}\n", hex_vec(&alice.to_bytes())))?;
-        cmd_approve(Some(&req_path), None, "alice", &key_path, &out_path)?;
+        cmd_approve(Some(&req_path), None, "alice", &key_path, None, &out_path)?;
         let approval: Approval = serde_json::from_str(&std::fs::read_to_string(&out_path)?)?;
         assert_eq!(approval.request_hash, request.request_hash());
 
@@ -4460,7 +4793,7 @@ mod tests {
         smuggled.requested_by = Some("Alice".to_string());
         smuggled.reason = Some("incident-review".to_string());
         std::fs::write(&req_path, serde_json::to_string_pretty(&smuggled)?)?;
-        assert!(cmd_approve(Some(&req_path), None, "alice", &key_path, &out_path).is_err());
+        assert!(cmd_approve(Some(&req_path), None, "alice", &key_path, None, &out_path).is_err());
         Ok(())
     }
 
@@ -4530,7 +4863,13 @@ mod tests {
                 "ruleset:test",
                 seed,
             )?;
-            cmd_policy_change_approve(&proposal_path, "alice", &alice_key_path, &approval_path)?;
+            cmd_policy_change_approve(
+                &proposal_path,
+                "alice",
+                &alice_key_path,
+                None,
+                &approval_path,
+            )?;
             match cmd_policy_set(
                 2,
                 &[alice_entry.clone(), bob_entry.clone()],
@@ -4810,11 +5149,139 @@ mod tests {
             .join("alice.policy-approval")
             .to_string_lossy()
             .to_string();
-        let result = cmd_policy_change_approve(&proposal_path, "alice", &key_path, &out_path);
+        let result = cmd_policy_change_approve(&proposal_path, "alice", &key_path, None, &out_path);
         assert!(
             result.is_err(),
             "a proposal whose contents do not hash to its claimed change hash must be refused"
         );
         Ok(())
+    }
+
+    /// Every argument of every `break_glass` subcommand, as clap sees it.
+    fn every_arg() -> Vec<(String, clap::Arg)> {
+        use clap::CommandFactory;
+        fn walk(prefix: &str, cmd: &clap::Command, out: &mut Vec<(String, clap::Arg)>) {
+            let path = format!("{prefix} {}", cmd.get_name());
+            for arg in cmd.get_arguments() {
+                out.push((path.clone(), arg.clone()));
+            }
+            for sub in cmd.get_subcommands() {
+                walk(&path, sub, out);
+            }
+        }
+        let mut out = Vec::new();
+        walk("", &Args::command(), &mut out);
+        out
+    }
+
+    #[test]
+    fn no_passphrase_is_read_from_argv_or_the_environment() {
+        // The only passphrase argument any subcommand may declare is
+        // --passphrase-fd, a descriptor NUMBER; no argument of any kind may
+        // fall back to an environment variable that names a passphrase.
+        for (path, arg) in every_arg() {
+            let id = arg.get_id().as_str().to_ascii_lowercase();
+            let long = arg.get_long().unwrap_or("").to_ascii_lowercase();
+            for name in [&id, &long] {
+                if name.contains("passphrase") || name.contains("password") {
+                    assert!(
+                        name.as_str() == "passphrase_fd" || name.as_str() == "passphrase-fd",
+                        "{path}: --{long} would put a passphrase on the command line"
+                    );
+                    assert!(
+                        arg.get_env().is_none(),
+                        "{path}: --{long} must not read the environment"
+                    );
+                }
+            }
+            if let Some(env) = arg.get_env() {
+                let env = env.to_string_lossy().to_ascii_uppercase();
+                assert!(
+                    !env.contains("PASSPHRASE") && !env.contains("PASSWORD"),
+                    "{path}: --{long} reads {env}"
+                );
+            }
+        }
+        // And the trustee-key code paths read neither argv nor the
+        // environment directly: the key loader, the reader, and this file's
+        // own code, where the trustee commands and their passphrase plumbing
+        // live. cli.rs is scanned up to its test module, which names the
+        // needles in its own assertions; the needles and the marker are
+        // built at run time so this test does not match itself.
+        let cli_src = include_str!("cli.rs");
+        let marker = ["#[cfg", "(test)]"].concat();
+        let cli_code = &cli_src[..cli_src.find(&marker).expect("cli.rs has a test module")];
+        for (file, src) in [
+            ("cli.rs", cli_code),
+            ("trustee_key.rs", include_str!("trustee_key.rs")),
+            ("passphrase.rs", include_str!("../crypto/passphrase.rs")),
+        ] {
+            for needle in [
+                ["env", "::var"].concat(),
+                ["env", "::args"].concat(),
+                ["var", "_os("].concat(),
+                ["get", "env("].concat(),
+                ["PASS", "PHRASE\""].concat(),
+                ["PASS", "WORD\""].concat(),
+            ] {
+                assert!(!src.contains(&needle), "{file} contains {needle}");
+            }
+        }
+    }
+
+    /// `approve` and `policy approve` may prompt for a passphrase on the
+    /// terminal, so their stage never runs the spinner that would erase the
+    /// prompt, even under `--ui pretty`. Every other command keeps its flag.
+    #[test]
+    fn signing_commands_run_their_stage_plain() {
+        let parse = |argv: &[&str]| {
+            let mut full = vec!["break_glass"];
+            full.extend_from_slice(argv);
+            Args::try_parse_from(full).unwrap_or_else(|e| panic!("{e}"))
+        };
+        let approve = parse(&[
+            "approve",
+            "--request-hash",
+            "00",
+            "--trustee",
+            "alice",
+            "--signing-key",
+            "alice.tkey",
+            "--output",
+            "a.approval",
+        ]);
+        let policy_approve = parse(&[
+            "policy",
+            "approve",
+            "--proposal",
+            "p",
+            "--trustee",
+            "alice",
+            "--signing-key",
+            "alice.tkey",
+            "--passphrase-fd",
+            "0",
+            "--output",
+            "a",
+        ]);
+        let drill = parse(&["drill"]);
+        for ui in ["auto", "pretty", "plain"] {
+            assert_eq!(stage_ui_flag(&approve.command, ui), "plain");
+            assert_eq!(stage_ui_flag(&policy_approve.command, ui), "plain");
+            assert_eq!(stage_ui_flag(&drill.command, ui), ui);
+        }
+    }
+
+    #[test]
+    fn new_passphrase_prompts_are_exact() {
+        assert_eq!(
+            new_passphrase_prompt("carol"),
+            "new passphrase for trustee key 'carol': "
+        );
+        assert_eq!(REPEAT_PASSPHRASE_PROMPT, "repeat it: ");
+        assert_eq!(
+            TRUSTEE_PASSPHRASE_NOTE,
+            "  (a wrapped key's passphrase is read from the terminal, or from --passphrase-fd N)"
+        );
     }
 }

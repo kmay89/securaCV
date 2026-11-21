@@ -1,0 +1,24 @@
+name: "Build request (public hand)"
+description: "Ask for a Canary to be built for someone. securacv.com/request fills this in for you, with the shape of the ask only."
+title: "Build request (public hand)"
+labels:
+  - "build-request"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the public half of a request: **who it is for in general
+        terms, which Canary, a region and the timing.** It is a normal GitHub
+        issue anyone can read, so leave out names, addresses, health details
+        and the story behind it. Those stay on your own device.
+
+        Matching is done by hand for now. A maker who can help answers here;
+        nothing is promised by opening this, and nothing is sold through it.
+  - type: textarea
+    id: details
+    attributes:
+      label: The shape of the ask
+      description: Who it is for (for example "an older relative"), which Canary, the region, and how soon. If you came from the site, this is already filled in.
+      placeholder: "For: an older relative\nWhich: Canary WAP\nRegion: Ohio\nTiming: this month"
+    validations:
+      required: true

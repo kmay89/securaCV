@@ -6,6 +6,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use zeroize::{Zeroize, Zeroizing};
 
+pub(crate) mod passphrase;
 pub mod signatures;
 
 /// Where a resolved device seed came from. Daemons log the SOURCE at startup

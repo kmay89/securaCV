@@ -60,7 +60,7 @@ The KSK ceremony roles, mapped onto ours. "Trustee" is the SecuraCV word;
 | KSK role | SecuraCV role | Holds | Runs | May not | Status |
 |---|---|---|---|---|---|
 | Ceremony Administrator | **Operator** | access to `DEVICE_KEY_SEED` on the host | `init`, `trustee enroll`, `policy propose` / `set`, `request`, `authorize`, `unseal`, `receipts`, `doctor`, `db-key` (derives the database key for observers), `log_anchor`, `log_verify` | hold a trustee signing key in the same ceremony | **PROC** — nothing stops one person holding both; the record must say so |
-| Crypto Officer | **Trustee** (one of *m*) | one Ed25519 signing-key file (32-byte hex seed, mode 0600) on their own machine | `approve --request`, `policy approve --proposal` | sign anything their own tool did not display | **CODE** — `approve --request` recomputes the hash from the file's fields before signing; `--request-hash` is labeled blind signing |
+| Crypto Officer | **Trustee** (one of *m*) | one Ed25519 trustee key file on their own machine, wrapped under a passphrase (TKG1, mode 0600; a plaintext 64-hex seed still signs, with a warning) | `approve --request`, `policy approve --proposal` | sign anything their own tool did not display | **CODE** — `approve --request` recomputes the hash from the file's fields before signing; `--request-hash` is labeled blind signing |
 | Requester of the act | **Requester** | nothing cryptographic | supplies `--requested-by`, `--reason`, `--case-ref`, `--requester-key` | — | **CODE** — consent-bound and recorded in the receipt; the requester key is recorded, not checked against a registry. The requester is often the operator; write that down |
 | Internal Witness | **Ceremony witness** — a person who is neither trustee nor operator | the exceptions register | nothing on the kernel | approve, operate | **PROC** → §3.4 witness co-signature. No kernel principal exists for this role |
 | Safe Security Controller | **Device-key custodian**; in keyguard mode also the **Vault-passphrase custodian** | where `DEVICE_KEY_SEED` lives; `SECURACV_VAULT_PASSPHRASE` (environment or secrets manager, never on disk) | sets the environment for the operator's commands | — | **CODE** for the on-disk part (the keyguard never writes the plaintext key); custody itself **PROC** |
@@ -171,16 +171,22 @@ decided in advance (see step 2).
    (**CODE**). Copy the fingerprint into `ATTENDANCE.md`: every later receipt
    is signed under this identity.
 2. Per trustee, one of two key paths, chosen in advance and recorded:
-   - **Trustee-generated (preferred).** The trustee mints a 32-byte hex seed
-     on their own machine (mode 0600) and sends only the public half.
-     Operator: `break_glass trustee enroll --id alice --public-key <hex> --db witness.db --device-key-seed "$DEVICE_KEY_SEED"`.
-     **GAP**: there is no `trustee keygen` / public-key-print command; the
-     trustee derives the public hex with an external Ed25519 tool.
-   - **Operator-minted.** `break_glass trustee enroll --id bob --generate --output bob.key --db witness.db --device-key-seed "$DEVICE_KEY_SEED"`
-     → `bob.key` (hex seed, mode 0600, written symlink-safe — **CODE**),
-     handed to Bob in person; the operator's copy is securely deleted
-     (**PROC**). Honest note for the record: the operator transiently held
-     Bob's secret.
+   - **Trustee-generated (preferred).** On their own machine the trustee
+     runs `break_glass trustee keygen --id alice --output alice.tkey`
+     (**CODE**): the key is wrapped under their passphrase (TKG1: Argon2id,
+     ChaCha20-Poly1305, bound to the id and public key), written mode 0600,
+     and the tool prints the public key and its fingerprint, never the
+     secret. The trustee sends only the public key. Operator:
+     `break_glass trustee enroll --id alice --public-key <hex> --db witness.db --device-key-seed "$DEVICE_KEY_SEED"`.
+     A trustee who already holds a plaintext key wraps it with
+     `break_glass trustee wrap --signing-key alice.key --id alice --output alice.tkey`,
+     then destroys the plaintext file (**PROC**; the tool does not delete it).
+   - **Operator-minted (deprecated).** `break_glass trustee enroll --id bob --generate --output bob.key --db witness.db --device-key-seed "$DEVICE_KEY_SEED"`
+     → `bob.key` (plaintext hex seed, mode 0600, written symlink-safe —
+     **CODE**), handed to Bob in person; the operator's copy is securely
+     deleted (**PROC**), and Bob wraps it with `trustee wrap`. The tool
+     prints a deprecation warning, because the operator transiently held
+     Bob's secret; say so in the record.
    A reused public key is refused (**CODE**).
 3. Read-back. Each trustee confirms their own public-key fingerprint from the
    draft over the precommitted channel (**PROC** → §3.7 enrollment
@@ -227,7 +233,7 @@ anchor).
 | Complete-roster commit | **CODE** |
 | Bootstrap labeling in history | **CODE** |
 | Distinct trustee keys | **CODE** |
-| Trustee key at rest is a plaintext file | **GAP** → §3.7 (wrapping, hardware keys) |
+| Trustee key wrapped at rest | **PROC** + **CODE** tool → §3.7: `trustee keygen` / `trustee wrap` wrap it (TKG1); whether each trustee does is declared per trustee in the record. Hardware keys: **GAP** |
 | Verification / duress phrases | **PROC** → §3.3 |
 | Enrollment attestation | **PROC** → §3.7 |
 
@@ -257,8 +263,12 @@ incoming trustee (if any) for read-back.
 2. Each current trustee, on their own machine, offline:
    ```sh
    break_glass --ui plain policy approve --proposal change.proposal \
-     --trustee alice --signing-key alice.key --output alice.policy-approval
+     --trustee alice --signing-key alice.tkey --output alice.policy-approval
    ```
+   A wrapped key asks for its passphrase on the terminal with echo off; with
+   no terminal, pass `--passphrase-fd N`. It is never read from the command
+   line or an environment variable (**CODE**). A plaintext key still signs
+   but prints a warning naming `trustee wrap`: record it as an E-entry.
    The tool recomputes the change hash from the proposal's full contents and
    displays the diff; a tampered proposal is refused, not signed; the
    signature domain is disjoint from unlock approvals (**CODE**).
@@ -317,8 +327,9 @@ script hash, and a procedural cooling-off.
 3. Each trustee, on their own machine:
    ```sh
    break_glass --ui plain approve --request unlock.request \
-     --trustee alice --signing-key alice.key --output alice.approval
+     --trustee alice --signing-key alice.tkey --output alice.approval
    ```
+   The passphrase is asked for as in C2 step 2.
    The tool recomputes the request hash from the file's fields and displays
    every field before signing (**CODE**). `--request-hash` prints a
    blind-signing warning: any use is an E-entry, and in the high-stakes
@@ -768,7 +779,8 @@ rotate per bucket automatically.
 | Precommitted channels | **PROC** → §3.3 | CPS §3.6 |
 | Verification / duress phrases | **PROC** → §3.3 | ceremony record |
 | Cooling-off, notify-all, veto, emergency profile | **PROC** → §3.5 | before-request announcement and wait |
-| Trustee key wrapping, hardware keys, enrollment attestation | **GAP** → §3.7 | plaintext 0600 key files; read-back |
+| Trustee key wrapping | **PROC** + **CODE** tool → §3.7 | `trustee keygen` / `trustee wrap` (TKG1, passphrase from the terminal or `--passphrase-fd`); a plaintext key still signs, with a warning; declared per trustee in the record (the policy cannot check it) |
+| Hardware trustee keys, enrollment attestation | **GAP** → §3.7 | read-back of the fingerprint |
 | Recovery quorum | **GAP** → §2.3 | none — loss of quorum has no in-band recovery |
 | Proactive resharing, liveness attestations | **GAP** → §2.4 | recorded rehearsals (C4b) |
 | Anchors cross-bound into full verify (`log_verify`) | **CODE** (structural) / **GAP** (countersignature) → §4 | every anchor row's shape, imprint and declared-ledger membership are part of the ledger verdict (`anchor_regression`); the TSA countersignature stays with `log_anchor verify --ca` |
@@ -776,7 +788,7 @@ rotate per bucket automatically.
 | Handoff sidecars for unseal outputs | **CODE** | `break_glass unseal` writes `<file>.securacv-handoff.json` (signed grant, redemption, unseal record; salted pairing; declared recipient); `handoff_sidecar verify` / the shell recipe; `CLOSEOUT.md` records both digests |
 | Device-key rotation and database re-key commands | **CODE** | `break_glass rotate-identity`, `break_glass rekey-db` |
 | Device seed file private to its owner | **CODE** | a seed file with any group/other permission bit is refused, naming `chmod 600` |
-| Trustee key generation / public-key helper | **GAP** | external Ed25519 tool |
+| Trustee key generation / public-key helper | **CODE** | `break_glass trustee keygen` (run by the trustee; prints the public key and fingerprint, never the secret), `break_glass trustee pubkey` |
 | Keyguard migration and passphrase rotation | **GAP** | new vault only |
 | `doctor` awareness of `master.keyguard` | **GAP** | manual keyguard record |
 | Signed audit-trail review (`log_review attest`) | **GAP** → §4 | review log in the record store |
@@ -784,7 +796,8 @@ rotate per bucket automatically.
 ## 9. Keeping this document honest
 
 Every command, flag, file format id, and quoted message above is taken from
-the shipped source (`src/break_glass/cli.rs`, `src/bin/break_glass_serve.rs`,
+the shipped source (`src/break_glass/cli.rs`, `src/break_glass/trustee_key.rs`,
+`src/crypto/passphrase.rs`, `src/bin/break_glass_serve.rs`,
 `src/bin/log_anchor.rs`, `src/bin/log_verify.rs`, `src/crypto/mod.rs`, `src/vault/mod.rs`,
 `src/log/high_water_mark.rs`, `src/ui.rs` for the stage markers). When a badge here says **PROC** or **GAP** and
 the code later enforces the control, the badge changes in the same pull

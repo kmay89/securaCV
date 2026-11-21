@@ -46,3 +46,53 @@ labels:
   - name: shipped
     color: "0e8a16"
     description: 'Built and released. Shows as "Shipped" on the ideas board — the proof the loop closes.'
+
+  # ---- what the other forms and the website's links apply ---------------
+  # Every label below is named by an issue form in .github/ISSUE_TEMPLATE/
+  # (scripts/tests/test_issue_labels.py holds that list to this file), and
+  # until 2026-11 none of them existed: feedback notes, build submissions,
+  # hardware reports and conformance reports all opened unlabeled.
+  #
+  # Three of them were named only by a securacv.com link of the shape
+  # `issues/new?labels=<name>` (Maker Corps, build requests, industrial
+  # inquiries). A label in a URL is applied only for someone who may label
+  # issues in this repository, which a visitor may not, so those would have
+  # stayed unlabeled even with the label created. Each now has a form
+  # (maker_corps.yml, build_request.yml, industry_inquiry.yml), because a
+  # form's own `labels:` are applied for everyone.
+  - name: feedback
+    color: "c5def5"
+    description: A note from the feedback desk (securacv.com/feedback), or opened here with the feedback form.
+
+  - name: build-gallery
+    color: "fef2c0"
+    description: A build shared for the gallery (securacv.com/gallery). Reviewed, then added to builds.json.
+
+  - name: maker-corps
+    color: "006b75"
+    description: Someone raising their hand to build Canaries for others (securacv.com/maker).
+
+  - name: build-request
+    color: "d4c5f9"
+    description: The public shape of a request for a Canary to be built (securacv.com/request). No personal details.
+
+  - name: industry-inquiry
+    color: "0052cc"
+    description: A question about the industrial concept (securacv.com/industry). A concept, not a product.
+
+  - name: conformance
+    color: "bfdadc"
+    description: A conformance report against the witness specs in spec/.
+
+  - name: hardware
+    color: "c2e0c6"
+    description: A board, sensor or enclosure request or report.
+
+  - name: test-report
+    color: "e4e669"
+    description: A hardware test report from a real device.
+
+  # Exists already, without a description; declared so it has one.
+  - name: security
+    color: "8250df"
+    description: An invariant violation or security regression. Vulnerabilities go to a private advisory instead.
