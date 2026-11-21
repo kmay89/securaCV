@@ -240,6 +240,18 @@ were not the owner's after all and are closed below.
     one base at a time, and the app's own test requires all four bases, the
     stated Python and jq, and the CI pins to move together. That is one
     reviewed change to what every install runs, not a merge button.
+11. **Let Actions open pull requests, in both repositories.** The website's
+    weekly "Update everything" job builds the carry, pushes it to a branch,
+    and then fails at the step that opens its pull request: on 2026-11-16
+    the API answered HTTP 403, "GitHub Actions is not permitted to create
+    or approve pull requests", and the same step failed on 2026-11-09. This
+    repository's freshness jobs meet the same refusal and fall back to an
+    issue with a compare link, and the issues wait for a person: #1662 (the
+    Hub's Home Assistant snapshot, open since 2026-09-07, while the Lab
+    still shows the snapshot of 2026-07-19) and #1641 (the nightly BOM
+    pricing snapshot, open since 2026-09-03). The setting is Settings →
+    Actions → General → Workflow permissions. Until it is on, generated
+    facts go stale quietly and someone has to notice.
 
 ## Closed since (2026-11-21)
 
@@ -265,6 +277,20 @@ were not the owner's after all and are closed below.
 - **`launch_posts.md` and the READMEs** (in #1967).
 - **The page-level claims the audit listed** on the site (its PR #267), and
   five stale statements in this repository's docs.
+- **News with nothing in it.** Every footer on the site linked a page that
+  says "Nothing announced yet". The site's registry keeps `/news` off the
+  footer until its ledger records a delivered post, and a test puts it back
+  that day (the site's PR #267).
+- **What the site carries from this repository.** Its download buttons were
+  three releases behind, and the Witness Wall's vendored verifier predated
+  the handoff-sidecar work, so the hosted Wall called a genuine export from
+  a current kernel a failed one. `scripts/carry_to_site.py` was run from
+  main and its output is in the site's PR #267. The cause is in the owner's
+  list below, item 11.
+- **The social queue, again.** Two queued posts still said "a 24-hour
+  memory" and "clips auto-delete after 24 hours" in a title, a card and two
+  by-hand channels. The site's social desk now refuses the claim the way its
+  pages do.
 
 ## Backlog, in order
 
@@ -279,15 +305,13 @@ were not the owner's after all and are closed below.
 4. **Fold four pages.** The Story into the Showroom, the Maker Corps into
    Build, Feedback into Contact, the Demo Board into News. Each is a page
    that exists because it was built, not because a reader needs two.
-5. **News with nothing in it.** The page promises everything announced, and
-   nothing has been. Demote it from the footer until the first post.
-6. **The Home Assistant app's own store text.** Its documentation tab ends in
+5. **The Home Assistant app's own store text.** Its documentation tab ends in
    a link to the issue tracker and nothing else, and two option descriptions
    still say "add-on". It should link the site's Home Assistant page and the
    Help Desk. Left for the change that moves the base image (owner item 10):
    any edit under `privacy_witness_kernel/` republishes its image on merge,
    and a wording fix is not a reason to ship one.
-7. **iOS and tvOS strings.** Three screens say "nothing leaves your home" or
+6. **iOS and tvOS strings.** Three screens say "nothing leaves your home" or
    "this room" about a Bluetooth search or a LAN read. Each is true in its
    scope and none was changed here, because nothing in this pass could
    build those apps; they are not held by the device-copy test either.

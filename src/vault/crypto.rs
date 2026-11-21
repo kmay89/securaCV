@@ -1357,7 +1357,9 @@ mod tests {
             // which needs both secrets, must not.
             let kat = load();
             let keypair = kat.keypair();
-            let wrong_master_key = [0x5Au8; 32];
+            // Any key but the stored one will do, so none is written down:
+            // it is drawn the way the vault draws a DEK.
+            let wrong_master_key = random_dek();
             assert_ne!(wrong_master_key, kat.master_key);
             for stored in &kat.envelopes {
                 let VaultEnvelope::V2(envelope) = VaultEnvelope::decode(&stored.file).unwrap()
