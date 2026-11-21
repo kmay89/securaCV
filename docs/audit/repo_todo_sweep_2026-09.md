@@ -4170,6 +4170,25 @@ so — see D2 below.)
   a one-row vocabulary edit and a regeneration. From the generator's scan.
   Found by HA56 (#1961).
 
+- [ ] **HA69 [decision] The battery blueprint's recovered branch cannot
+  tell a battery recovery from a memory one.** Its trigger (warning or
+  critical back to healthy) and its condition (`battery_present == true`
+  and a numeric `battery_percent`, #1971) ask nothing about why the state
+  was low (`docs/blueprints/canary_battery_health.yaml`). A battery Canary
+  whose Health recovers from low memory, its charge fine, is pushed
+  "Battery back to 80% (discharging)" for a battery that was never low
+  (rendered on core 2026.10.1). The reverse edge: a battery Canary that went
+  low on a read charge and recovers with `battery_present` true and no
+  number never runs the branch, so its `securacv_battery_low_<sensor>`
+  notification is not dismissed, and the next healthy reading triggers
+  nothing (no shipping firmware sends that body: the canary-wap's battery
+  health always carries an unsigned charge). Decide whether the dismiss
+  needs only `battery_present`, and whether the push needs the low branch
+  to have fired; either changes `test_absent_battery.py`'s pin on the
+  recovered condition and `tests/ha/test_blueprints.py`'s recovered rows.
+  From code and a real-core render. Found by the #1966 merge review (the
+  half of HA60's rewrite #1971 left open).
+
 - [ ] *(Mirror repo itself: no code work. It was byte-identical again as of
   securacv-homeassistant#17 (2026-09-24), which resynced the 33 carried
   files #1703, #1704 and #1718 had moved. The same PR brought the store

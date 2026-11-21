@@ -476,11 +476,13 @@ def _sd_wear(created: list, device_id: str) -> list:
 
 # The health body each Canary but the canary base publishes, by its fields
 # (canary-wap: csi_mqtt.cpp; the others: their mqtt_mgr.cpp
-# publish_health_retained). None carries the `sd` object.
-_MAINS = {"battery": 100, "battery_present": False, "memory_free": 182000, "uptime": 5, "firmware_version": "2.4.16"}
+# publish_health_retained). None carries the `sd` object. The canary-wap and
+# the display still send `battery: 100` beside `battery_present: false`; the
+# Sense and Vision send no `battery` since #1971.
+_MAINS = {"battery_present": False, "memory_free": 182000, "uptime": 5, "firmware_version": "2.4.16"}
 _NO_SD_OBJECT = {
-    "wap01": {**_MAINS, "public_key": "11" * 32, "sd_mounted": True, "enclosure_open": False},
-    "display01": {**_MAINS, "power_loss_detected": False, "unexpected_reboot": False},
+    "wap01": {**_MAINS, "battery": 100, "public_key": "11" * 32, "sd_mounted": True, "enclosure_open": False},
+    "display01": {**_MAINS, "battery": 100, "power_loss_detected": False, "unexpected_reboot": False},
     "sense01": {**_MAINS, "public_key": "11" * 32, "radar": {"link_ok": True, "last_frame_age_ms": 40, "frame_errors": 0}},
     "vision01": {**_MAINS, "public_key": "11" * 32},
 }

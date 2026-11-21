@@ -257,6 +257,36 @@ def _battery_recovered_push(hass: HomeAssistant) -> str | None:
 
 
 @pytest.mark.parametrize(
+    "state,attributes,alerts",
+    [
+        # A discharging battery below the threshold: the alert this exists for.
+        ("critical", {"battery_present": True, "battery_percent": 8}, True),
+        ("warning", {"battery_present": True, "battery_percent": 24}, True),
+        # Critical on low memory with the battery fine, or on mains: not a battery alert.
+        # A Canary on mains shows battery_percent None since #1971.
+        ("critical", {"battery_present": True, "battery_percent": 80}, False),
+        ("critical", {"battery_present": False, "battery_percent": None}, False),
+        ("critical", {"battery_present": False, "battery_percent": 100}, False),
+        # A battery that sent no number for its charge (HA60): battery_percent
+        # None, which `| int(0)` reads as 0, so the template would have sent a
+        # "battery critical (0%)" push for a unit low on memory.
+        ("critical", {"battery_present": True, "battery_percent": None}, False),
+        ("critical", {"battery_present": True}, False),
+    ],
+    ids=["low", "warning", "memory", "mains", "mains-before-1971", "no-charge", "no-attribute"],
+)
+async def test_the_battery_blueprint_alerts_only_on_a_charge_the_unit_sent(
+    hass: HomeAssistant, state: str, attributes: dict[str, Any], alerts: bool
+) -> None:
+    """The Health sensor shows battery_percent None for a present battery that
+    sent no number (sweep HA60) and reads healthy on it, so the blueprint's
+    low-battery branch fires only on a charge below the threshold."""
+    hass.states.async_set("sensor.canary_health", state, attributes)
+    await hass.async_block_till_done()
+    assert _battery_low_alerts(hass) is alerts
+
+
+@pytest.mark.parametrize(
     "attributes,says",
     [
         ({"battery_present": True, "battery_percent": 37, "charge_state": "charging"}, "Battery back to 37% (charging)"),

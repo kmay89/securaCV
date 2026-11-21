@@ -74,7 +74,10 @@
   delete it. The battery half of this wave (no charge shown for a battery
   that sends no number, and a blueprint that alerts only on a charge that
   was read) is #1971's on main, which also reads a unit on mains as
-  unknown; the wave's tests of it stay, held to that.
+  unknown; the wave's tests of it stay, held to that. A copy of the battery
+  blueprint imported by URL or placed by `scripts/install.sh` before #1971
+  keeps its old text until you re-import it. Its recovered push still
+  cannot tell a battery recovery from a memory one (HA69).
 - **canary-vision asks for a `.local` name instead of an IP its CSP refuses
   (F448, the code half).** Manual entry, "Add with token", a pasted or
   scanned receipt and a prefilled host answer "enter its .local name" for an
@@ -100,9 +103,10 @@
 - **Backlog:** F455, F460, F462, F464, F465 and F467 are closed, and F250's
   open half is F282's. F38, F232, F234, F140, F318, F445, F447, F448, F449,
   F443, F468, F367, F20, F219, F147, F254, F364 and HA46 now say what
-  remains (HA60, which it also rewrote, #1971 closed on main). New from the wave: F469-F478, D23 and CI28, among them the
-  flagship's `/EXPORT` (F476) and two calls on a hash that fails at
-  provisioning or at a link (F477, F478).
+  remains (HA60, which it also rewrote, #1971 closed on main; what #1971
+  left open of the rewrite is HA69). New from the wave: F469-F478, D23,
+  CI28 and HA69, among them the flagship's `/EXPORT` (F476) and two calls
+  on a hash that fails at provisioning or at a link (F477, F478).
 - Host-tested here: the canary-wap host suite under g++, clang++ 18 and
   ASan/UBSan, `test_sha_fail_flagship` in both mbedTLS spellings, both
   dashboards' and the Vision app's node tests, the Vision app in headless
