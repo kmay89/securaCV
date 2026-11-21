@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### canary-wap reads each POST body by its own members and refuses a Chirp TTL, a Beacon pairing and a mesh hash it cannot honor, four secret compares go through a constant-time helper, the setup doors log what they refused, the Vision app keeps to its CSP, the dash sheet, the watch's boot log and the splash wordmark follow their glass, the Lab's bench keeps an erase, and the 7-inch frame's words, the build matrix's claims and the parity plan are held to what they rest on (#W26PR, wave 26)
+### canary-wap reads each POST body by its own members and refuses a Chirp TTL, a Beacon pairing and a mesh hash it cannot honor, four secret compares go through a constant-time helper, the setup doors log what they refused, the Vision app keeps to its CSP, the dash sheet, the watch's boot log and the splash wordmark follow their glass, the Lab's bench keeps an erase, and the 7-inch frame's words, the build matrix's claims and the parity plan are held to what they rest on (#2013, wave 26)
 
 - **canary-wap reads a POST body by its own members (F469, F470; F459's code
   half).** `POST /api/events/dismiss`, `POST /api/mqtt/config` and the Tuning

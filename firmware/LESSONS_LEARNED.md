@@ -673,7 +673,7 @@
   `mbedtls/version.h` included (2.28's `sha256.h` does not define the number).
 - **Regression check:** `regression_check.sh` greps for `_ret(` and fails every
   hit outside the `#else` branch of that exact guard. Its first catch (F364,
-  #W26PR): the canary library's `mesh_crypto::sha256_domain()` picked the
+  #2013): the canary library's `mesh_crypto::sha256_domain()` picked the
   `_ret` names under `#if ESP_IDF_VERSION_MAJOR >= 5`, which compiles the same
   on both cores but is not that guard, so the job failed; one guard, spelled
   the one way. The same commit's new host test passed the include-order lint
@@ -1072,7 +1072,7 @@
   fingerprint and opera id, every caller refusing
   (`test_mesh_address_wap.cpp`); the flagship's and the common witness
   core's helpers followed in #1966 (F455, in `CHANGELOG.md`), and
-  `mesh_crypto`'s in both trees in #W26PR (`test_mesh_crypto_lines.cpp`
+  `mesh_crypto`'s in both trees in #2013 (`test_mesh_crypto_lines.cpp`
   builds the canary library's body on both IDF lines); the OTA and pseudonym
   hashes are open (backlog F364). F403 put the
   BLE status service, the witness export's HEAD and the signer behind the
@@ -3685,7 +3685,7 @@
   emulated flavor's Join scene and reads the firmware's own labels
   (`emu_screen_labels`) for the name and key it printed, with and without
   the stuck-phone hint.
-- **Amended, 2026-11 (sweep F373, #W26PR):** the splash's wordmark had the
+- **Amended, 2026-11 (sweep F373, #2013):** the splash's wordmark had the
   same fault, cut at both edges rather than ellipsized: set in the
   Character's title face, "SecuraCV" was 191 px on the 172 px glass under
   Heirloom, and the host fake LVGL modeled no letter spacing, so no host
@@ -4731,7 +4731,7 @@
 - **Rule:** a bound a checker trusts must be one the compiler enforces.
   Read the declaration the way the language does, then prove the reading
   with a mutation the old reading passes. The same function also took
-  `if (active && active[0])` for a declaration until F470 (#W26PR): a match
+  `if (active && active[0])` for a declaration until F470 (#2013): a match
   whose type is the name itself, or whose `&&` follows a word that is not
   `auto` or a declared struct or enum, is now read past.
 - **Regression check:** the checker's self-test (the "WAP guard self-tests"

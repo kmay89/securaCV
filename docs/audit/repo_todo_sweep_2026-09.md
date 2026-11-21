@@ -157,7 +157,7 @@ so — see D2 below.)
 ### Mesh / fleet / beacon
 
 - [ ] **F30 [code+decision] Beacon §3.3 pairing flow.** Nothing can add a
-  member to a beacon set, and since #W26PR the stubs say so:
+  member to a beacon set, and since #2013 the stubs say so:
   `start_pair_init()`, `start_pair_join()` and `confirm_pair()` refuse and
   touch no state, and the four `/api/beacon/pair/*` routes answer
   `pairing_not_built` (`pair/cancel` too, since nothing can enter a pairing
@@ -213,7 +213,7 @@ so — see D2 below.)
   `test_source_grants_gateway_trust_nothing`.
 
 - [ ] **F412 [decision] canary-wap Chirp: no receiver reads a chirp's
-  `ttl_minutes`.** Since #W26PR the send refuses a TTL outside spec §3.3's
+  `ttl_minutes`.** Since #2013 the send refuses a TTL outside spec §3.3's
   5-60 (`invalid_ttl`). No receiver reads it: every row lives
   `DEFAULT_DISPLAY_MS` (30 minutes), and a relay carries a TTL outside the
   range as its origin signed it (F306). Decide whether a receiver honors the
@@ -305,7 +305,7 @@ so — see D2 below.)
   F364 (#1961).
 
 - [ ] **F459 [code+decision] canary-wap: whether a stray 0xFFFF advert should
-  be listed in `GET /api/nearby` at all.** Since #W26PR the nearby scan
+  be listed in `GET /api/nearby` at all.** Since #2013 the nearby scan
   (`ble_nearby.h`'s `parseChirpData()`) reads a Chirp only through
   `fleet_chirp_parse()` (exactly 17 bytes, types 0x01..0x05), the rule every
   other receiver applies, so an 18-byte blob or a type 0x00 or 0x06 on company
@@ -382,7 +382,7 @@ so — see D2 below.)
   calls on what a refusal leaves (F456-F458) are the ones to mirror. The
   inputs (a 27- or 20-byte domain and a 32-byte key or secret) run in the
   ESP32's block mode, which has no failing path. From code. Found by F364
-  (#W26PR).
+  (#2013).
 
 - [ ] **F485 [code] canary-wap Chirp: `POST /api/chirp/send` narrows
   `template_id` and `detail` into a byte unchecked.** `handle_chirp_send()`
@@ -397,7 +397,7 @@ so — see D2 below.)
   `invalid_template` / `invalid_detail`, with host rows in
   `test_chirp_commands_wap.cpp` and a pin beside
   `check_wap_loop_commands.py`'s CV7. From code and a scratch harness. Found
-  by F412 (#W26PR).
+  by F412 (#2013).
 
 ### Network surface & provisioning
 
@@ -870,7 +870,7 @@ so — see D2 below.)
   blocks, so each helper must check `_starts()`, `_update()` and `_finish()`,
   zero its output and have its caller refuse, as the canary-wap's sketch, its
   WAP-only modules, `beacon_channel.cpp`, `chirp_channel.cpp`,
-  `mesh_network.cpp` and, since #W26PR, `mesh_crypto::sha256_domain()` in both
+  `mesh_network.cpp` and, since #2013, `mesh_crypto::sha256_domain()` in both
   trees and the pairing, rekey, signing and beacon-id code on it do. Still
   open, on inputs short enough to run in block mode, which has no failing
   path: the three `device_pseudonym.h` copies (`common/identity` and the
@@ -1153,7 +1153,7 @@ so — see D2 below.)
   non-default port before the request, with its own message (use its `.local`
   name without a port), and add a row to `tests/spa/peer-discovery.test.js`.
   Its port variant goes into both texts: `storedDeviceErrorText()`, which
-  every sub-view reads its failures through since #W26PR, and the device
+  every sub-view reads its failures through since #2013, and the device
   view's own `SAVED_UNDER_IP`. From code. Found by F448 (#1966).
 
 - [ ] **F486 [decision] The compares left as `memcmp()` after the
@@ -1179,7 +1179,7 @@ so — see D2 below.)
   clang 18, the loop shape compiled alone) has no branch on the bytes, and
   their Xtensa and RISC-V builds were not read, so folding them onto one
   helper is tidiness, not a fix. The survey was a search of every firmware
-  tree, not a proof. From code. Found by the constant-time pass (#W26PR).
+  tree, not a proof. From code. Found by the constant-time pass (#2013).
 
 - [ ] **F487 [code+decision] canary-wap: `POST /api/mqtt/config` reads a
   setting of the wrong type as absent.** The route refuses an unreadable body,
@@ -1191,7 +1191,7 @@ so — see D2 below.)
   `config_body_check()` (`csi_mqtt.cpp`; "password must be a string", "enabled
   must be true or false") would close the class; decide first whether `null`
   is meant as a clear. No in-tree sender sends one. From code and the host
-  suite. Found by F469 (#W26PR).
+  suite. Found by F469 (#2013).
 
 - [ ] **F488 [code] canary-wap: the Tuning Lab's POST reads its body to the
   first NUL.** `handle_tune_post_coefficients()` (`csi_integration.cpp`) does
@@ -1200,7 +1200,7 @@ so — see D2 below.)
   `{"core.presence.preset":2}` followed by a NUL and junk stores the preset.
   Refuse it (`memchr(body, '\0', got)`, 400 "body is not JSON"), which moves
   the tune handler's body-read pin in `test_wap_tune_lab.cpp`. From code.
-  Found by F469 (#W26PR).
+  Found by F469 (#2013).
 
 - [ ] **F489 [code] The Improv glue asks the stack to drop a joined link again
   on every loop pass until the disconnect lands.** In
@@ -1216,7 +1216,7 @@ so — see D2 below.)
   unharmed (`ble_gap_terminate` answers EALREADY or ENOTCONN); the cost is
   duplicate health lines. Remember the generation already dropped, and add the
   late event to `firmware/tests_host/test_improv_glue.cpp`. From a scratch
-  host scenario; not run on a device. Found by F472 (#W26PR).
+  host scenario; not run on a device. Found by F472 (#2013).
 
 - [ ] **F490 [code] The Improv glue's RTC window record is not `volatile`.**
   `improv_ble.cpp` declares `RTC_NOINIT_ATTR WindowRecord s_window_rtc;` in an
@@ -1229,7 +1229,7 @@ so — see D2 below.)
   reset over another image's record would carry its `used_ms`, and the
   first-boot door would open short or already spent. Declare it `volatile`, or
   read it through a volatile pointer at `begin()`. From a host compile. Found
-  by F472 (#W26PR).
+  by F472 (#2013).
 
 - [ ] **F492 [decision] canary-vision: three calls the CSP class move left.**
   `spa/app.js` sets no inline style, and `el()` throws on a `style` key, so an
@@ -1242,7 +1242,7 @@ so — see D2 below.)
   design call. And the cascade order of the classes that replaced the inline
   styles is proven only by a headless Chromium probe; holding it in CI would
   need a browser or a CSS engine in canary-vision's test deps. From code and
-  Chromium probes. Found by F474 (#W26PR).
+  Chromium probes. Found by F474 (#2013).
 
 - [ ] **F375 [code+human] Every Bluetooth advertiser sends the chip's public
   address, which the factory MAC fixes, and two security docs call it the
@@ -2886,7 +2886,7 @@ so — see D2 below.)
   (`glass_splash_test.cpp` prints it on every play) the bird's ink now ends 69
   to 91 px above the wordmark's on the 172 px, 180 px and touch169 glass (the
   top is the 172 px glass under Heirloom with "WWWW...", whose wordmark is set
-  in Montserrat 28 since #W26PR), 87 to 125 px on the AMOLED (the most under
+  in Montserrat 28 since #2013), 87 to 125 px on the AMOLED (the most under
   Heirloom with "WWWW...") and 76 to 78 on the dash under Heirloom with
   "WWWW...", where the seats before F159 kept 60 to 67 on every portrait
   canvas and 67 to 70 on the dash; the round watch and the landscape
@@ -3340,7 +3340,7 @@ so — see D2 below.)
   is not rebuilt to say the glass refused it until the next navigation. Decide
   whether a refused turn rebuilds that page too. dash7 and nightstand7 build
   LVGL 9.5 and are compile-tested by CI only; the emulator's dash is LVGL 8.4.
-  From code. Found by F370 (#W26PR).
+  From code. Found by F370 (#2013).
 
 ---
 
@@ -3958,27 +3958,27 @@ so — see D2 below.)
   tail and the seat, and `glass_turn.sh`'s end-of-run line says "the splash's
   tail FAILED in:" when the wordmark hold fails. canary-local.yml's "Runtime
   turn" step also runs the dash sheet pass, and its name and comment say only
-  the nightlight. Name each. From code. Found by F373 and F370 (#W26PR).
+  the nightlight. Name each. From code. Found by F373 and F370 (#2013).
 
 - [ ] **A137 [decision] A bench "meet again" keeps the flash's other erase
   marks.** A meet again forgets the network and the hello from the page's copy
   of the flash (`canary-local/assets/app.js` `stageFlash`) and adds them to
   the erase marks, keeping every other mark, as the flash keeps the rest;
-  before #W26PR it re-seeded every default the flash had erased, the broker
+  before #2013 it re-seeded every default the flash had erased, the broker
   included. Today the display firmware erases only the Wi-Fi keys, `ap_pass`,
   the mute keys and mode/devmode, so the only defaults that can carry a mark
   are the network pair, which a meet again forgets anyway, and nothing differs
   yet. Should a later firmware erase a broker key, a meet again would leave it
   unseeded. Keep that, or restore the old staging; `bench.test.js` pins this
-  one, so change both together. From code. Found by A127's review (#W26PR).
+  one, so change both together. From code. Found by A127's review (#2013).
 
 - [ ] **A138 [code] Two item balloons overlap in the Vision Assemble tab's
   opening view.** The camera's balloon and the front's stand 19.1 px apart
-  against a 23 px balloon, an overlap that predates the camera screws (#W26PR
+  against a 23 px balloon, an overlap that predates the camera screws (#2013
   kept it and added none). Nothing tests the balloon layout. A
   minimum-separation pass in `canary-local/assets/assembly-lab.js`'s balloon
   layer would fix it for every device. From a Chromium probe of the page's own
-  balloon positions. Found by C25 (#W26PR).
+  balloon positions. Found by C25 (#2013).
 
 ---
 
@@ -4681,7 +4681,7 @@ major, by theme") — work its themes, then tick here.
   Sense and the three Vision presets, the Vision weather preset's #6 keyhole
   screws, the Sense's M5 hinge bolt and nut, and the WAP weather base's M3
   wall screws.
-  *Note (#1916, C26; #W26PR, C25):* `assembly.test.js` holds every counted
+  *Note (#1916, C26; #2013, C25):* `assembly.test.js` holds every counted
   Assemble part to its BOM row and lists two Vision parts in a shrink-only
   `NOT_COMPARED`, `canary-vision/screws` and `canary-vision/cam_screws`,
   because SCR5 is one row for two products: its x18 is the doorbell's count,
@@ -4703,7 +4703,7 @@ major, by theme") — work its themes, then tick here.
   manifest, the website /scad carry and the print-files re-pin) and opens a
   join against the stale D-ENC1 row, which is C12's call; it shrinks
   `FASTENER_GAPS`, and the test fails until it does. Also the maintainer's:
-  the Vision's camera screws (the tab's other half, drawn since #W26PR) are
+  the Vision's camera screws (the tab's other half, drawn since #2013) are
   class `internal`, because `canary-local/assets/assembly-rules.js` rule 4
   holds every fastener to drive after every shell; a dedicated class for
   hardware that fixes a part inside the case before it closes would change
@@ -4759,7 +4759,7 @@ major, by theme") — work its themes, then tick here.
   negative direction only.** canary-wap's `selftest`, `csi` and `gps`, and the
   `selftest` of canary-vision, canary-sense and the canary-display watch lane
   (`scripts/lint_build_matrix.py`'s `UNMAPPED`), are held only in that no env
-  sets the flag to 0. Since #W26PR each names the code it rests on
+  sets the flag to 0. Since #2013 each names the code it rests on
   (`EVIDENCE`), and the lint goes red, naming C37, when that code goes, turns
   conditional, or stops being code as the source reads (a comment, a string, a
   `#define` body; macros are not expanded, and it shows presence, not that
@@ -4805,7 +4805,7 @@ major, by theme") — work its themes, then tick here.
   `base_d - cam_post_eff - pcb_t` (the camera, its flex and its screws read
   that one expression); regenerate, and `assembly.test.js`'s camera-screw
   landing test holds the heads at the new back face. From code. Found by C25's
-  review (#W26PR).
+  review (#2013).
 
 ---
 
@@ -4903,9 +4903,9 @@ major, by theme") — work its themes, then tick here.
   `scripts/tests/test_parity_plan.py`, and §4's OTA A/B and acoustic rows tick
   "Dashboard ✅" because the dashboard reads ✅ for both trees, while §2 and §3
   (and Tranche A2/B2) say a behavioral cell flips only after a bench pass;
-  "Bench-proven" stays unticked. The tension predates #W26PR's restatement of
+  "Bench-proven" stays unticked. The tension predates #2013's restatement of
   §1. Keep the dashboard tick, or untick it for OTA A/B and acoustic until a
-  bench pass (U1). From the docs. Found by D23 (#W26PR).
+  bench pass (U1). From the docs. Found by D23 (#2013).
 
 ---
 
@@ -5055,7 +5055,7 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   add `-Werror` to that step's g++ `CXXFLAGS`: its 19 suites build
   warning-free with g++ `-Werror` (host-checked). A clang leg would first need
   `mesh_session.cpp`'s two unused static functions (`pairing_msg_to_session`,
-  `slot_load`) removed. From code. Found by F364's review (#W26PR).
+  `slot_load`) removed. From code. Found by F364's review (#2013).
 
 - [ ] **CI32 [code] The microcopy lint's sub-checks are counted three ways.**
   firmware.yml names its step "Run microcopy lint trio" and its comment says
@@ -5063,7 +5063,7 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   `firmware/scripts/microcopy_lint.sh`'s header says "Five sub-checks" and
   lists five; the script runs six (1, 2, 2b, 3, 4 and 5, the last the display
   glass plain-words audit and the glyph audit). Restate the step's `name:` and
-  both comments to what the script runs. From code. Found by CI28 (#W26PR).
+  both comments to what the script runs. From code. Found by CI28 (#2013).
 
 - [ ] **CI33 [code] `firmware/tests_host` has no sanitized lane in CI.** CI
   runs the plain `make -C firmware/tests_host`; the ASan+UBSan runs that
@@ -5074,7 +5074,7 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   with `-fsanitize` and `-Werror`, `test_tz_rule` and
   `test_canary_diagnostics` do not compile under g++ (maybe-uninitialized
   inside libstdc++'s `<regex>`). Fix both, then add the lane. From host runs.
-  Found by F472 (#W26PR).
+  Found by F472 (#2013).
 
 ---
 
