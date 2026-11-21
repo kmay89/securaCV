@@ -69,6 +69,11 @@
 //     GET /api/fleet/qr names what it refused, and the sheet shows those
 //     words, as text, where it used to say "Re-check the network name" for a
 //     password refusal too. Its handler is cut out of csi_dashboard_html.h.
+//   * A refused acknowledgment is shown (F468): handle_log_ack answers ok:false
+//     "Log entry not found" for an entry that has left the log, and
+//     submitAck() read no answer, so the dialog closed as if the entry were
+//     acknowledged. The dialog now stays open with the device's words in it,
+//     as text; a refusal that raised the sign-in shows nothing more.
 //
 // The page's own code is cut out of web_ui.h by markers that stand in the page
 // before and after these changes (so the old page runs here and fails on what
@@ -1430,5 +1435,123 @@ describe('the note under the sensitivity slider says when stored levels win (F31
       assert.equal(p.note.textContent, p.COPY.savedLevels.mixed);
       assert.deepEqual(p.ended, [p.COPY.calibrate.error]);
     }
+  });
+});
+
+// ── A refused acknowledgment is shown (F468) ────────────────────────────
+
+// The acknowledge dialog's script, openAckModal() through submitAck() (the
+// same markers stand in the page before F468, so its old script runs here
+// too), run with the page's own api() and secureFetch() over a stub fetch,
+// so the answer it reads is what the page makes of handle_log_ack's.
+const ackSrc = slice('    function openAckModal(seq)', '    async function ackAllLogs()');
+const ackMarkup = slice('  <div class="modal-overlay" id="ackModal">', '  <script>');
+// handle_log_ack's refusal for an entry acknowledge_log_entry() did not find
+// (one that has left the log), read from the sketch.
+const ACK_REFUSAL = (() => {
+  const ino = fs.readFileSync(INO, 'utf8');
+  const a = ino.indexOf('static esp_err_t handle_log_ack(httpd_req_t* req) {');
+  assert.ok(a >= 0, 'handle_log_ack() is in the sketch');
+  const body = ino.slice(a, ino.indexOf('\n}\n', a));
+  const m = body.match(/doc\["error"\] = "([^"]+)";/);
+  assert.ok(m, 'handle_log_ack() names its refusal');
+  return m[1];
+})();
+const ackAnswer = (o) => ({ status: 200, body: JSON.stringify(o) });
+
+// The dialog opened on entry 7 with a reason typed, then Acknowledge.
+async function ackDialog(res) {
+  const sent = [];
+  const signIns = [];
+  const p = pageContext({}, {
+    API_BASE: '', apiToken: 'cv_token',
+    showAuthModal: (msg) => signIns.push(msg),
+    fetch: async (url, opts) => {
+      sent.push(`${opts.method} ${url} ${opts.body}`);
+      if (res === 'no answer') throw new TypeError('Failed to fetch');
+      return { status: res.status, ok: res.status >= 200 && res.status < 300,
+               text: async () => res.body, json: async () => JSON.parse(res.body) };
+    },
+    loadLogs: () => p.calls.push('loadLogs'),
+    refreshStatus: () => p.calls.push('refreshStatus'),
+  });
+  const err = p.el('ackError');
+  err.style.display = 'none';   // as the markup ships it
+  const writes = [];
+  Object.defineProperty(err, 'innerHTML', { get: () => '', set: (v) => writes.push(v) });
+  vm.runInContext(apiSrc + ackSrc + '\nglobalThis.__t = { openAckModal, submitAck };\n', p.ctx);
+  p.ctx.__t.openAckModal(7);
+  p.el('ackReason').value = 'seen it';
+  await p.ctx.__t.submitAck();
+  return {
+    p, sent, signIns, writes, shown: err.textContent, display: err.style.display,
+    open: p.el('ackModal')._classes.has('active'),
+  };
+}
+
+describe('A refused acknowledgment is shown (F468)', () => {
+  it('the dialog has a place for the answer, empty and hidden until one comes', () => {
+    const f = parseFragment(ackMarkup);
+    const p = f.elements.find((e) => attr(e, 'id') === 'ackError');
+    assert.ok(p, 'the acknowledge dialog holds #ackError');
+    assert.equal(p.tag, 'p');
+    assert.equal(attr(p, 'role'), 'alert', 'a screen reader says it when it appears');
+    assert.match(attr(p, 'style'), /display:\s*none/);
+    assert.equal(p.text, '');
+  });
+
+  it("shows the device's refusal in the dialog, as text, and keeps the dialog open", async () => {
+    assert.equal(ACK_REFUSAL, 'Log entry not found');
+    const r = await ackDialog(ackAnswer({ ok: false, error: ACK_REFUSAL }));
+    assert.deepEqual(r.sent, ['POST /api/logs/7/ack {"reason":"seen it"}']);
+    assert.equal(r.shown, 'Not acknowledged: Log entry not found');
+    assert.equal(r.display, '', 'the words are on screen');
+    assert.equal(r.open, true, 'the dialog stays open on the refusal');
+    assert.deepEqual(r.writes, [], 'nothing is written as markup');
+    assert.deepEqual(r.p.calls, [], 'the log is not reloaded as if the entry were acknowledged');
+    assert.deepEqual(r.p.record.alerts, []);
+  });
+
+  it('a refusal that reads as markup is shown as text, a long one whole', async () => {
+    for (const why of ['<b>x</b>', ...HOSTILE]) {
+      const r = await ackDialog(ackAnswer({ ok: false, error: why }));
+      assert.equal(r.shown, 'Not acknowledged: ' + why, why.slice(0, 30));
+      assert.deepEqual(r.writes, [], why.slice(0, 30));
+    }
+  });
+
+  it('a refusal that is not JSON, or no answer, says so too', async () => {
+    const plain = await ackDialog({ status: 400, body: 'Bad Request' });
+    assert.equal(plain.shown, 'Not acknowledged: Bad Request');
+    assert.equal(plain.open, true);
+    const none = await ackDialog('no answer');
+    assert.equal(none.shown, 'Not acknowledged: Network error');
+    assert.equal(none.open, true);
+  });
+
+  it('an acknowledgment the device took closes the dialog and reloads the log and the status', async () => {
+    const r = await ackDialog(ackAnswer({ ok: true }));
+    assert.equal(r.open, false);
+    assert.deepEqual(r.p.calls, ['loadLogs', 'refreshStatus']);
+    assert.equal(r.shown, '');
+    assert.equal(r.display, 'none');
+  });
+
+  it('a refusal that raised the sign-in shows nothing more, and the dialog stays for the retry', async () => {
+    for (const status of [401, 403]) {
+      const r = await ackDialog({ status, body: '{"error":"unauthorized"}' });
+      assert.equal(r.signIns.length, 1, `${status}: the sign-in is up`);
+      assert.equal(r.shown, '', `${status}: nothing under it`);
+      assert.equal(r.display, 'none');
+      assert.equal(r.open, true);
+      assert.deepEqual(r.p.calls, []);
+    }
+  });
+
+  it('opening the dialog again clears the last refusal', async () => {
+    const r = await ackDialog(ackAnswer({ ok: false, error: ACK_REFUSAL }));
+    r.p.ctx.__t.openAckModal(8);
+    assert.equal(r.p.el('ackError').textContent, '');
+    assert.equal(r.p.el('ackError').style.display, 'none');
   });
 });

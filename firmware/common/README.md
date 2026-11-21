@@ -36,7 +36,8 @@ common/
 │   ├── device_signature.{h,cpp}  # canonical signed-message builders (HA verifies the same bytes)
 │   ├── device_pseudonym.h
 │   ├── birth_day.h     # when a key was born — written once, never restated (host-tested)
-│   └── key_at_rest.h   # tier / wire label / allow-refuse for the identity key's NVS home (host-tested)
+│   ├── key_at_rest.h   # tier / wire label / allow-refuse for the identity key's NVS home (host-tested)
+│   └── key_draw_check.h  # a first-boot key draw that came out flat (every byte equal, or its bit count out of bounds) is refused by all five keygens (host-tested; a staged copy sits by the WAP sketch, held by check_csi_sync.sh)
 ├── io/             # Buttons and other inputs the firmware reads
 │   ├── short_tap.h    # a debounced short press (≥40 ms, <700 ms) told apart from the long holds other gestures own — the BOOT tap that opens the Bluetooth setup door (host-tested)
 │   └── reset_hold.h   # the long hold: warn at 3 s, factory reset (credentials + settings, identity kept) at 10 s, an opt-in wipe stage; each once per press (host-tested)

@@ -28,8 +28,14 @@
  * The pure builder (wc_chain_buf) has no dependencies and is host-tested
  * (firmware/tests_host/test_witness_chain_core.cpp); the hashing helpers
  * compile wherever mbedTLS is available (all ESP32 targets, Arduino core
- * 2.x and 3.x — mbedtls_sha256_* return values are cast away for
- * cross-core compatibility, same as device_signature.cpp).
+ * 2.x and 3.x). They answer whether every mbedTLS step ran (sweep F455):
+ * false, with the output zeroed, when a start, an update or the finish
+ * failed, and every caller refuses the link or the head instead of using
+ * bytes the engine never wrote. Core 2.x's mbedTLS 2.28 answers a step only
+ * through the _ret names (its plain names return void) and core 3.x's
+ * mbedTLS 3 removed them, so the step calls are picked by
+ * MBEDTLS_VERSION_NUMBER (firmware/tests_host/test_sha_fail_flagship.cpp
+ * runs both spellings over a stand-in that fails each step).
  *
  * Domain-string note: the kernel uses "securacv:pwk:*:v2" contexts;
  * firmware uses "securacv:fw:*:v1". The divergence is intentional —
@@ -94,40 +100,81 @@ static inline size_t wc_chain_buf(const uint8_t prev[WC_HASH_SIZE],
 
 #if WC_HAS_MBEDTLS
 #include <mbedtls/sha256.h>
+#include <mbedtls/version.h> /* MBEDTLS_VERSION_NUMBER: which step names answer */
 
-/** SHA256(domain_ascii || 0x00 || data) — the house domain hash. */
-static inline void wc_sha256_domain(const char* domain, const uint8_t* data,
-                                    size_t len, uint8_t out[WC_HASH_SIZE]) {
+/** One SHA-256 step with its answer: the _ret names on mbedTLS 2.x, the
+ *  plain ones (which answer int there) on 3.x. 0 is success. An unset
+ *  MBEDTLS_VERSION_NUMBER picks the _ret names, which a 3.x core does not
+ *  compile, so the wrong spelling never builds silently. */
+static inline int wc_sha256_step_starts(mbedtls_sha256_context* ctx) {
+#if defined(MBEDTLS_VERSION_NUMBER) && MBEDTLS_VERSION_NUMBER >= 0x03000000
+  return mbedtls_sha256_starts(ctx, 0);
+#else
+  return mbedtls_sha256_starts_ret(ctx, 0); /* 0 = SHA-256, not SHA-224 */
+#endif
+}
+
+static inline int wc_sha256_step_update(mbedtls_sha256_context* ctx,
+                                        const unsigned char* data,
+                                        size_t len) {
+#if defined(MBEDTLS_VERSION_NUMBER) && MBEDTLS_VERSION_NUMBER >= 0x03000000
+  return mbedtls_sha256_update(ctx, data, len);
+#else
+  return mbedtls_sha256_update_ret(ctx, data, len);
+#endif
+}
+
+static inline int wc_sha256_step_finish(mbedtls_sha256_context* ctx,
+                                        unsigned char out[WC_HASH_SIZE]) {
+#if defined(MBEDTLS_VERSION_NUMBER) && MBEDTLS_VERSION_NUMBER >= 0x03000000
+  return mbedtls_sha256_finish(ctx, out);
+#else
+  return mbedtls_sha256_finish_ret(ctx, out);
+#endif
+}
+
+/** SHA256(domain_ascii || 0x00 || data) — the house domain hash. False,
+ *  with out zeroed, when any step failed; a step after a failed one is not
+ *  run, and the context is freed on every path. */
+[[nodiscard]] static inline bool wc_sha256_domain(const char* domain,
+                                                  const uint8_t* data,
+                                                  size_t len,
+                                                  uint8_t out[WC_HASH_SIZE]) {
   mbedtls_sha256_context ctx;
   mbedtls_sha256_init(&ctx);
-  /* Casts: mbedtls_sha256_* returns int on IDF5/core-3.x, void on
-   * core-2.x — the cast compiles on both (device_signature.cpp does the
-   * same). */
-  (void)mbedtls_sha256_starts(&ctx, 0);
-  (void)mbedtls_sha256_update(&ctx, (const unsigned char*)domain,
-                              strlen(domain));
+  int ret = wc_sha256_step_starts(&ctx);
+  if (ret == 0) {
+    ret = wc_sha256_step_update(&ctx, (const unsigned char*)domain,
+                                strlen(domain));
+  }
   const unsigned char wc_sep = 0x00;
-  (void)mbedtls_sha256_update(&ctx, &wc_sep, 1);
-  (void)mbedtls_sha256_update(&ctx, data, len);
-  (void)mbedtls_sha256_finish(&ctx, out);
+  if (ret == 0) ret = wc_sha256_step_update(&ctx, &wc_sep, 1);
+  if (ret == 0) ret = wc_sha256_step_update(&ctx, data, len);
+  if (ret == 0) ret = wc_sha256_step_finish(&ctx, out);
   mbedtls_sha256_free(&ctx);
+  if (ret != 0) {
+    memset(out, 0, WC_HASH_SIZE);
+    return false;
+  }
+  return true;
 }
 
-/** One canonical chain step: out = H(chain domain, prev||ph||seq||tb). */
-static inline void wc_chain_advance(const uint8_t prev[WC_HASH_SIZE],
-                                    const uint8_t payload_hash[WC_HASH_SIZE],
-                                    uint32_t seq, uint32_t time_bucket,
-                                    uint8_t out[WC_HASH_SIZE]) {
+/** One canonical chain step: out = H(chain domain, prev||ph||seq||tb).
+ *  False, with out zeroed, when the hash did not run. */
+[[nodiscard]] static inline bool wc_chain_advance(
+    const uint8_t prev[WC_HASH_SIZE], const uint8_t payload_hash[WC_HASH_SIZE],
+    uint32_t seq, uint32_t time_bucket, uint8_t out[WC_HASH_SIZE]) {
   uint8_t buf[WC_CHAIN_BUF_SIZE];
   wc_chain_buf(prev, payload_hash, seq, time_bucket, buf);
-  wc_sha256_domain(WC_DOMAIN_CHAIN, buf, sizeof(buf), out);
+  return wc_sha256_domain(WC_DOMAIN_CHAIN, buf, sizeof(buf), out);
 }
 
-/** Canonical genesis head, bound to the device's stable id. */
-static inline void wc_genesis(const char* device_id,
-                              uint8_t out[WC_HASH_SIZE]) {
-  wc_sha256_domain(WC_DOMAIN_GENESIS, (const uint8_t*)device_id,
-                   strlen(device_id), out);
+/** Canonical genesis head, bound to the device's stable id. False, with
+ *  out zeroed, when the hash did not run. */
+[[nodiscard]] static inline bool wc_genesis(const char* device_id,
+                                            uint8_t out[WC_HASH_SIZE]) {
+  return wc_sha256_domain(WC_DOMAIN_GENESIS, (const uint8_t*)device_id,
+                          strlen(device_id), out);
 }
 
 #endif /* WC_HAS_MBEDTLS */

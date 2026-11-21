@@ -14,6 +14,7 @@
 #include <bootloader_random.h>  // early-entropy source for the first-boot identity keygen
 #include "esp_mac.h"
 #include "mbedtls/sha256.h"
+#include "mbedtls/version.h"  // MBEDTLS_VERSION_NUMBER: which SHA-256 step names answer (sweep F455)
 #include "mbedtls/md.h"
 #include "nvs.h"  // stored_key_length(): IDF's own answer for "nothing stored" (sweep F360)
 
@@ -23,6 +24,7 @@
 // main.cpp's 'f' card so a toolchain without a header still builds — an absent
 // fact reads as "off", which is the safe direction for every rule.
 #include "identity/key_at_rest.h"
+#include "identity/key_draw_check.h"  // a flat first-boot key draw is refused (sweep F38; host-tested)
 #include "network/onboarding_fsm.h"  // ap_ssid(): the fleet's SecuraCV-<type>-<4> setup-AP name
 #if __has_include(<esp_flash_encrypt.h>)
 #include <esp_flash_encrypt.h>
@@ -175,30 +177,76 @@ bool NvsManager::clear() {
 // SHA-256 WITH DOMAIN SEPARATION
 // ════════════════════════════════════════════════════════════════════════════
 
-void sha256_raw(const uint8_t* data, size_t n, uint8_t out[32]) {
-  mbedtls_sha256_context ctx;
-  mbedtls_sha256_init(&ctx);
-  mbedtls_sha256_starts(&ctx, 0);
-  mbedtls_sha256_update(&ctx, data, n);
-  mbedtls_sha256_finish(&ctx, out);
-  mbedtls_sha256_free(&ctx);
+// The three SHA-256 steps as the core spells them with an answer (sweep
+// F455). mbedTLS 2.28 (IDF 4.4, Arduino core 2.0.17: every env but
+// env:full) answers a step only through the _ret names, and its plain
+// names return void; mbedTLS 3.x (IDF 5.5, core 3.3.8: env:full) removed
+// the _ret names, and its plain names answer int. The same version guard
+// securacv_network.cpp keys its certificate serial on (mbedtls/version.h
+// defines it on both majors; were it unset, the _ret names are picked, which
+// a 3.x core does not compile, so the wrong spelling never builds silently).
+static int sha256_step_starts(mbedtls_sha256_context* ctx) {
+#if defined(MBEDTLS_VERSION_NUMBER) && MBEDTLS_VERSION_NUMBER >= 0x03000000
+  return mbedtls_sha256_starts(ctx, 0);
+#else
+  return mbedtls_sha256_starts_ret(ctx, 0);  // 0 = SHA-256, not SHA-224
+#endif
 }
 
-void sha256_domain(const char* domain, const uint8_t* data, size_t n, uint8_t out[32]) {
+static int sha256_step_update(mbedtls_sha256_context* ctx, const uint8_t* data, size_t n) {
+#if defined(MBEDTLS_VERSION_NUMBER) && MBEDTLS_VERSION_NUMBER >= 0x03000000
+  return mbedtls_sha256_update(ctx, data, n);
+#else
+  return mbedtls_sha256_update_ret(ctx, data, n);
+#endif
+}
+
+static int sha256_step_finish(mbedtls_sha256_context* ctx, uint8_t out[32]) {
+#if defined(MBEDTLS_VERSION_NUMBER) && MBEDTLS_VERSION_NUMBER >= 0x03000000
+  return mbedtls_sha256_finish(ctx, out);
+#else
+  return mbedtls_sha256_finish_ret(ctx, out);
+#endif
+}
+
+// True when every mbedTLS step ran (sweep F455, the canary-wap's F364 rule).
+// On the S3 and the classic ESP32 the SHA engine is hardware: a start, an
+// update or a finish can answer an error, and after one the output is not,
+// or not wholly, written, so it would keep whatever the caller's stack held.
+// On any failure `out` is zeroed and the answer is false, and every caller
+// refuses what the hash was for instead of using the bytes. A step after a
+// failed one is not run. The context is freed on every path.
+bool sha256_raw(const uint8_t* data, size_t n, uint8_t out[32]) {
   mbedtls_sha256_context ctx;
   mbedtls_sha256_init(&ctx);
-  mbedtls_sha256_starts(&ctx, 0);
-
-  mbedtls_sha256_update(&ctx, (const uint8_t*)domain, strlen(domain));
-  uint8_t sep = 0x00;
-  mbedtls_sha256_update(&ctx, &sep, 1);
-
-  if (data && n > 0) {
-    mbedtls_sha256_update(&ctx, data, n);
-  }
-
-  mbedtls_sha256_finish(&ctx, out);
+  int ret = sha256_step_starts(&ctx);
+  if (ret == 0) ret = sha256_step_update(&ctx, data, n);
+  if (ret == 0) ret = sha256_step_finish(&ctx, out);
   mbedtls_sha256_free(&ctx);
+  if (ret != 0) {
+    memset(out, 0, 32);
+    return false;
+  }
+  return true;
+}
+
+// H(domain || 0x00 || data), by sha256_raw()'s rule: false and 32 zero
+// bytes when any step fails.
+bool sha256_domain(const char* domain, const uint8_t* data, size_t n, uint8_t out[32]) {
+  mbedtls_sha256_context ctx;
+  mbedtls_sha256_init(&ctx);
+  int ret = sha256_step_starts(&ctx);
+  if (ret == 0) ret = sha256_step_update(&ctx, (const uint8_t*)domain, strlen(domain));
+  const uint8_t sep = 0x00;
+  if (ret == 0) ret = sha256_step_update(&ctx, &sep, 1);
+  if (ret == 0 && data && n > 0) ret = sha256_step_update(&ctx, data, n);
+  if (ret == 0) ret = sha256_step_finish(&ctx, out);
+  mbedtls_sha256_free(&ctx);
+  if (ret != 0) {
+    memset(out, 0, 32);
+    return false;
+  }
+  return true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -223,9 +271,20 @@ bool crypto_generate_keypair(uint8_t priv[32], uint8_t pub[32]) {
   // earlier in setup()). This runs once per unit (first boot, no key in NVS);
   // whether the battery reading stays sane after it is bench row K1's
   // fresh-unit step — plausible harm, not proven either way here.
+  // The draw is looked at before it becomes a key (sweep F38,
+  // key_draw_check.h): a flat one (every byte equal, or too few or too many
+  // one bits) answers false, the buffer zeroed, so establish_identity_key()
+  // stores nothing and provisioning halts; the next boot draws again.
   bootloader_random_enable();
   esp_fill_random(priv, 32);
+  const bool flat = key_draw_check::is_flat(priv);
   bootloader_random_disable();
+  if (flat) {
+    secure_zero(priv, 32);
+    Serial.println("[!!] Identity key draw came out flat (every byte equal, or its bit count out "
+                   "of bounds) - no key made; the next boot draws again");
+    return false;
+  }
   Ed25519::derivePublicKey(pub, priv);
   return true;
 }
@@ -239,10 +298,17 @@ bool crypto_verify(const uint8_t pub[32], const uint8_t* msg, size_t len, const 
   return Ed25519::verify(sig, pub, msg, len);
 }
 
-void crypto_fingerprint(const uint8_t pub[32], uint8_t fp[8]) {
+// False, with fp zeroed, when the hash did not run (sweep F455): the device
+// id and the SoftAP name derive from it, and 8 zero bytes would name every
+// unit alike.
+bool crypto_fingerprint(const uint8_t pub[32], uint8_t fp[8]) {
   uint8_t hash[32];
-  sha256_domain("securacv:pubkey:fingerprint", pub, 32, hash);
+  if (!sha256_domain("securacv:pubkey:fingerprint", pub, 32, hash)) {
+    memset(fp, 0, 8);
+    return false;
+  }
   memcpy(fp, hash, 8);
+  return true;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -365,7 +431,9 @@ bool derive_api_token(const uint8_t privkey[32],
 // CHAIN OPERATIONS
 // ════════════════════════════════════════════════════════════════════════════
 
-void compute_chain_hash(const uint8_t prev[32], const uint8_t payload_hash[32],
+// False, with out zeroed, when the hash did not run (sweep F455): every
+// caller then refuses the link (no record, no SD tail adopted, chain_ok red).
+bool compute_chain_hash(const uint8_t prev[32], const uint8_t payload_hash[32],
                         uint32_t seq, uint32_t time_bucket, uint8_t out[32]) {
   uint8_t buf[32 + 32 + 4 + 4];
   memcpy(buf, prev, 32);
@@ -379,7 +447,7 @@ void compute_chain_hash(const uint8_t prev[32], const uint8_t payload_hash[32],
   buf[70] = (time_bucket >> 8) & 0xFF;
   buf[71] = time_bucket & 0xFF;
 
-  sha256_domain("securacv:fw:chain:v1", buf, sizeof(buf), out);
+  return sha256_domain("securacv:fw:chain:v1", buf, sizeof(buf), out);
 }
 
 // ════════════════════════════════════════════════════════════════════════════

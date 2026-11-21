@@ -915,3 +915,211 @@ describe('the household list draws each label as text, and forget posts its row\
     assert.deepEqual(p.forgets(), [JSON.stringify({ slot: 2 })]);
   });
 });
+
+// ── Raw splices into markup: the WAP page's ledger (sweep F443) ─────────
+//
+// Outside the rows F407, F422 and F423 moved to the escape-and-index pattern,
+// the page still splices values into markup as they came: device vocabulary,
+// device-formatted hex and numbers, never radio or stored free text, so F443
+// changed none of them and left whether to move them all as its decision.
+// Until it is taken, the set is held where it stands: html_splices.js (beside
+// this file; its header says what counts as a splice and what it does not
+// see) finds every value spliced into markup that is neither escapeHtml(...)
+// nor a row index, and this ledger records them, "page function | where it
+// lands | the expression": count. A new raw splice fails here; so does a
+// recorded one that is gone, until its line is lowered. The ledger only
+// shrinks.
+//
+// F443's own list named the first group; the scanner found the second, which
+// that list missed (no entry of the list is missing here).
+const WAP_RAW_SPLICES = Object.freeze({
+  // Named by F443.
+  'refreshVault | text | d.key_id': 1,
+  'refreshVaultList | text | it.name': 1,
+  'refreshVaultList | on:onclick | it.name': 2,
+  'loadPeers | text | peer.state': 1,
+  'loadPeers | on:onclick | peer.fingerprint': 1,
+  'loadOperaAlerts | text | a.type': 1,
+  'loadChirps | text | c.emoji': 1,
+  'loadChirps | text | c.category': 1,
+  'loadChirps | on:onclick | c.nonce': 2,
+  'loadLogs | text | log.level_name': 1,
+  'loadLogs | text | log.category': 1,
+  'loadLogs | on:onclick | log.seq': 1,
+  'loadWitness | text | r.type_name': 1,
+  // Found by the scanner, not in F443's list.
+  'refreshVaultList | text | it.trigger': 1,
+  'runSettingsSelftest | text | SELFTEST_GLYPH[p.status]': 1,
+  'loadChain | text | truncateHash(b.hash, 8)': 1,
+  'loadChain | text | b.seq': 1,
+  'applyCameraInfo | text | data.last_init_label': 1,
+  'applyCameraInfo | text | data.last_init_err_name': 1,
+  'applyCameraInfo | text | (data.last_init_err||0).toString(16)': 1,
+  'applyCameraInfo | text | data.init_attempts': 1,
+  'reinitCamera | text | r.last_init_err_name': 1,
+  'reinitCamera | text | (r.last_init_err||0).toString(16)': 1,
+  'reinitCamera | text | r.last_init_label': 1,
+  'loadPeers | text | peer.rssi': 1,
+  'loadChirps | text | c.hop_count': 1,
+  'loadLogs | attr:class | getLevelClass(log.level)': 1,
+  'loadLogs | text | formatTimestamp(log.timestamp_ms)': 1,
+  'loadLogs | text | log.seq': 1,
+  'loadWitness | text | r.seq': 1,
+  'loadWitness | text | truncateHash(r.chain_hash, 16)': 1,
+  'loadWitness | text | r.time_bucket': 1,
+  'refreshHousehold | attr:style | roleBadgeStyle(d.role)': 1,
+  'refreshWifiPresence | attr:title | v': 1,
+  'refreshBtStatus | text | data.tx_power': 1,
+  'refreshBtStatus | text | data.mtu': 1,
+  'btStartScan | text | start.error': 1,
+  'renderBtScanList | attr:class | rssiBarCount(d.rssi)': 1,
+  'renderBtScanList | text | deviceIcon(d)': 1,
+  'renderBtScanList | text | distancePretty(d.distance_m)': 1,
+});
+
+describe('the page splices nothing raw into markup beyond its ledger (F443)', () => {
+  const splices = require('./html_splices.js');
+  const page = fs.readFileSync(UI, 'utf8');
+  // The page with `js` added at the end of its script.
+  const planted = (js) => page.replace('\n  </script>', `\n${js}\n  </script>`);
+  const verdict = (text) => splices.against(WAP_RAW_SPLICES, splices.rawSplices(text));
+
+  it('the raw splices are exactly the recorded ones', () => {
+    const { added, gone } = verdict(page);
+    assert.deepEqual(added, [], 'a new raw splice into markup: pass it through escapeHtml(), or name its row by an ' +
+                     'index in an on*= handler (F407\'s pattern), rather than adding it to WAP_RAW_SPLICES');
+    assert.deepEqual(gone, [], 'a recorded raw splice is gone: lower its line in WAP_RAW_SPLICES');
+  });
+
+  it('a raw splice is found wherever markup is built', () => {
+    const cases = [
+      // innerHTML from a + chain, and from a member alone.
+      ["function plantA(x) { document.getElementById('q').innerHTML = '<b>' + x.name + '</b>'; }", 'plantA | text | x.name'],
+      ["function plantB(x) { document.getElementById('q').innerHTML = x.name; }", 'plantB | text | x.name'],
+      // An on*= handler takes only a row index: escapeHtml() is decoded away before it runs.
+      ["function plantC(x) { return `<button onclick=\"go('${escapeHtml(x.id)}')\">Go</button>`; }", 'plantC | on:onclick | escapeHtml(x.id)'],
+      ["function plantC2(x) { return '<button onclick=\"go(' + x.seq + ')\">Go</button>'; }", 'plantC2 | on:onclick | x.seq'],
+      // A template split across lines, in a .map() a sink joins.
+      ["function plantD(rows) { list.innerHTML = rows.map(r => `<div>\n          ${r.label}\n        </div>`).join(''); }", 'plantD | text | r.label'],
+      // A .map() whose callback is not written inline: what it returns is not read.
+      ["function plantD2(rows) { list.innerHTML = rows.map(rowOf).join(''); }", "plantD2 | text | rows.map(rowOf).join('')"],
+      // A const that lands in a handler is held to the handler's rule.
+      ['function plantD3(p) { const fp = escapeHtml(p.fp); return `<b>${fp}</b><a onclick="drop(\'${fp}\')">x</a>`; }', 'plantD3 | on:onclick | escapeHtml(p.fp)'],
+      // Built with += before it is assigned.
+      ["function plantE(items) { let html = ''; items.forEach(it => { html += '<li>' + it.name + '</li>'; }); list.innerHTML = html; }", 'plantE | text | it.name'],
+      // .concat().
+      ["function plantF(x) { box.innerHTML = '<i>'.concat(x.name, '</i>'); }", 'plantF | text | x.name'],
+      ["function plantF2(x) { return 'Name: '.concat('<b>', x.name, '</b>'); }", 'plantF2 | text | x.name'],
+      // A helper that returns a row.
+      ["function plantG(p) { return '<td>' + p.label + '</td>'; }", 'plantG | text | p.label'],
+      // insertAdjacentHTML, and document.write.
+      ["function plantH(x) { el.insertAdjacentHTML('beforeend', `<p>${x.why}</p>`); }", 'plantH | text | x.why'],
+      ["function plantH2(x) { document.write('<p>' + x.why + '</p>'); }", 'plantH2 | text | x.why'],
+      // A const that holds device text is the text.
+      ["function plantI(x) { const t = x.name; el.innerHTML = '<b>' + t + '</b>'; }", 'plantI | text | x.name'],
+      ['function plantI2(x) { const t = x.name; el.innerHTML = t; }', 'plantI2 | text | x.name'],
+      // An attribute value.
+      ['function plantJ(x) { return `<img src="${x.url}">`; }', 'plantJ | attr:src | x.url'],
+      // A template with no markup of its own, in a sink.
+      ['function plantK(x) { el.innerHTML = `${x.name}`; }', 'plantK | text | x.name'],
+      // A ternary's branch, and both sides of ||.
+      ["function plantL(x) { el.innerHTML = x.ok ? '<b>ok</b>' : '<b>' + x.why + '</b>'; }", 'plantL | text | x.why'],
+      ["function plantM(x) { el.innerHTML = '<b>' + (x.a || x.b) + '</b>'; }", 'plantM | text | x.b'],
+      // A spliced template inside a spliced template.
+      ["function plantN(x) { return `<div>${x.on ? `<span>${x.tag}</span>` : ''}</div>`; }", 'plantN | text | x.tag'],
+      // Built one `+=` statement at a time: the value on a line of its own, a
+      // let with no markup that a sink takes, and a handler opened by one
+      // statement and filled by the next (its state carries over).
+      ["function plantE2(xs) { let h = '<ul>'; xs.forEach(x => { h += '<li>'; h += x.n; h += '</li>'; }); list.innerHTML = h; }", 'plantE2 | text | x.n'],
+      ['function plantE3(x) { let h = \'\'; h += x.n; list.innerHTML = h; }', 'plantE3 | text | x.n'],
+      ["function plantE4(x) { let h = ''; h += '<a onclick=\"go(\\''; h += escapeHtml(x.id) + '\\')\">x</a>'; list.innerHTML = h; }", 'plantE4 | on:onclick | escapeHtml(x.id)'],
+      // Spliced by name, an accumulator carries the state it was left in.
+      ["function plantE5(x) { let h = '<a onclick=\"go(\\''; list.innerHTML = h + escapeHtml(x.id) + '\\')\">x</a>'; }", 'plantE5 | on:onclick | escapeHtml(x.id)'],
+      // X = X.concat(...), .concat() on a parameter, an array literal joined,
+      // and rows pushed onto an array that is joined.
+      ["function plantF3(x) { let h = '<ul>'; h = h.concat('<li>', x.n, '</li>'); list.innerHTML = h; }", 'plantF3 | text | x.n'],
+      ["function plantF4(h, x) { return h.concat('<li>', x.n, '</li>'); }", 'plantF4 | text | x.n'],
+      ["function plantF5(x) { return ['<td>', x.v, '</td>'].join(''); }", 'plantF5 | text | x.v'],
+      ["function plantF6(x) { const parts = []; parts.push('<td>', x.v, '</td>'); return parts.join(''); }", 'plantF6 | text | x.v'],
+      // A const that opens a handler moves the state it is spliced into, and a
+      // const's markup makes the expression that names it a row.
+      ["function plantI3(x) { const open = '<a onclick=\"go(\\''; el.innerHTML = open + escapeHtml(x.id) + '\\')\">x</a>'; }", 'plantI3 | on:onclick | escapeHtml(x.id)'],
+      ["function plantI4(x) { const TD = '<td>'; return TD + x.v; }", 'plantI4 | text | x.v'],
+      // A name is what binds it nearest: a destructured parameter is no row
+      // index, an inner parameter shadows an outer index, and a parameter
+      // shadows a const of its name.
+      ["function plantO(rows) { list.innerHTML = rows.map(({ id, name, label }) => `<a onclick=\"go('${label}')\">x</a>`).join(''); }", 'plantO | on:onclick | label'],
+      ["function plantO2(rows) { list.innerHTML = rows.map((r, i) => r.tags.map(i => `<b>${i}</b>`).join('')).join(''); }", 'plantO2 | text | i'],
+      ["const plantLabel = 'Peers'; function plantO3(plantLabel) { el.innerHTML = '<b>' + plantLabel + '</b>'; }", 'plantO3 | text | plantLabel'],
+      // The sink by bracket.
+      ["function plantB2(x) { el['innerHTML'] = x.name; }", 'plantB2 | text | x.name'],
+      // What only looks like a number: String() of text, a pad on text, and a
+      // typeof guard that guards something else or the other branch.
+      ["function plantP(x) { el.innerHTML = '<b>' + String(x.name).padStart(8, ' ') + '</b>'; }", 'plantP | text | x.name'],
+      ["function plantP2(x) { const v = typeof x.v === 'string' ? x.v : 0; el.innerHTML = '<b>' + v + '</b>'; }", 'plantP2 | text | x.v'],
+      ["function plantP3(x) { const v = typeof x.v === 'number' ? x.w : 0; el.innerHTML = '<b>' + v + '</b>'; }", 'plantP3 | text | x.w'],
+      ["function plantP4(x) { const v = typeof x.v !== 'number' ? x.v : 0; el.innerHTML = '<b>' + v + '</b>'; }", 'plantP4 | text | x.v'],
+      ["function plantP5(x) { const v = typeof x.v === 'number' ? 0 : x.v; el.innerHTML = '<b>' + v + '</b>'; }", 'plantP5 | text | x.v'],
+    ];
+    for (const [js, entry] of cases) {
+      const { added, gone } = verdict(planted(js));
+      assert.ok(added.some((a) => a.startsWith(entry + ' (')), `${entry}: ${JSON.stringify(added)}`);
+      assert.deepEqual(gone, [], entry);
+    }
+    // plantM's other side too.
+    assert.ok(verdict(planted("function plantM(x) { el.innerHTML = '<b>' + (x.a || x.b) + '</b>'; }"))
+      .added.some((a) => a.startsWith('plantM | text | x.a (')));
+  });
+
+  it('what cannot carry text of its own is not a raw splice', () => {
+    const js = [
+      "function okA(rows) { list.innerHTML = rows.map((r, i) => `<button onclick=\"pick(${i})\">${escapeHtml(r.name)}</button>`).join(''); }",
+      "function okB(rows) { let h = ''; for (let i = 0; i < rows.length; i++) { h += '<a onclick=\"pick(' + i + ')\">' + escapeHtml(rows[i].name) + '</a>'; } list.innerHTML = h; }",
+      "function okC(x) { el.innerHTML = '<b class=\"' + (x.bad ? 'error' : 'ok') + '\">' + Math.round(x.v) + ' · ' + (x.kb / 1024).toFixed(1) + '</b>'; }",
+      "function okD(x) { const cls = x.on ? 'on' : 'off'; el.innerHTML = `<i class=\"${cls}\">${x.n > 3}${x.ok && ' ✓'}${-x.d}</i>`; }",
+      "function okE(x) { el.innerHTML = '<p>' + escapeHtml(x.why) + '</p>'; el.textContent = 'raw ' + x.why; }",
+      // An accumulator built of escaped text and row indexes, spliced by name.
+      "function okF(rows) { let h = '<ul>'; rows.forEach((r, i) => { h += '<li onclick=\"pick(' + i + ')\">'; h += escapeHtml(r.name); h += '</li>'; }); list.innerHTML = h + '</ul>'; }",
+      // Digits by construction: String() of arithmetic padded with a literal,
+      // and a value a typeof guard has made a number.
+      "function okG(x) { const pct = (typeof x.pct === 'number') ? x.pct : null; el.innerHTML = '<b>' + String(Math.floor(x.t / 6)).padStart(2, '0') + (pct === null ? '--' : pct) + '</b>'; }",
+      // A member an accumulator's or a const's markup is read through, and a
+      // const that holds a function, are not that markup.
+      "function okH(x) { let h = '<b>'; h += escapeHtml(x.n); el.innerHTML = h; console.log(h.length, h.trim()); }",
+      "const okRow = (r) => '<b>' + escapeHtml(r.n) + '</b>'; function okI(rows) { const TD = '<td>'; console.log(rows.map((r) => okRow(r)).length, okRow(rows[0]), TD.length); }",
+    ].join('\n');
+    const { added, gone } = verdict(planted(js));
+    assert.deepEqual(added, []);
+    assert.deepEqual(gone, []);
+  });
+
+  it('a scanner that lost its place in the script says so rather than passing', () => {
+    // An unclosed template swallows the rest of the script.
+    assert.throws(() => splices.rawSplices(planted('function lost() { return `<b>${x}</b>; }')), /lost its place/);
+    assert.throws(() => splices.rawSplices(planted('function lost() { if (a) { return 1; }')), /lost its place/);
+  });
+
+  it('a recorded splice that is gone fails until its line is lowered', () => {
+    const fixed = page.replace("'Key registered — id <code>' + d.key_id + '</code>.",
+                               "'Key registered — id <code>' + escapeHtml(d.key_id) + '</code>.");
+    assert.notEqual(fixed, page, 'the vault key line is in the page');
+    const { added, gone } = verdict(fixed);
+    assert.deepEqual(added, []);
+    assert.deepEqual(gone, ['refreshVault | text | d.key_id (0 now, 1 recorded)']);
+    const lowered = { ...WAP_RAW_SPLICES };
+    delete lowered['refreshVault | text | d.key_id'];
+    assert.deepEqual(splices.against(lowered, splices.rawSplices(fixed)), { added: [], gone: [] });
+  });
+
+  it('an escape undone on a += line of its own is new (the F423 row)', () => {
+    const before = "font-weight:600;color:var(--accent);\">SCV-' + escapeHtml(c.device_id_prefix) + '</div>';";
+    assert.equal(page.split(before).length, 2, 'the BLE discovery row is in the page once');
+    const split = page.replace(before, "font-weight:600;color:var(--accent);\">SCV-'; html += c.device_id_prefix; html += '</div>';");
+    assert.deepEqual(verdict(split), { added: ['refreshBleDiscovery | text | c.device_id_prefix (1 now, 0 recorded)'], gone: [] });
+  });
+
+  it('one more of a recorded splice is new', () => {
+    const { added } = verdict(planted("function refreshVaultList() { box.innerHTML = '<code>' + it.name + '</code>'; }"));
+    assert.deepEqual(added, ['refreshVaultList | text | it.name (2 now, 1 recorded)']);
+  });
+});
