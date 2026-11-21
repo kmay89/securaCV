@@ -504,10 +504,10 @@ async def test_the_health_sensor_shows_no_charge_nobody_sent(
     """Sweep HA60, on a real core: a unit that says it has a battery and sends
     no number for its charge shows battery_percent None (it showed 100), a
     real charge reads as sent, and a mains unit (battery 100 with
-    battery_present false, as the canary-wap sends) reads None too since
-    #1971 (no battery reading is unknown, never 100). The Health state is
-    healthy for all three: no reading is not a low battery. Each state
-    serializes as the recorder and the websocket serialize one."""
+    battery_present false, as the canary-wap sends) has no reading either
+    and reads None since #1971: unknown, never 100. The Health state is
+    healthy for all three: no reading is not a low battery.
+    Each state serializes as the recorder and the websocket serialize one."""
     await setup_kernel_entry(enable_mqtt=True)
     fire(hass, f"securacv/{CANARY}/status", STATUS, retain=True)
     head = f'"public_key": "{CANARY_KEY}", "memory_free": 182000'
@@ -521,10 +521,8 @@ async def test_the_health_sensor_shows_no_charge_nobody_sent(
         for body, attribute in (
             ("{" + head + ', "battery_present": true, "battery": 37}', 37),
             (no_charge, None),
-            ("{" + head + ', "battery_present": true, "battery": 50}', 50),
+            ("{" + head + ', "battery_present": true, "battery": 61}', 61),
             ("{" + head + ', "battery_present": false, "battery": 100}', None),
-            ("{" + head + ', "battery_present": true, "battery": 37}', 37),
-            (no_charge, None),
         ):
             # Live, as a broker forwards a publish to a standing subscription
             # (the core hands each subscription one retained copy per topic).

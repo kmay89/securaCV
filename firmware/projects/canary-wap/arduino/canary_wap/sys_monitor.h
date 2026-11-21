@@ -31,11 +31,11 @@
 
 // The build profile owns this flag: build_config.h sets it (0 in
 // BUILD_PROFILE_MINIMAL, 1 in _DEV and _FULL), and this header includes
-// build_config.h itself (above, with the target's names), as
-// wifi_presence.h and audible_chirp.h do, so the profile's value stands
-// whatever order a translation unit includes them in. It defines no value
-// of its own. (It used to define 1 unconditionally, which forced 1 over
-// MINIMAL's 0; sweep F467.)
+// build_config.h itself, as wifi_presence.h and audible_chirp.h do, so the
+// profile's value stands whatever order a translation unit includes them in.
+// It defines no value of its own. (It used to define 1 unconditionally,
+// which forced 1 over MINIMAL's 0; sweep F467.)
+#include "build_config.h"
 
 // ════════════════════════════════════════════════════════════════════════════
 // TEMPERATURE THRESHOLDS (Celsius)

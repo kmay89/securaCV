@@ -173,7 +173,7 @@ struct FirstCanaryCard: View {
                     Text(state == .invite ? "Start here" : "Add your first Canary").font(.headline)
                     switch state {
                     case .ask:
-                        Text("Plug it in near this phone. SecuraCV listens for it over Bluetooth — nothing leaves your home. iOS asks for Bluetooth next.")
+                        Text("Plug it in near this phone. SecuraCV listens for it over Bluetooth — a short-range search that uses no internet. iOS asks for Bluetooth next.")
                             .font(.footnote).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         Button("Find my Canary") { store.setDiscoveryConsent(true) }

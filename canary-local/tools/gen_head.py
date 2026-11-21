@@ -15,7 +15,10 @@ The website solved the same problem by splitting each head in two
   * HAND-WRITTEN, in the page: <title> and <meta name="description">. They are
     copy. This tool only checks them: a title names the bench first and ends
     with the Lab's name; a description fits a result and makes no claim about
-    what the network does not do.
+    what the network does not do; and the page's own headline leads with the
+    name its title leads with (seven benches had kept an older name in their
+    <h1> after build-line.json renamed them, so a tab, a link and the page
+    it opened gave one bench three names).
   * DERIVED, stamped between the two markers below: the canonical link, the
     Open Graph and card tags, and where the page sits. All of it is a function
     of the page's file name and those two lines.
@@ -60,6 +63,7 @@ END = "<!-- /head:derived -->"
 CANONICAL = {"index.html": "lab.html"}
 
 TITLE_RE = re.compile(r"^([ \t]*)<title>([^<]*)</title>[ \t]*$", re.M)
+H1_RE = re.compile(r"<h1\b[^>]*>(.*?)</h1>", re.S)
 DESC_RE = re.compile(r'^([ \t]*)<meta name="description" content="([^"]*)"\s*/?>[ \t]*$', re.M)
 BLOCK_RE = re.compile(rf"^[ \t]*{re.escape(BEGIN)}.*?{re.escape(END)}[ \t]*\n", re.S | re.M)
 # Tags the block owns, wherever a hand-written head left one.
@@ -137,8 +141,38 @@ def stamp(text: str, name: str) -> str:
     return head[:at] + block(name, title, desc, indent) + head[at:] + rest
 
 
-def copy_problems(name: str, title: str, desc: str) -> list[str]:
+def bench_name(title: str) -> str:
+    """The name a title leads with: what stands before its first dash, once
+    the Lab's own name is off the end."""
+    bare = title.removesuffix(f" — {SITE_NAME}").removesuffix(" — SecuraCV")
+    return bare.split(" — ")[0].strip()
+
+
+def headline(text: str) -> str | None:
+    """The page's first <h1> as a reader sees it, or None on a page with no
+    headline (index.html is a redirect)."""
+    m = H1_RE.search(text)
+    if not m:
+        return None
+    # Read a character at a time; every "<" and ">" is dropped whether or not
+    # it closes, so no angle bracket survives (a regex that removes "<...>"
+    # leaves an unclosed "<script" standing).
+    out, in_tag = [], False
+    for ch in m.group(1):
+        if ch == "<":
+            in_tag = True
+        elif ch == ">":
+            in_tag = False
+        elif not in_tag:
+            out.append(ch)
+    return " ".join(html.unescape("".join(out)).split())
+
+
+def copy_problems(name: str, title: str, desc: str, h1: str | None = None) -> list[str]:
     out = []
+    if h1 is not None and not h1.startswith(bench_name(title)):
+        out.append(f'{name}: its headline is "{h1}" and its title names it "{bench_name(title)}" '
+                   "— one name per bench: lead the <h1> with the title's (build-line.json's noun)")
     if "SecuraCV" not in title:
         out.append(f'{name}: <title> "{title}" does not say SecuraCV — a search result '
                    "and a browser tab show the title alone")
@@ -164,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
     for path in pages():
         text = path.read_text(encoding="utf-8")
         title, desc, _ = read_copy(text, path.name)
-        problems += copy_problems(path.name, title, desc)
+        problems += copy_problems(path.name, title, desc, headline(text))
         for seen, value, what in ((seen_titles, title, "title"), (seen_descs, desc, "description")):
             if value in seen:
                 problems.append(f"{path.name}: same {what} as {seen[value]} — a result cannot tell them apart")
@@ -185,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(f"{'stamped' if stale else 'Lab heads OK —'} {len(stale) or len(pages())} "
           f"page{'s' if (len(stale) or len(pages())) != 1 else ''}"
-          + ("" if stale else ": canonical, share tags, titles and descriptions"))
+          + ("" if stale else ": canonical, share tags, titles, headlines and descriptions"))
     return 0
 
 

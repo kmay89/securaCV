@@ -94,9 +94,10 @@ categories are simply **empty**, and this app sits in all three:
    ([`docs/security/REMEDIATION-2026-11.md`](../docs/security/REMEDIATION-2026-11.md));
    the Wall says so under its headline when a hub lists only itself, and
    an add-on with MQTT publishing off serves the same single row. No account,
-   no subscription, nothing leaves the room — and tvOS's own constraints
-   (storage the OS may purge, foreground-only apps) match the architecture:
-   the TV never holds the record, it witnesses, displays, and proves.
+   no subscription, no cloud of ours between the Wall and your Canaries — and
+   tvOS's own constraints (storage the OS may purge, foreground-only apps)
+   match the architecture: the TV never holds the record, it witnesses,
+   displays, and proves.
 3. **Built for the rooms TVs are actually in.** One wall, three profiles —
    the living-room **Home** wall, the behind-the-counter **Business** board
    (denser, attention-first), the **Apartment** peephole (the door leads) —

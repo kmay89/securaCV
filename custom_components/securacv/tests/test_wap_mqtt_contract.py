@@ -1364,11 +1364,11 @@ def test_a_present_battery_with_no_number_shows_no_charge(record, monkeypatch, s
     battery_percent() had no reading, so a unit that says it has a battery
     (battery_present true) and sends no number for its charge showed a full
     battery nobody sent. It is now None there, as memory_free_bytes is None
-    for no reading (HA53). A real charge still reads as sent; the canary-wap
+    for no reading (HA53). A real charge still reads as sent. The canary-wap
     on mains (100 with battery_present false, the contract
     test_health_and_egress_read_as_the_wap_sent_them pins) and a health that
-    does not say whether it has a battery read None too since #1971 (no
-    battery reading is unknown, never 100). The Health state does not move
+    does not say whether it has a battery have no reading either, and since
+    #1971 read None too: unknown, never 100. The Health state does not move
     with the attribute: no reading is not a low battery, so every body here
     reads healthy, as each did before."""
     wap = _Wap(record, monkeypatch).replay("connect", "running")
@@ -1381,15 +1381,12 @@ def test_a_present_battery_with_no_number_shows_no_charge(record, monkeypatch, s
     rest += ', "memory_free": 182000'
     no_charge = "{" + rest + ', "battery_present": true' + (", " + spelled if spelled else "") + "}"
     # Each body reads otherwise than the one before it.
-    charge = "{" + rest + ', "battery_present": true, "battery": 37}'
     for body, attribute in (
-        (charge, 37),
+        ("{" + rest + ', "battery_present": true, "battery": 37}', 37),
         (no_charge, None),
-        ("{" + rest + ', "battery_present": true, "battery": 50}', 50),
+        ("{" + rest + ', "battery_present": true, "battery": 61}', 61),
         ("{" + rest + ', "battery_present": false, "battery": 100}', None),
-        (charge, 37),
-        (no_charge, None),
-        (charge, 37),
+        ("{" + rest + ', "battery_present": true, "battery": 37}', 37),
         ("{" + rest + "}", None),
     ):
         wap.broker.publish(topic, body, True)

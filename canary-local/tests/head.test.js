@@ -16,6 +16,7 @@
 //   · a title drops the Lab's name, or outgrows a result    → "the hand-written half"
 //   · a description regrows past what a result shows         → "the hand-written half"
 //   · "nothing phones anywhere" comes back in a description  → "no retired claim"
+//   · a bench's headline keeps a name its title dropped       → "one name per bench"
 //   · a <title> lands in <body> again (room.html's did)      → "the title is in the head"
 //   · the share card stops being a file the website serves   → "the share card exists"
 //   · the gate is dropped from CI                            → "CI runs this gate"
@@ -45,6 +46,21 @@ const headOf = (page) => {
 const unescape = (s) => s.replace(/&quot;/g, '"').replace(/&#x27;|&#39;/g, "'")
   .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 const titleOf = (page) => unescape((/<title>([^<]*)<\/title>/.exec(headOf(page)) || [])[1] || "");
+// A fragment's text as a reader sees it: tags out, entities in, runs of space
+// as one. It is read a character at a time, and every "<" and ">" is dropped
+// whether or not it closes: a regex that removes "<...>" leaves an unclosed
+// "<script" standing, and what one pass removes can uncover another. Nothing
+// here renders the result (it is compared with a title), but a helper that
+// says it removes tags should leave no angle bracket behind.
+const textOf = (fragment) => {
+  let text = "", inTag = false;
+  for (const ch of fragment) {
+    if (ch === "<") inTag = true;
+    else if (ch === ">") inTag = false;
+    else if (!inTag) text += ch;
+  }
+  return unescape(text).replace(/\s+/g, " ").trim();
+};
 const descOf = (page) => unescape((/<meta name="description" content="([^"]*)"/.exec(headOf(page)) || [])[1] || "");
 
 test("the Lab's pages are found", () => {
@@ -109,6 +125,33 @@ test("no description makes the retired network claim", () => {
     assert.ok(!/phones? (?:home|anywhere)|nothing leaves/i.test(descOf(page)),
       `${page}: its description says what the network does not do — say "runs in your browser; nothing is uploaded"`);
   }
+});
+
+test("one name per bench: a page's headline leads with the name its title leads with", () => {
+  // build-line.json's noun is what a tab, the stage rail and every link call a
+  // bench. Seven pages kept an older name in their own <h1> after the manifest
+  // renamed them ("The Canary Nursery" under a tab that said "Flash over USB"),
+  // and two map pages led with a slogan or the Lab's old name.
+  const nameOf = (title) => title.replace(/ — SecuraCV(?: Lab)?$/, "").split(" — ")[0].trim();
+  let headlines = 0;
+  for (const page of PAGES) {
+    const m = /<h1\b[^>]*>([\s\S]*?)<\/h1>/.exec(html.get(page));
+    if (!m) continue;                      // index.html is a redirect
+    headlines += 1;
+    const h1 = textOf(m[1]);
+    assert.ok(h1.startsWith(nameOf(titleOf(page))),
+      `${page}: the headline "${h1}" does not lead with "${nameOf(titleOf(page))}", the name its title gives it`);
+  }
+  assert.ok(headlines >= 25, `only ${headlines} pages have a headline to hold`);
+  assert.strictEqual(textOf("The workshop <em>map</em>"), "The workshop map");
+  assert.strictEqual(textOf('Flash over USB <span class="sub">— where Canaries hatch</span>'),
+    "Flash over USB — where Canaries hatch");
+  assert.strictEqual(textOf("Boards <script"), "Boards", "an unclosed tag takes the rest with it");
+  assert.doesNotMatch(textOf("<scr<script>ipt>x</scr</script>ipt> a > b < c"), /[<>]/);
+  // The rule is the generator's too, so a page fixed by hand is caught at --check.
+  const gen = read(join(ROOT, "tools/gen_head.py"));
+  assert.match(gen, /def headline\(/);
+  assert.match(gen, /one name per bench/);
 });
 
 test("the title is in the head, once", () => {

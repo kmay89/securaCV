@@ -83,7 +83,7 @@ struct WallView: View {
             ProgressView()
             Text("Looking for your Canaries…")
                 .font(.system(size: 56, weight: .semibold))
-            Text("The Wall is checking your network — a hub at canary.local answers by itself, and so does every Canary that publishes a fleet report, hub or not. Nothing leaves this room.")
+            Text("The Wall is checking your network — a hub at canary.local answers by itself, and so does every Canary that publishes a fleet report, hub or not. The search stays on your network.")
                 .font(.title3)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

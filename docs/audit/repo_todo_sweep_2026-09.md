@@ -3926,6 +3926,20 @@ so — see D2 below.)
   `LampColorControl` do. From code; not run on a device. Found by the
   device-details design (`docs/design/device_details.md` §9).
 
+- [ ] **A135 [human] Dependabot's security update for `glib` fails on every
+  run, and its alert has no recorded answer on GitHub.** Both desktop apps'
+  lockfiles carry `glib` 0.18.5 (RUSTSEC-2024-0429, unsound) under `gtk`
+  0.18.2, which every release of `tauri`, `tao`, `wry` and `muda` still
+  requires; the fix is in `glib` 0.20 and later, which `gtk` 0.19 takes and
+  the Tauri stack does not yet, so the updater ends in
+  `security_update_not_possible` each time (seen 2026-11-21 for
+  `/desktop-lab/src-tauri`) and shows as a failed run on main. `SECURITY.md`
+  Group 8 has the reachability reading (no package in either graph but
+  `glib` names the affected type). What remains is a repository admin's:
+  dismiss the alert for both lockfiles with that reason, and drop this item
+  and the Group 8 entry when a Tauri release takes `gtk` 0.19. Found while
+  landing #1993.
+
 ---
 
 ## 3. Home Assistant (monorepo `custom_components/` + HACS mirror)
@@ -4169,25 +4183,6 @@ so — see D2 below.)
   move into the design's ten or stay a separate redaction axis); adding one is
   a one-row vocabulary edit and a regeneration. From the generator's scan.
   Found by HA56 (#1961).
-
-- [ ] **HA69 [decision] The battery blueprint's recovered branch cannot
-  tell a battery recovery from a memory one.** Its trigger (warning or
-  critical back to healthy) and its condition (`battery_present == true`
-  and a numeric `battery_percent`, #1971) ask nothing about why the state
-  was low (`docs/blueprints/canary_battery_health.yaml`). A battery Canary
-  whose Health recovers from low memory, its charge fine, is pushed
-  "Battery back to 80% (discharging)" for a battery that was never low
-  (rendered on core 2026.10.1). The reverse edge: a battery Canary that went
-  low on a read charge and recovers with `battery_present` true and no
-  number never runs the branch, so its `securacv_battery_low_<sensor>`
-  notification is not dismissed, and the next healthy reading triggers
-  nothing (no shipping firmware sends that body: the canary-wap's battery
-  health always carries an unsigned charge). Decide whether the dismiss
-  needs only `battery_present`, and whether the push needs the low branch
-  to have fired; either changes `test_absent_battery.py`'s pin on the
-  recovered condition and `tests/ha/test_blueprints.py`'s recovered rows.
-  From code and a real-core render. Found by the #1966 merge review (the
-  half of HA60's rewrite #1971 left open).
 
 - [ ] *(Mirror repo itself: no code work. It was byte-identical again as of
   securacv-homeassistant#17 (2026-09-24), which resynced the 33 carried
@@ -4738,6 +4733,15 @@ major, by theme") — work its themes, then tick here.
   the hours), or decide on a night threshold. From code. Found by D16's review
   (#1919).
 
+- [ ] **D23 [code] `firmware/PARITY_PLAN.md` §1 drifts from the dashboard
+  it quotes.** §1 says it is "Pulled directly from the `FEATURES.md`
+  dashboard" and that the core crypto/GPS/SD/CSI/health/battery suite "is
+  already at parity ✅", but since #1966 the dashboard's SD storage and
+  export rows read canary (PIO) ⚠️ against canary-wap ✅, and Group A lists
+  neither; it already missed Improv, mDNS, identify and the provisioning
+  gate. Restate §1 from the dashboard, or have it point there instead of
+  copying it. From the docs. Found by F20 (#1966).
+
 - [ ] **D24 [code] `board_capability_map_43b.md` rates the 4.3B's microSD
   "Staged (CS blocker)", which the tree no longer bears out.** Its row and its
   section "## 5. microSD — real, but blocked on a chip-select problem"
@@ -4774,14 +4778,17 @@ major, by theme") — work its themes, then tick here.
   image. From code. Found by the device-details design
   (`docs/design/device_details.md` §7.1).
 
-- [ ] **D23 [code] `firmware/PARITY_PLAN.md` §1 drifts from the dashboard
-  it quotes.** §1 says it is "Pulled directly from the `FEATURES.md`
-  dashboard" and that the core crypto/GPS/SD/CSI/health/battery suite "is
-  already at parity ✅", but since #1966 the dashboard's SD storage and
-  export rows read canary (PIO) ⚠️ against canary-wap ✅, and Group A lists
-  neither; it already missed Improv, mDNS, identify and the provisioning
-  gate. Restate §1 from the dashboard, or have it point there instead of
-  copying it. From the docs. Found by F20 (#1966).
+- [ ] **D27 [decision] `spec/quorum_unseal_v2.md` §2.2 regenerates the
+  ML-KEM-768 decapsulation key "from its seed", and no vault holds one.**
+  `kem-mlkem768.key` stores the expanded FIPS 203 decapsulation key (2400
+  bytes), and the keys PQClean generated never had a seed to keep; `ml-kem`
+  reads them through an import it marks deprecated (`docs/pqc_mode.md`,
+  "Stored keys are not seeds"). The v2 design splits a seed among trustees,
+  so it needs a key that was made from a kept seed: say in the spec whether
+  the migration to v2 mints a new KEM key from a seed (and re-wraps what the
+  old one sealed), or whether vaults start storing seeds first. The same
+  question stands for the ML-DSA device key in `device_metadata`. From the
+  spec and the key files. Found by #1991.
 
 ---
 
@@ -4895,6 +4902,37 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   grade, "one grade of slack" over the plan's 6th, but
   `microcopy_fkgl.py`'s `DEFAULT_MAX_GRADE` is 6.0 and `microcopy_lint.sh`
   passes no `--max-grade`. Restate both. From code. Found by F465 (#1966).
+
+- [ ] **CI29 [code] A kernel test that mints a break-glass token can fail at
+  a ten-minute boundary.** A token is good only inside the bucket it was
+  minted in (`src/break_glass/core.rs`, "break-glass token expired"), and the
+  tests that mint one read `TimeBucket::now(600)` themselves and then call
+  kernel code that reads the clock again: `Fixture::grant` in
+  `src/disclosure_tests.rs` (the disclosure and handoff suites), and direct
+  reads in `tests/kernel_hardening.rs`, `tests/export_events_authorized.rs`,
+  `tests/court_export.rs`, `tests/handoff_sidecar_cli.rs` and others, about
+  150 clock reads across `src/` and `tests/`. A run whose two reads fall on
+  either side of a boundary fails. Seen once, at 02:00:00 UTC on 2026-11-21,
+  in `handoff::tests::sidecar_is_canonical_without_trailing_newline`; it
+  passed on rerun. The pure-Rust ML-DSA signer #1991 moved to is slower in a
+  debug build, which lengthens the window in `rust.yml`'s "Test with PQC
+  features" step. The fix that holds is a clock the tests can set (one seam
+  the kernel reads the time through), not a retry; a smaller one is a test
+  helper that takes the bucket only while enough of it is left. From a test
+  run. Found by #1991.
+
+- [ ] **CI30 [decision] The Rust workflows build on whatever stable the
+  runner image carries.** `rust.yml` and its siblings install no toolchain,
+  so a new stable arrives unannounced: 1.100 drew one compiler note
+  differently and turned main red on 2026-11-20
+  (`.github/RELEASE_LESSONS.md`, 2026-11-20 (b)). #1991 pinned the one thing
+  that compares the compiler's own prose (the compile-fail snapshots name
+  their compiler, `tests/compile_fail/RUSTC`). Everything else still floats,
+  which is also the early warning for a new clippy lint or a deprecation.
+  Decide whether the kernel pins a toolchain (`rust-toolchain.toml`, moved on
+  purpose) or keeps floating with that understood. The add-on image's builder
+  already pins an exact toolchain (`docs/security/ENTERPRISE_CUSTODY.md`).
+  From the workflows. Found by #1991.
 
 ---
 

@@ -70,7 +70,7 @@ export function wizardSteps(facts) {
         "If any step goes sideways, open the “Stuck?” panel — it always has a way forward.",
       ],
       stuck: [
-        "No spare computer? A $60 Raspberry Pi 5 is plenty — the Board Room lists a ready kit.",
+        "No spare computer? A $60 Raspberry Pi 5 is plenty — the Boards bench lists a ready kit.",
         "Prefer to read it all first? The full written guide is linked at the bottom of every step.",
       ],
     },

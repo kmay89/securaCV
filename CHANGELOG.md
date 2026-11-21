@@ -1,6 +1,48 @@
 # Changelog
 
 ## [Unreleased]
+### Trustee keys can be wrapped at rest: `trustee keygen`, `wrap` and `pubkey`; a passphrase comes from the terminal or `--passphrase-fd`, never argv or the environment
+
+- **`break_glass trustee keygen --id ID --output F`**, run by the trustee on
+  their own machine, mints an Ed25519 key, wraps it under a passphrase and
+  writes one line, `securacv-trustee-key:v1 <hex>`, mode 0600, never
+  overwriting. It prints the public key and its fingerprint, never the
+  secret, so a trustee no longer needs an external Ed25519 tool to enroll.
+  **`trustee wrap --signing-key OLD --id ID --output F`** migrates a
+  plaintext key (and says the plaintext file is yours to destroy; it is not
+  deleted). **`trustee pubkey --signing-key F`** prints the key a file signs
+  with.
+- **The container, TKG1**, is the vault keyguard's MKG1 layout under its own
+  magic and AAD domain: Argon2id (64 MiB, 3 passes, 1 lane, any other
+  parameters refused before derivation) and ChaCha20-Poly1305 over the
+  32-byte seed, followed by a public trailer naming the trustee id and public
+  key. The trailer is the AAD, so a renamed trustee or a swapped key does not
+  open, and the decrypted seed must yield the recorded key.
+- **`approve` and `policy approve`** read either form from `--signing-key`
+  and take `--passphrase-fd N`. A plaintext key still signs and prints
+  `WARNING: {path} is an unwrapped trustee key — anyone who copies it can
+  sign as this trustee. Wrap it: break_glass trustee wrap --signing-key
+  {path} --id <id> --output <id>.tkey`. With a wrapped key, no terminal and
+  no fd, the command refuses: `wrapped trustee key needs a passphrase: run
+  on a terminal or pass --passphrase-fd`.
+- **The passphrase prompt.** While echo is off, Ctrl-C, SIGQUIT, SIGTERM
+  and SIGHUP put the terminal back before the command dies of the signal,
+  and Ctrl-Z is ignored, so the process is never stopped with echo off and
+  resumed reading with it on. A line over 1024 bytes is refused and the rest
+  of it discarded from the terminal, so the shell never reads it. An fd
+  named by `--passphrase-fd` that is itself a terminal is read with echo
+  off too. `approve` and `policy approve` always run their stage plain, so
+  no spinner redraws over the prompt, and the next steps `request` and
+  `policy propose` print name `--signing-key <name>.tkey`.
+- **`trustee enroll --generate` is deprecated** and prints a warning: it
+  leaves the operator holding the trustee's secret.
+- **Nothing changes on the hub.** The quorum policy records nothing about
+  wrapping (the hub cannot check it), approvals are byte-identical, and the
+  vault keyguard (MKG1) is unchanged; a test pins its bytes against the
+  pre-change encoder. The ceremony runbook's trustee-key rows move from
+  **GAP** to **PROC** + **CODE** tool, and the practice statement's 6.2
+  declares key protection per trustee. Hardware trustee keys remain a gap.
+
 ### The witness refuses a hash that failed and a key draw that came out flat, a Chirp suppress vote needs a presence row, canary-wap reads settings keys as keys and measures its answers, Bluetooth refuses what its own link did not set up, an Opera joiner keeps its opera from a stranger, the dashboards hold their raw splices, Home Assistant reads only what was sent, the Vision app asks for a `.local` name, the slot check warns early, and the parity ledgers say what the code does (#1966, wave 25)
 
 - **The witness refuses a SHA-256 that failed (F455).** The canary (PIO)
@@ -67,17 +109,18 @@
   scanner reads fails (the script's header names what it does not see). The
   Sensing dashboard's reading-grade gate strips `COPY`'s comments before it
   grades: 89 strings at 3.35, where it graded 84 at 3.46.
-- **Home Assistant reads only what was sent (HA46 in part).** SD Wear
-  Estimate is created only for a device whose health carries the `sd`
-  object, today the canary base alone; an existing install keeps the entity
-  each other Canary was given, shown unavailable and restored until you
-  delete it. The battery half of this wave (no charge shown for a battery
-  that sends no number, and a blueprint that alerts only on a charge that
-  was read) is #1971's on main, which also reads a unit on mains as
-  unknown; the wave's tests of it stay, held to that. A copy of the battery
-  blueprint imported by URL or placed by `scripts/install.sh` before #1971
-  keeps its old text until you re-import it. Its recovered push still
-  cannot tell a battery recovery from a memory one (HA69).
+- **Home Assistant reads only what was sent (HA60 and HA46 in part).** The
+  Health sensor's `battery_percent` no longer shows 100 for a unit that says
+  it has a battery and sends no number for its charge (no shipping firmware
+  sends that body). 2.4.20 had already made every no-reading case unknown,
+  mains units included (HA60, "Honest names"); this adds the sign-spelled
+  charge to the readings that are no number, and its tests. The battery blueprint
+  alerts on low battery only for a charge the unit sent; a copy imported by
+  URL or placed by `scripts/install.sh` keeps the old text until you
+  re-import it. SD Wear Estimate is created only for a device whose health
+  carries the `sd` object, today the canary base alone; an existing install
+  keeps the entity each other Canary was given, shown unavailable and
+  restored until you delete it.
 - **canary-vision asks for a `.local` name instead of an IP its CSP refuses
   (F448, the code half).** Manual entry, "Add with token", a pasted or
   scanned receipt and a prefilled host answer "enter its .local name" for an
@@ -103,10 +146,9 @@
 - **Backlog:** F455, F460, F462, F464, F465 and F467 are closed, and F250's
   open half is F282's. F38, F232, F234, F140, F318, F445, F447, F448, F449,
   F443, F468, F367, F20, F219, F147, F254, F364 and HA46 now say what
-  remains (HA60, which it also rewrote, #1971 closed on main; what #1971
-  left open of the rewrite is HA69). New from the wave: F469-F478, D23,
-  CI28 and HA69, among them the flagship's `/EXPORT` (F476) and two calls
-  on a hash that fails at provisioning or at a link (F477, F478).
+  remains (HA60 was closed on main by 2.4.20, and stays closed). New from the wave: F469-F478, D23 and CI28, among them the
+  flagship's `/EXPORT` (F476) and two calls on a hash that fails at
+  provisioning or at a link (F477, F478).
 - Host-tested here: the canary-wap host suite under g++, clang++ 18 and
   ASan/UBSan, `test_sha_fail_flagship` in both mbedTLS spellings, both
   dashboards' and the Vision app's node tests, the Vision app in headless
@@ -115,47 +157,68 @@
   Arduino compiles are CI's, and `BUILD_PROFILE_MINIMAL` is compiled by no
   job. Nothing was run on a device, and no new bench row has been run.
 
-### Trustee keys can be wrapped at rest: `trustee keygen`, `wrap` and `pubkey`; a passphrase comes from the terminal or `--passphrase-fd`, never argv or the environment
+### One name per Lab bench, no Lab page that scrolls sideways, and three app screens say what their search does
 
-- **`break_glass trustee keygen --id ID --output F`**, run by the trustee on
-  their own machine, mints an Ed25519 key, wraps it under a passphrase and
-  writes one line, `securacv-trustee-key:v1 <hex>`, mode 0600, never
-  overwriting. It prints the public key and its fingerprint, never the
-  secret, so a trustee no longer needs an external Ed25519 tool to enroll.
-  **`trustee wrap --signing-key OLD --id ID --output F`** migrates a
-  plaintext key (and says the plaintext file is yours to destroy; it is not
-  deleted). **`trustee pubkey --signing-key F`** prints the key a file signs
-  with.
-- **The container, TKG1**, is the vault keyguard's MKG1 layout under its own
-  magic and AAD domain: Argon2id (64 MiB, 3 passes, 1 lane, any other
-  parameters refused before derivation) and ChaCha20-Poly1305 over the
-  32-byte seed, followed by a public trailer naming the trustee id and public
-  key. The trailer is the AAD, so a renamed trustee or a swapped key does not
-  open, and the decrypted seed must yield the recorded key.
-- **`approve` and `policy approve`** read either form from `--signing-key`
-  and take `--passphrase-fd N`. A plaintext key still signs and prints
-  `WARNING: {path} is an unwrapped trustee key — anyone who copies it can
-  sign as this trustee. Wrap it: break_glass trustee wrap --signing-key
-  {path} --id <id> --output <id>.tkey`. With a wrapped key, no terminal and
-  no fd, the command refuses: `wrapped trustee key needs a passphrase: run
-  on a terminal or pass --passphrase-fd`.
-- **The passphrase prompt.** While echo is off, Ctrl-C, SIGQUIT, SIGTERM
-  and SIGHUP put the terminal back before the command dies of the signal,
-  and Ctrl-Z is ignored, so the process is never stopped with echo off and
-  resumed reading with it on. A line over 1024 bytes is refused and the rest
-  of it discarded from the terminal, so the shell never reads it. An fd
-  named by `--passphrase-fd` that is itself a terminal is read with echo
-  off too. `approve` and `policy approve` always run their stage plain, so
-  no spinner redraws over the prompt, and the next steps `request` and
-  `policy propose` print name `--signing-key <name>.tkey`.
-- **`trustee enroll --generate` is deprecated** and prints a warning: it
-  leaves the operator holding the trustee's secret.
-- **Nothing changes on the hub.** The quorum policy records nothing about
-  wrapping (the hub cannot check it), approvals are byte-identical, and the
-  vault keyguard (MKG1) is unchanged; a test pins its bytes against the
-  pre-change encoder. The ceremony runbook's trustee-key rows move from
-  **GAP** to **PROC** + **CODE** tool, and the practice statement's 6.2
-  declares key protection per trustee. Hardware trustee keys remain a gap.
+- **The Lab's benches.** `canary-local/build-line.json` renamed seven benches
+  and keeps the old names as `wasNamed`; the page titles followed in #1991
+  and the pages' own headlines had not. A tab that said "Flash over USB"
+  opened a page headed "The Canary Nursery", "Boards" opened "The Board
+  Room", "Set up break-glass" opened "The Operator's Bench", and the same
+  went for Meet the fleet, First boot, Watch it work and What the mic hears.
+  The room led with "Canary Lab" under an "ERRERLabs" kicker, and the site
+  map with a slogan. Each `<h1>` now leads with the name its `<title>`
+  leads with, and the links between benches use it (the fleet page's
+  buttons, five footers, four "next" lists, and `gen_start.py`'s wiring
+  link). `tools/gen_head.py --check` refuses a headline that does not, and
+  `tests/head.test.js` holds the rule on its own reading of the pages. The
+  flasher keeps "where Canaries hatch"; its screens still call it the
+  Nursery, and its lede now introduces the nickname.
+- **Pages that scrolled sideways.** The Lab's landing page scrolled 142px
+  sideways at 1280 wide and 99px on a 390px phone: a decorative glow bled
+  past its box and widened the document. The break-glass bench scrolled
+  168px on a phone and 295px on a tablet, the House 80px, the Vision 54px
+  and the radar school 49px on a phone, the case finder 21px on a tablet,
+  and every bench 22px at 320. Five causes, each a line or two of CSS: the
+  glow is clipped by the main column; grid tracks may no longer be as wide
+  as their widest item; a value that is one long token may break; two
+  control rows may wrap; and the Lab bar, which never wraps, drops its
+  stage crumb on a depth page below 900px and its Glossary link at 320.
+  Measured in Chromium with a fresh load at each of twelve widths from 320
+  to 1440: no page scrolls sideways.
+- **Boxes that spilled out of their cards.** The same causes showed on a
+  desktop with no scrolling at all. The radar dev bench's three mount cards
+  printed their facts over each other (a two-column fact grid in a 230px
+  card), the break-glass bench's four command cards stuck out of their
+  section, and the radar school squeezed values under 100px: 22
+  page-and-width pairs had a box that spilled or a value that narrow. The
+  fact grid now takes two columns only where each can be 260px, and a mount
+  card's name keeps clear of its source badge. After: none, at six widths
+  from 390 to 1440. `tests/sideways_scroll.test.js` holds these fixes at the
+  source; no CI job measures a layout.
+- **The apps.** Two iPhone screens said "nothing leaves your home" about a
+  Bluetooth search, and the Witness Wall's searching card said "nothing
+  leaves this room" while its settings screen takes a hub address somewhere
+  else. They now say "a short-range search that uses no internet" and "The
+  search stays on your network." `scripts/tests/test_device_copy_claims.py`
+  reads the iPhone, watch and Apple TV sources and takes "this room" with
+  "your home". The edits are string literals and were not compiled here; the
+  iOS and tvOS workflows build them.
+
+### The desktop apps' lockfiles take four fixed releases, and the one advisory with no fix has a written answer
+
+- **Bumped** in `desktop/src-tauri`, `desktop-lab/src-tauri` and
+  `desktop/flash-engine`: `tokio` 1.53.1 → 1.54.1 (RUSTSEC-2026-0386,
+  unsound), `event-listener` 5.4.1 → 5.4.2 (RUSTSEC-2026-0221, unsound), and
+  two yanked versions, `chacha20` 0.10.1 → 0.10.2 and `async-executor`
+  1.14.0 → 1.14.1. `cargo audit` prints an unsound or yanked crate as a
+  warning and exits 0, so the gate had stayed green over all four. Only
+  those package entries changed; no manifest did.
+- **`glib` 0.18.5 (RUSTSEC-2024-0429, unsound) stays.** It is required by
+  `gtk` 0.18, which every release of Tauri's Linux window stack still
+  requires; the fixed `glib` arrives with `gtk` 0.19, which that stack does
+  not take yet. `SECURITY.md` Group 8 records why no code in either app
+  reaches the affected type, and backlog A135 the step that is a repository
+  admin's: dismissing the Dependabot alert whose update fails on every run.
 
 ### Compliance maps say which mechanism stands behind which clause, and never more
 

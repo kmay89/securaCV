@@ -379,9 +379,9 @@ class PrGateRunsTheScript(unittest.TestCase):
         if work.exists():
             shutil.rmtree(work)
         work.mkdir()
-        # The runner's temp directory: the step tees each env's build log
-        # there for its WebServer gate (#1991).
-        runner_temp = self.root / "runner_temp"
+        # The step tees each env's build log to $RUNNER_TEMP (the WebServer
+        # gate reads the dependency graph from it), as the runner provides.
+        runner_temp = self.root / "runner-temp"
         runner_temp.mkdir(exist_ok=True)
         env = {"PATH": self.path, "HOME": str(self.root),
                "GITHUB_WORKSPACE": str(REPO),

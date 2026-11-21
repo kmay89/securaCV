@@ -88,7 +88,7 @@
      optionsNote:'Camera, radar and sound are options at this one station — not separate paths. Pick the sense your Canary carries; more senses will dock here as they land. The line runs straight on to Home.',next:'Home Assistant'},
     {id:5,gx:14.2,gy:6.3,color:'#0d9488',hex:'#0d9488',name:'Home',label:'Bring it home',
      verb:'Welcome',title:'it home',kick:'Stage 5 · Home Assistant',
-     give:'One dashboard and one timeline nobody — not even you — can quietly edit.',draw:'hub',
+     give:'One dashboard, and one timeline where any edit shows — yours included.',draw:'hub',
      tools:[['🏠','The Hub','Home Assistant on a Pi, step by step.','https://kmay89.github.io/securaCV/canary-local/homeassistant.html'],['🏡','The Canary House','The whole fleet in place, sensing live.','https://kmay89.github.io/securaCV/canary-local/house.html']],next:'Proof'},
     {id:6,gx:17.2,gy:6.3,color:'#059669',hex:'#059669',name:'Proof',label:'Prove it',
      verb:'Prove',title:'it',kick:'Stage 6 · Proof, not promises',

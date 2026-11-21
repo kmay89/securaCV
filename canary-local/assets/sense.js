@@ -245,7 +245,7 @@ async function main() {
     const items = [
       ["The design doc", "the whole plan — privacy classes, scenarios, the MR60FDA2 fall sibling", d.docs.design],
       ["The Sense firmware", "the sources this page is parsed from — FSMs, witness chain, discovery", "firmware/projects/canary-sense/README.md"],
-      ["The WAP — first boot", "the WiFi-CSI sibling: captive portal, browser flashing, the other physics", "canary-local/wap.html"],
+      ["First boot — the WAP", "the WiFi-CSI sibling: captive portal, browser flashing, the other physics", "canary-local/wap.html"],
       ["The Hub", "Home Assistant on a Raspberry Pi — where these entities land", "canary-local/homeassistant.html"],
       ["The RADOME enclosure", "the printable shell — membrane thickness computed and asserted", d.docs.enclosure],
     ];
