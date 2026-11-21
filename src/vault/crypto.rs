@@ -302,30 +302,94 @@ fn decrypt_payload(
 // v1/v2 envelope stays byte-identical.
 // --------------------------------------------------------------------------
 
-const KEYGUARD_MAGIC: &[u8; 4] = b"MKG1";
-const KEYGUARD_KIND_ARGON2ID: u8 = 1;
-const KEYGUARD_AAD_DOMAIN: &[u8] = b"securacv-vault-keyguard-v1";
-const KEYGUARD_M_KIB: u32 = 65536; // 64 MiB — interactive strength
-const KEYGUARD_T: u32 = 3;
-const KEYGUARD_P: u32 = 1;
-const KEYGUARD_SALT_LEN: usize = 16;
+/// One Argon2id passphrase container recipe in the MKG1 byte layout:
+///
+/// ```text
+/// magic[4] ‖ version 0x01 ‖ kind 0x01 (Argon2id)
+/// ‖ m u32le ‖ t u32le ‖ p u32le      (65536 KiB / 3 / 1, refused before the KDF otherwise)
+/// ‖ salt_len u8 (16) ‖ salt ‖ kek_commit[32] = SHA-256(KEK)
+/// ‖ nonce[12] ‖ ChaCha20-Poly1305(KEK, nonce, aad_domain ‖ aad_suffix, secret[32]) ‖ tag[16]
+/// ```
+///
+/// A format is the pair (magic, AAD domain), plus the label its errors
+/// carry and whether its reader is exact. MKG1 (the vault master key) and
+/// TKG1 (a trustee signing seed) are the two instances; a later container
+/// that wraps a different 32-byte secret adds a third, never a new layout.
+pub(crate) struct KeyguardFormat {
+    /// The four magic bytes that open the container.
+    pub(crate) magic: &'static [u8; 4],
+    /// Domain bytes that open the AEAD associated data; the caller's
+    /// `aad_suffix` follows them.
+    pub(crate) aad_domain: &'static [u8],
+    /// The prefix of every error this format's reader returns.
+    pub(crate) label: &'static str,
+    /// An exact reader refuses a salt length other than 16 and any byte
+    /// after the tag. MKG1 is read leniently, exactly as before this
+    /// recipe was shared, so no existing keyguard changes verdict.
+    pub(crate) exact: bool,
+    /// The error returned when the AEAD refuses (a tampered byte, or a
+    /// container bound to another AAD suffix).
+    pub(crate) aead_failure: &'static str,
+}
 
-fn read_u8b(bytes: &[u8], cursor: &mut usize) -> Result<u8> {
+/// The vault master-key keyguard (`master.keyguard`).
+pub(crate) const KEYGUARD_MKG1: KeyguardFormat = KeyguardFormat {
+    magic: b"MKG1",
+    aad_domain: b"securacv-vault-keyguard-v1",
+    label: "vault keyguard",
+    exact: false,
+    aead_failure: "vault decryption failed",
+};
+
+/// A trustee's Ed25519 signing seed at rest (`.tkey`): the MKG1 layout under
+/// its own magic and AAD domain. The AAD suffix is
+/// `u32le(len id) ‖ id ‖ public_key[32]`, so a renamed trustee or a swapped
+/// public key fails the AEAD (`break_glass::trustee_key`).
+pub(crate) const KEYGUARD_TKG1: KeyguardFormat = KeyguardFormat {
+    magic: b"TKG1",
+    aad_domain: b"securacv-trustee-key-v1",
+    label: "trustee key",
+    exact: true,
+    aead_failure: "trustee key: the file was altered, or its trustee id or public key was changed",
+};
+
+const KEYGUARD_KIND_ARGON2ID: u8 = 1;
+/// Argon2id memory, KiB (64 MiB, interactive strength). Pinned: a reader
+/// refuses any other value before deriving.
+pub(crate) const KEYGUARD_M_KIB: u32 = 65536;
+/// Argon2id passes. Pinned.
+pub(crate) const KEYGUARD_T: u32 = 3;
+/// Argon2id lanes. Pinned.
+pub(crate) const KEYGUARD_P: u32 = 1;
+/// Salt length written by every encoder.
+pub(crate) const KEYGUARD_SALT_LEN: usize = 16;
+
+fn read_u8b(bytes: &[u8], cursor: &mut usize, label: &str) -> Result<u8> {
     let v = *bytes
         .get(*cursor)
-        .ok_or_else(|| anyhow!("vault keyguard: truncated"))?;
+        .ok_or_else(|| anyhow!("{label}: truncated"))?;
     *cursor += 1;
     Ok(v)
 }
 
-fn keyguard_aad(path_aad: &[u8]) -> Vec<u8> {
-    let mut v = Vec::with_capacity(KEYGUARD_AAD_DOMAIN.len() + path_aad.len());
-    v.extend_from_slice(KEYGUARD_AAD_DOMAIN);
-    v.extend_from_slice(path_aad);
+fn keyguard_aad(format: &KeyguardFormat, aad_suffix: &[u8]) -> Vec<u8> {
+    let mut v = Vec::with_capacity(format.aad_domain.len() + aad_suffix.len());
+    v.extend_from_slice(format.aad_domain);
+    v.extend_from_slice(aad_suffix);
     v
 }
 
-fn keyguard_kek(
+/// True when (m, t, p) are the pinned keyguard parameters. Every reader
+/// checks this BEFORE [`keyguard_kek`]: a writer of the file could
+/// otherwise set a huge m and exhaust memory on the next open.
+pub(crate) fn keyguard_params_pinned(m: u32, t: u32, p: u32) -> bool {
+    m == KEYGUARD_M_KIB && t == KEYGUARD_T && p == KEYGUARD_P
+}
+
+/// Argon2id(passphrase, salt) under (m, t, p): the 32-byte KEK of every
+/// keyguard container. Callers pin the parameters first
+/// ([`keyguard_params_pinned`]).
+pub(crate) fn keyguard_kek(
     passphrase: &str,
     salt: &[u8],
     m: u32,
@@ -358,6 +422,118 @@ fn fresh_nonce() -> [u8; 12] {
     random_bytes::<12>()
 }
 
+/// Wrap a 32-byte secret in `format`'s container under an Argon2id KEK
+/// derived from `passphrase`, with a fresh salt and nonce. The AEAD's
+/// associated data is `format.aad_domain ‖ aad_suffix`.
+pub(crate) fn keyguard_seal(
+    format: &KeyguardFormat,
+    secret: &[u8; 32],
+    passphrase: &str,
+    aad_suffix: &[u8],
+) -> Result<Vec<u8>> {
+    let salt: [u8; KEYGUARD_SALT_LEN] = random_bytes();
+    let nonce: [u8; 12] = random_bytes();
+    keyguard_seal_with(format, secret, passphrase, aad_suffix, &salt, &nonce)
+}
+
+/// [`keyguard_seal`] with the salt and nonce supplied: deterministic, for
+/// byte-identity tests and known-answer vectors. Production callers use
+/// [`keyguard_seal`], which draws both from the OS RNG.
+pub(crate) fn keyguard_seal_with(
+    format: &KeyguardFormat,
+    secret: &[u8; 32],
+    passphrase: &str,
+    aad_suffix: &[u8],
+    salt: &[u8; KEYGUARD_SALT_LEN],
+    nonce: &[u8; 12],
+) -> Result<Vec<u8>> {
+    let kek = keyguard_kek(passphrase, salt, KEYGUARD_M_KIB, KEYGUARD_T, KEYGUARD_P)?;
+    let kek_bytes: &[u8; 32] = &kek;
+    let commit: [u8; 32] = Sha256::digest(kek_bytes).into();
+
+    let mut ct = *secret;
+    let aad = keyguard_aad(format, aad_suffix);
+    let tag = encrypt_payload(kek_bytes, nonce, &aad, &mut ct)?;
+
+    let mut out = Vec::with_capacity(4 + 2 + 12 + 1 + KEYGUARD_SALT_LEN + 32 + 12 + 32 + 16);
+    out.extend_from_slice(format.magic);
+    out.push(1u8); // container version
+    out.push(KEYGUARD_KIND_ARGON2ID);
+    out.extend_from_slice(&KEYGUARD_M_KIB.to_le_bytes());
+    out.extend_from_slice(&KEYGUARD_T.to_le_bytes());
+    out.extend_from_slice(&KEYGUARD_P.to_le_bytes());
+    out.push(KEYGUARD_SALT_LEN as u8);
+    out.extend_from_slice(salt);
+    out.extend_from_slice(&commit);
+    out.extend_from_slice(nonce);
+    out.extend_from_slice(&ct);
+    out.extend_from_slice(&tag);
+    ct.zeroize();
+    Ok(out)
+}
+
+/// Recover the 32-byte secret from `format`'s container. Checks, in order:
+/// magic, version, kind, the pinned Argon2id parameters (before any
+/// derivation), then the KEK commitment (a clean "wrong passphrase"), then
+/// the AEAD over `format.aad_domain ‖ aad_suffix` (a tampered byte, or a
+/// container bound to another suffix).
+pub(crate) fn keyguard_open(
+    format: &KeyguardFormat,
+    container: &[u8],
+    passphrase: &str,
+    aad_suffix: &[u8],
+) -> Result<zeroize::Zeroizing<[u8; 32]>> {
+    let label = format.label;
+    let mut cur = 0usize;
+    if read_slice(container, &mut cur, 4)? != format.magic {
+        return Err(anyhow!("{label}: bad magic"));
+    }
+    let version = read_u8b(container, &mut cur, label)?;
+    if version != 1 {
+        return Err(anyhow!("{label}: unsupported version {version}"));
+    }
+    let kind = read_u8b(container, &mut cur, label)?;
+    if kind != KEYGUARD_KIND_ARGON2ID {
+        return Err(anyhow!("{label}: unsupported kind {kind}"));
+    }
+    let m = read_u32(container, &mut cur)?;
+    let t = read_u32(container, &mut cur)?;
+    let p = read_u32(container, &mut cur)?;
+    // Encode always uses the fixed v1 parameters, so a container claiming any
+    // other m/t/p is corrupt or hostile. Reject BEFORE deriving the KEK: an
+    // attacker who can write the container could otherwise set a huge m and
+    // OOM the process on the next open. (Parameter agility is a future kind.)
+    if !keyguard_params_pinned(m, t, p) {
+        let magic = String::from_utf8_lossy(format.magic);
+        return Err(anyhow!("{label}: unexpected {magic} v1 parameters"));
+    }
+    let salt_len = read_u8b(container, &mut cur, label)? as usize;
+    if format.exact && salt_len != KEYGUARD_SALT_LEN {
+        return Err(anyhow!("{label}: unexpected salt length"));
+    }
+    let salt = read_slice(container, &mut cur, salt_len)?.to_vec();
+    let commit = read_slice(container, &mut cur, 32)?.to_vec();
+    let nonce = read_slice(container, &mut cur, 12)?.to_vec();
+    let ct = read_slice(container, &mut cur, 32)?.to_vec();
+    let tag = read_slice(container, &mut cur, 16)?.to_vec();
+    if format.exact && cur != container.len() {
+        return Err(anyhow!("{label}: trailing bytes after the tag"));
+    }
+
+    let kek = keyguard_kek(passphrase, &salt, m, t, p)?;
+    let kek_bytes: &[u8; 32] = &kek;
+    let got: [u8; 32] = Sha256::digest(kek_bytes).into();
+    if got != commit.as_slice() {
+        return Err(anyhow!("{label}: wrong passphrase"));
+    }
+    let aad = keyguard_aad(format, aad_suffix);
+    let mut buf = zeroize::Zeroizing::new([0u8; 32]);
+    buf.copy_from_slice(&ct);
+    decrypt_payload(kek_bytes, &nonce, &aad, buf.as_mut(), &tag)
+        .map_err(|_| anyhow!("{}", format.aead_failure))?;
+    Ok(buf)
+}
+
 /// Wrap a 32-byte master key under an Argon2id KEK derived from `passphrase`,
 /// producing a self-describing MKG1 container. `path_aad` binds the container
 /// to its vault directory (via AAD) so a keyguard casually copied to a
@@ -367,31 +543,7 @@ pub(crate) fn keyguard_encode(
     passphrase: &str,
     path_aad: &[u8],
 ) -> Result<Vec<u8>> {
-    let salt: [u8; KEYGUARD_SALT_LEN] = random_bytes();
-    let kek = keyguard_kek(passphrase, &salt, KEYGUARD_M_KIB, KEYGUARD_T, KEYGUARD_P)?;
-    let kek_bytes: &[u8; 32] = &kek;
-    let commit: [u8; 32] = Sha256::digest(kek_bytes).into();
-
-    let nonce: [u8; 12] = random_bytes();
-    let mut ct = *master_key;
-    let aad = keyguard_aad(path_aad);
-    let tag = encrypt_payload(kek_bytes, &nonce, &aad, &mut ct)?;
-
-    let mut out = Vec::with_capacity(4 + 2 + 12 + 1 + KEYGUARD_SALT_LEN + 32 + 12 + 32 + 16);
-    out.extend_from_slice(KEYGUARD_MAGIC);
-    out.push(1u8); // container version
-    out.push(KEYGUARD_KIND_ARGON2ID);
-    out.extend_from_slice(&KEYGUARD_M_KIB.to_le_bytes());
-    out.extend_from_slice(&KEYGUARD_T.to_le_bytes());
-    out.extend_from_slice(&KEYGUARD_P.to_le_bytes());
-    out.push(KEYGUARD_SALT_LEN as u8);
-    out.extend_from_slice(&salt);
-    out.extend_from_slice(&commit);
-    out.extend_from_slice(&nonce);
-    out.extend_from_slice(&ct);
-    out.extend_from_slice(&tag);
-    ct.zeroize();
-    Ok(out)
+    keyguard_seal(&KEYGUARD_MKG1, master_key, passphrase, path_aad)
 }
 
 /// Recover the master key from an MKG1 container. Fails with a clean
@@ -402,46 +554,7 @@ pub(crate) fn keyguard_decode(
     passphrase: &str,
     path_aad: &[u8],
 ) -> Result<[u8; 32]> {
-    let mut cur = 0usize;
-    if read_slice(container, &mut cur, 4)? != KEYGUARD_MAGIC {
-        return Err(anyhow!("vault keyguard: bad magic"));
-    }
-    let version = read_u8b(container, &mut cur)?;
-    if version != 1 {
-        return Err(anyhow!("vault keyguard: unsupported version {version}"));
-    }
-    let kind = read_u8b(container, &mut cur)?;
-    if kind != KEYGUARD_KIND_ARGON2ID {
-        return Err(anyhow!("vault keyguard: unsupported kind {kind}"));
-    }
-    let m = read_u32(container, &mut cur)?;
-    let t = read_u32(container, &mut cur)?;
-    let p = read_u32(container, &mut cur)?;
-    // Encode always uses the fixed v1 parameters, so a container claiming any
-    // other m/t/p is corrupt or hostile. Reject BEFORE deriving the KEK: an
-    // attacker who can write master.keyguard could otherwise set a huge m and
-    // OOM the process on the next open. (Parameter agility is a future kind.)
-    if m != KEYGUARD_M_KIB || t != KEYGUARD_T || p != KEYGUARD_P {
-        return Err(anyhow!("vault keyguard: unexpected MKG1 v1 parameters"));
-    }
-    let salt_len = read_u8b(container, &mut cur)? as usize;
-    let salt = read_slice(container, &mut cur, salt_len)?.to_vec();
-    let commit = read_slice(container, &mut cur, 32)?.to_vec();
-    let nonce = read_slice(container, &mut cur, 12)?.to_vec();
-    let ct = read_slice(container, &mut cur, 32)?.to_vec();
-    let tag = read_slice(container, &mut cur, 16)?.to_vec();
-
-    let kek = keyguard_kek(passphrase, &salt, m, t, p)?;
-    let kek_bytes: &[u8; 32] = &kek;
-    let got: [u8; 32] = Sha256::digest(kek_bytes).into();
-    if got != commit.as_slice() {
-        return Err(anyhow!("vault keyguard: wrong passphrase"));
-    }
-    let aad = keyguard_aad(path_aad);
-    let mut buf = [0u8; 32];
-    buf.copy_from_slice(&ct);
-    decrypt_payload(kek_bytes, &nonce, &aad, &mut buf, &tag)?;
-    Ok(buf)
+    keyguard_open(&KEYGUARD_MKG1, container, passphrase, path_aad).map(|key| *key)
 }
 
 #[cfg(test)]
@@ -493,6 +606,67 @@ mod keyguard_tests {
     fn keyguard_truncated_fails() {
         let c = keyguard_encode(&[1u8; 32], "pw", b"/v").unwrap();
         assert!(keyguard_decode(&c[..c.len() - 10], "pw", b"/v").is_err());
+    }
+
+    /// An MKG1 container produced by the keyguard code as it stood BEFORE the
+    /// encoder was shared over (magic, AAD domain): master key `[0x5a; 32]`,
+    /// passphrase "mkg1 byte identity", path AAD "/vault/identity". Captured
+    /// once from that code and frozen here; MKG1 is a frozen format.
+    const MKG1_PRE_REFACTOR_HEX: &str = "4d4b4731010100000100030000000100000010474045a42a873ce25ef20c557064eecf4891775d3b0097d3399c16062abb6be70e3e52d7267fb02d7412d4e390200a7b763858fb9d5dfa4fa7f447612c16d88126887cd2f6b13ce1b87f126aa3a0898494abcf8f31adc4c5e06fa7c74559e07fdce960735174389deb0ca8f8";
+
+    #[test]
+    fn keyguard_mkg1_bytes_unchanged_by_the_shared_recipe() {
+        let frozen = hex::decode(MKG1_PRE_REFACTOR_HEX).unwrap();
+        assert_eq!(frozen.len(), 127, "MKG1 v1 is 127 bytes");
+        // The refactored reader opens the pre-refactor bytes.
+        let master = keyguard_decode(&frozen, "mkg1 byte identity", b"/vault/identity").unwrap();
+        assert_eq!(master, [0x5a; 32]);
+        // The refactored writer, given the same salt and nonce, reproduces
+        // them byte for byte: salt at [19..35), nonce at [67..79).
+        let salt: [u8; 16] = frozen[19..35].try_into().unwrap();
+        let nonce: [u8; 12] = frozen[67..79].try_into().unwrap();
+        let again = keyguard_seal_with(
+            &KEYGUARD_MKG1,
+            &[0x5a; 32],
+            "mkg1 byte identity",
+            b"/vault/identity",
+            &salt,
+            &nonce,
+        )
+        .unwrap();
+        assert_eq!(hex::encode(&again), MKG1_PRE_REFACTOR_HEX);
+    }
+
+    #[test]
+    fn keyguard_error_strings_unchanged_for_mkg1() {
+        // Older-build messages other briefs and the runbook quote.
+        let mut c = hex::decode(MKG1_PRE_REFACTOR_HEX).unwrap();
+        c[0] = b'X';
+        let err = keyguard_decode(&c, "mkg1 byte identity", b"/vault/identity")
+            .unwrap_err()
+            .to_string();
+        assert_eq!(err, "vault keyguard: bad magic");
+        let mut c = hex::decode(MKG1_PRE_REFACTOR_HEX).unwrap();
+        c[5] = 2;
+        let err = keyguard_decode(&c, "x", b"/vault/identity")
+            .unwrap_err()
+            .to_string();
+        assert_eq!(err, "vault keyguard: unsupported kind 2");
+        let mut c = hex::decode(MKG1_PRE_REFACTOR_HEX).unwrap();
+        c[10..14].copy_from_slice(&4u32.to_le_bytes());
+        let err = keyguard_decode(&c, "x", b"/vault/identity")
+            .unwrap_err()
+            .to_string();
+        assert_eq!(err, "vault keyguard: unexpected MKG1 v1 parameters");
+        let c = hex::decode(MKG1_PRE_REFACTOR_HEX).unwrap();
+        let err = keyguard_decode(&c, "not it", b"/vault/identity")
+            .unwrap_err()
+            .to_string();
+        assert_eq!(err, "vault keyguard: wrong passphrase");
+        // MKG1 stays a lenient reader: a trailing byte is ignored, as before.
+        let mut c = hex::decode(MKG1_PRE_REFACTOR_HEX).unwrap();
+        c.push(0);
+        assert!(keyguard_decode(&c, "mkg1 byte identity", b"/vault/identity").is_ok());
     }
 }
 
