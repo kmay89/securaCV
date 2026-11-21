@@ -133,7 +133,7 @@ async function main() {
   function renderBoard(d, boardsData) {
     const s = section("board", "the hardware", "The board it runs on",
       "The WAP is a " + d.device.model + " — the vendor's own CAD, the same viewer the " +
-      "Board Room and enclosure lab use. It feels presence through the WiFi field itself: no camera needed.");
+      "Boards bench and the enclosure lab use. It feels presence through the WiFi field itself: no camera needed.");
     if (boardsData) s.append(buildBoardLab(boardsData, "canary-wap"));
     else s.append(el("p", "muted", "Board catalog unavailable — run tools/gen_boards.py."));
   }
@@ -230,7 +230,7 @@ async function main() {
     const items = [
       ["The getting-started guide", "the whole walkthrough — connect, name devices, place them well", "docs/getting_started_canary.md"],
       ["The WAP firmware", "the sketch this page is parsed from — captive portal, MQTT, witness chain", "firmware/projects/canary-wap/README.md"],
-      ["The Board Room", "pin flags + LEGO-style wiring on this exact board", "canary-local/boards.html"],
+      ["Boards", "pin flags + LEGO-style wiring on this exact board", "canary-local/boards.html"],
       ["The Hub", "Home Assistant on a Raspberry Pi — where these MQTT entities land", "canary-local/homeassistant.html"],
     ];
     for (const [title, body, path] of items) {

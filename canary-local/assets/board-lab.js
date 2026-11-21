@@ -206,7 +206,7 @@ function renderBoardPanel(boardsData, bid) {
     doc.href = board.doc; doc.target = "_blank"; doc.rel = "noopener";
     links.append(document.createTextNode(" · "), doc);
   }
-  const room = el("a", null, "pin flags + wiring → the Board Room");
+  const room = el("a", null, "pin flags + wiring → Boards");
   room.href = "boards.html";
   links.append(document.createTextNode(" · "), room);
   wrap.append(links);

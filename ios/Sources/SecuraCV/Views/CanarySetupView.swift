@@ -61,7 +61,7 @@ struct NearbyListenControl: View {
     var body: some View {
         if store.discoveryConsent != true {
             VStack(alignment: .leading, spacing: Theme.s) {
-                Text("This phone listens for it over Bluetooth — nothing leaves your home. iOS asks for Bluetooth next.")
+                Text("This phone listens for it over Bluetooth — a short-range search that uses no internet. iOS asks for Bluetooth next.")
                     .font(.footnote).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Find my Canary") { store.setDiscoveryConsent(true) }

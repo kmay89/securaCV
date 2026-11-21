@@ -495,9 +495,10 @@ anti-rollback floor.
 Beyond §1.5:
 - **(fixed) Weak first-boot entropy.** `esp_fill_random` is called during provisioning early in
   `setup()` before RF is up; the identity draw is now wrapped in `bootloader_random_enable()` /
-  `bootloader_random_disable()` ([`securacv_crypto.cpp:206`](canary/lib/securacv_crypto/src/securacv_crypto.cpp)),
-  the same pattern PR #994 gave canary-sense, canary-vision and canary-wap, and
-  `regression_check.sh` ("first-boot keygen is entropy-seeded") fails any tree that loses it.
+  `bootloader_random_disable()` ([`securacv_crypto.cpp:278`](canary/lib/securacv_crypto/src/securacv_crypto.cpp)),
+  the same pattern PR #994 gave canary-sense, canary-vision and canary-wap (canary-sentinel
+  carries sense's copy), and `regression_check.sh` ("first-boot keygen is entropy-seeded and
+  refuses a flat draw") fails any of those five keygen files that loses it.
   The two later draws — the BLE scout key (`ble_scout_key_init`, from `ble_scout_init` inside
   `securacv_csi_modules_init()`) and the mesh pairing ephemeral key (`mesh_pairing`) — run after
   `mesh_transport::start()` brings the radio up, so they are RF-seeded and deliberately stay
@@ -506,8 +507,19 @@ Beyond §1.5:
   the S3 `bootloader_random_disable()` powers it down and resets its digital part), and here
   `FEATURE_POWER_MONITOR`'s `power_start()` has already opened the battery ADC earlier in
   `setup()` — so whether the battery reading survives a first-boot keygen is an open bench check
-  (K1's fresh-unit step), not proven. No entropy self-check (still open under item 18).
-  **[P1 → done; ADC interaction bench-gated]**
+  (K1's fresh-unit step), not proven. The draw is now looked at before it becomes a key (sweep
+  F38): all five keygens ask `key_draw_check::is_flat()`
+  ([`common/identity/key_draw_check.h`](common/identity/key_draw_check.h), host-tested; the
+  WAP sketch carries a staged copy `check_csi_sync.sh` holds) inside the `bootloader_random`
+  pair, and a draw whose bytes are all equal or whose popcount is outside 48..208 of 256 is
+  refused: the keygen answers false and no key is stored, into each caller's existing "Keypair
+  generation failed" branch, which nothing reached before (the canary (PIO) tree halts
+  provisioning; the WAP's provisioning fails without a halt, F58's open call, and refuses the
+  boot's chain, so no record is signed under the zeroed key and no chain state is persisted, while
+  the mesh and the hourly chain backup still take that key as it is; the three headless projects
+  disable signing for the boot), and the next boot draws again. A uniform draw is refused with odds of about 2^-82.5. It is a check against a buffer the
+  RNG never filled or a stuck output, not a randomness test: a fixed but varied pattern passes.
+  Not bench-tested. **[P1 → done; ADC interaction bench-gated]**
 - **(fixed) Chain-head persistence is non-atomic** — `seq` then `chain_head` were two separate
   NVS writes; a power cut between them left them inconsistent (recoverable via SD-wins **only if a
   card is present**). Now one 39-byte `{version, seq, head, CRC-16}` blob under `chain_st`
@@ -667,7 +679,7 @@ confirmed against a real CI build log before anyone acts loudly on them:
 | 15 | (fixed) Pin WiFi PHY (11bgn/HT20) + country + TX power — no bench pass | **P1** | WiFi/CSI | `securacv_network.cpp` (AP bring-up PHY block) | Stable CSI vector, correct regulatory/range |
 | 16 | Fast reconnect (cached BSSID/channel/IP) | **P1** | WiFi | `securacv_network.cpp:405` | <300 ms reconnect, no CSI-disrupting sweep |
 | 17 | (fixed) MQTT: socket timeout + offline queue + TLS all landed | **P1** | MQTT | `common/mqtt/mqtt_offline_queue.h` | Outages delay events instead of dropping them; encrypted transport |
-| 18 | HW key protection (HMAC/DS peripheral) + entropy seed (fixed) + atomic chain head (fixed, PIO canary tree) — OPEN: (c) DS/HMAC-bound key and (d) an eFuse/RTC rollback anchor; both need the IDF-component toolchain (item 9) plus a bench, the DS route is RSA-only and reserved per `hardware_root_of_trust.md` §5.4 / §8 #4, and `key_at_rest.h` already reserves the `hw-bound` label for it | **P1** | Crypto | `securacv_crypto.cpp:206` | Real at-rest + anti-forgery guarantees |
+| 18 | HW key protection (HMAC/DS peripheral) + entropy seed (fixed) + flat-draw refusal (fixed, all five keygen trees, `key_draw_check.h`) + atomic chain head (fixed, PIO canary tree) — OPEN: (c) DS/HMAC-bound key and (d) an eFuse/RTC rollback anchor; both need the IDF-component toolchain (item 9) plus a bench, the DS route is RSA-only and reserved per `hardware_root_of_trust.md` §5.4 / §8 #4, and `key_at_rest.h` already reserves the `hw-bound` label for it | **P1** | Crypto | `securacv_crypto.cpp:278` | Real at-rest + anti-forgery guarantees |
 | 19 | Migrate audio→`i2s_pdm`, IR→`rmt_rx` | **P1** | Audio/IR | `securacv_audio.cpp:56` | Forward-compat; built-in HPF/callbacks |
 | 20 | esp-dsp / esp-nn for audio DSP + TFLite | **P1** | Audio/Vision | `securacv_audio.cpp:339` | Several-fold DSP; ~500→~60 ms Invoke |
 | 21 | WPA3/PMF + per-device AP password (password: done; WPA2/WPA3 transition + PMF landed 2026-09, #1704 — CI-compiled, no bench pass; WPA2 until a device on the 2.0.17 core reports SoftAP SAE, see §3.4) | **P1** | WiFi | `canary_config.h:276` | Closes plaintext-AP + shared-secret exposure |

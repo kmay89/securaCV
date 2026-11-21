@@ -187,6 +187,30 @@ if [ -f "$TZRULE_CANONICAL" ]; then
     fi
 fi
 
+# Identity key draw check (repo sweep F38): same single-source pattern. The
+# canonical, header-only key_draw_check (a first-boot identity key draw that
+# came out flat, every byte equal or its bit count out of bounds, is refused)
+# lives at firmware/common/identity/; the PIO canary tree and the three
+# headless projects include it directly, and the canary-wap sketch carries a
+# byte-identical staged copy, so every keygen refuses the same draws.
+KEYDRAW_CANONICAL="firmware/common/identity/key_draw_check.h"
+KEYDRAW_STAGED="$STAGED/key_draw_check.h"
+if [ -f "$KEYDRAW_CANONICAL" ]; then
+    if [ ! -f "$KEYDRAW_STAGED" ]; then
+        echo "::error::Missing staged copy: $KEYDRAW_STAGED"
+        echo "         Run: cp $KEYDRAW_CANONICAL $KEYDRAW_STAGED"
+        drift=1
+    elif ! cmp -s "$KEYDRAW_CANONICAL" "$KEYDRAW_STAGED"; then
+        echo "::error::Drift detected: $KEYDRAW_STAGED differs from $KEYDRAW_CANONICAL"
+        echo "--- diff ($KEYDRAW_CANONICAL vs $KEYDRAW_STAGED) ---"
+        diff -u "$KEYDRAW_CANONICAL" "$KEYDRAW_STAGED" || true
+        drift=1
+    fi
+else
+    echo "::error::Canonical key draw check header not found: $KEYDRAW_CANONICAL"
+    drift=1
+fi
+
 # NvsManager session depth (repo sweep F53): same single-source pattern. The
 # canonical, header-only nvs_session_depth (the per-task session count under
 # the cross-task lock NvsManager holds from begin() to end()) lives at
@@ -451,4 +475,4 @@ if [ "$drift" -ne 0 ]; then
     exit 1
 fi
 
-echo "CSI + identity + witness-store + provision-qr + gnss-time + tz-rule + nvs-session-depth library copies are in sync; the canary CSI adapter is thin; the event-log line has one builder and one owner file; the event egress keeps its order on both devices; the CSI modules run their boot init once, after the floor and before the first tick, on both devices; the chokepoint commits in id order; the canary ticks its bundles."
+echo "CSI + identity + witness-store + provision-qr + gnss-time + tz-rule + nvs-session-depth + key-draw-check library copies are in sync; the canary CSI adapter is thin; the event-log line has one builder and one owner file; the event egress keeps its order on both devices; the CSI modules run their boot init once, after the floor and before the first tick, on both devices; the chokepoint commits in id order; the canary ticks its bundles."

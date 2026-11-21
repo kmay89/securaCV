@@ -82,7 +82,11 @@ button{font:inherit;color:inherit;cursor:pointer;}
 .lvl2 .item .lb{font-weight:450;}
 
 /* ===== content ===== */
-.main{min-width:0;display:flex;flex-direction:column;min-height:0;}
+/* overflow-x:clip — the Overview's glow (.ov-glow) bleeds past its hero on
+   purpose, and with nothing to stop it the bleed widened the document: the
+   landing page scrolled 141px sideways at 1280 wide and 99px on a phone.
+   Clip, not hidden: no scroll container, so the sticky bars keep working. */
+.main{min-width:0;display:flex;flex-direction:column;min-height:0;overflow-x:clip;}
 .topbar{display:none;} /* phone only */
 .content{flex:1;padding:30px 40px 40px;max-width:1020px;width:100%;min-height:0;}
 /* A bench fills the pane instead of sitting in a reading column — it is an

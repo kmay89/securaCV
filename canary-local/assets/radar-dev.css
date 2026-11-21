@@ -149,6 +149,9 @@
   position: relative;
 }
 .rdev-mount .sense-src { position: absolute; top: 12px; right: 12px; }
+/* The source badge sits in the top-right corner, out of flow: the name keeps
+   clear of it instead of running underneath. */
+.rdev-mount > strong { display: block; padding-right: 64px; }
 .rdev-place-lab { margin-top: 22px; }
 .rdev-place-verdict {
   border: 1px solid var(--edge);

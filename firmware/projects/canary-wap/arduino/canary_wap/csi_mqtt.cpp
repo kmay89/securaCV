@@ -2669,13 +2669,20 @@ esp_err_t handle_test(httpd_req_t* req) {
   const bool ok = reinit && s_connected.load(std::memory_order_relaxed);
   httpd_resp_set_type(req, "application/json");
   char body[320];
-  snprintf(body, sizeof(body),
+  const int n = snprintf(body, sizeof(body),
     "{\"ok\":%s,\"connected\":%s,\"waited_ms\":%lu,\"transport\":\"%s\",\"last_error\":\"%s\"}",
     ok ? "true" : "false",
     ok ? "true" : "false",
     (unsigned long)waited,
     transport_name(),
     s_last_error);
+  /* An answer its buffer cannot hold is refused, never sent cut
+   * (check_wap_json_answers.py J5, F464); today's longest, with a 191-byte
+   * error, fits the 320. */
+  if (n <= 0 || (size_t)n >= sizeof(body)) {
+    httpd_resp_set_status(req, "500 Internal Server Error");
+    return httpd_resp_send(req, "{\"ok\":false,\"connected\":false,\"reason\":\"answer too long\"}", -1);
+  }
   httpd_resp_send(req, body, -1);
   return ESP_OK;
 }

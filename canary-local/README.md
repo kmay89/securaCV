@@ -45,7 +45,7 @@ canary-local/
   senselab.html         the Sense's advanced depth — the radar dev bench (§4l)
   radar-dev.html        "The Proving Ground" — test a flashed Sense, live or emulated
   smoke.html            "Listen for a smoke alarm" — the WAP's ears, real firmware wasm
-  dash-mic.html         "What a listening Canary hears" — the 4.3C decision core
+  dash-mic.html         "What the mic hears" — the 4.3C decision core
   homeassistant.html    "The Hub" — Home Assistant on a Raspberry Pi (§4f)
   house.html            "The Canary House" — isometric home, whole fleet in place
   scenes.html           "Watch it work" — zoom into one witness doing its one honest thing

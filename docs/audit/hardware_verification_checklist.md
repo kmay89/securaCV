@@ -73,7 +73,9 @@ host tests assert they do, on real radio.
   - Artifact: `docs/audit/repro/C9/`.
 
 - [ ] **C7 — community suppress vote**
-  - Setup: 5 boards, all Chirp-active and in range.
+  - Setup: 5 boards, all Chirp-active and in range, and board 5 has heard
+    boards 2-4 for at least ten minutes before the chirp: since sweep F234
+    a vote counts only from a key whose nearby row is that old.
   - Repro: board 1 originates a low-quality chirp. Boards 2-4 dismiss
     it within 2 minutes (calls `dismiss_chirp` which emits
     `CHIRP_MSG_SUPPRESS_VOTE`). Verify board 5 transitions the chirp
@@ -2194,7 +2196,9 @@ not verify, one log line per suppressed chirp). Compile is CI's. Owner: U1.
 - [ ] **Three of four nearby rows suppress a chirp; a late third vote does not**
   - Setup: five canary-wap boards, A to E, in ESP-NOW range of A, Chirp on
     for at least ten minutes on each (the presence requirement a vote
-    needs), each with a GPS fix (no vote goes out on an unset clock).
+    needs), each with a GPS fix (no vote goes out on an unset clock). A has
+    heard B, C, D and E for at least ten minutes too: since sweep F234 A
+    counts a vote only from a key whose nearby row is that old.
   - Repro: on A, `curl -s /api/chirp/nearby` lists four rows. B sends a
     chirp; within two minutes dismiss it on C, D and E (each dismiss answers
     `"vote_sent":true`), reading A's `GET /api/chirp/recent` after each.
@@ -2226,8 +2230,9 @@ window). Compile is CI's. Owner: U1.
 
 - [ ] **After the suppressing vote nothing relays, lists or confirms the chirp; the frame heard again is refused**
   - Setup: the five boards of the F233 row, A to E, Chirp on for at least
-    ten minutes on each, each with a GPS fix; a sniffer for ESP-NOW
-    broadcasts on A's channel, to see what A sends and to replay a frame.
+    ten minutes on each and heard by A for ten minutes (F234), each with a
+    GPS fix; a sniffer for ESP-NOW broadcasts on A's channel, to see what A
+    sends and to replay a frame.
   - Repro: B sends an infrastructure chirp (Power outage). Dismiss it on C,
     D and E, one right after another, within two minutes of the send (three
     of four rows: suppressed on A at E's). Then at once confirm it on C and

@@ -68,7 +68,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | Ed25519 signing of witness records | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ✅ |
 | SHA-256 hash-chain continuity (domain-separated, NVS-persisted) | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ✅ |
 | GPS (NMEA parse + fix FSM + motion hysteresis) | ✅ | ✅ | ❌ | ➖ | ➖ | ➖ | ✅ |
-| SD storage (append-only, `/WITNESS` `/HEALTH` `/CHAIN` `/EXPORT`) | ✅ | ✅ | ❌ | ➖ | ➖ | ➖ | ✅ |
+| SD storage (append-only, `/WITNESS` `/HEALTH` `/CHAIN` `/EXPORT`) | ⚠️ (`/HEALTH` made and rotated, never written; `/EXPORT` made, never written) | ✅ | ❌ | ➖ | ➖ | ➖ | ✅ |
 | SD graceful shutdown flush | ✅ | ✅ | ➖ | ➖ | ➖ | ➖ | ⚠️ |
 | SD status counters (`witness_count` / `health_count` / `unacked_count`) | ✅ | ✅ | ➖ | ➖ | ➖ | ➖ | ⚠️ |
 | WiFi AP (SecuraCV-<kind>-XXXX SSID, device-unique password) | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ✅ |
@@ -118,7 +118,7 @@ Single-row-per-capability summary across every non-archived variant. This is the
 | SD log rotation (witness 500, health 200, auto-rotate at 85% SD) | ✅ | ✅ | ❌ | ➖ | ➖ | ➖ | ❌ |
 | Chain backup/restore (NVS ↔ SD, HMAC-SHA256 integrity) | ✅ | ✅ | ❌ | ❌ | ➖ | ➖ | ❌ |
 | Chain integrity verification (Ed25519 sig + hash continuity walk) | ✅ | ✅ | ❌ | ❌ | ⚠️ | ➖ | ❌ |
-| Witness record export to /EXPORT/ | ✅ | ✅ | ❌ | ➖ | ➖ | ➖ | ❌ |
+| Witness record export to /EXPORT/ | ⚠️ (`POST /api/export` answers its bundle over HTTP; nothing writes it to `/EXPORT`) | ✅ | ❌ | ➖ | ➖ | ➖ | ❌ |
 | Battery health history (NVS-persisted charge cycles, voltage extremes) | ✅ | ✅ | ❌ | ➖ | ❌ | ➖ | ❌ |
 | Chirp channel (broadcast beacon) | ⚠️ | ✅ | ❌ | ❌ | ⚠️ | ➖ | ✅ |
 | MQTT publish + HA Discovery | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ❌ |
@@ -387,13 +387,15 @@ Single-row-per-capability summary across every non-archived variant. This is the
 > under the profile each build selects: `arduino-cli` gets `build_config.h`'s
 > default, `BUILD_PROFILE_FULL`, as `canary-wap-default`, `-debug` and
 > `-usbdrive` do (`firmware/envs/platformio/canary-wap.ini`), and
-> `canary-wap-mobile`'s `BUILD_PROFILE_DEV` sets the same flags. One flag does
-> not follow its profile: `sys_monitor.h` defines `FEATURE_SYS_MONITOR` 1
-> again, unconditionally, and the sketch includes it after `build_config.h`,
-> so the monitor is compiled into the sketch under any profile,
-> `BUILD_PROFILE_MINIMAL`'s 0 included; no canary-wap env selects that profile
-> today. The compiles are CI's; none of these cells was bench-tested in this
-> pass. `scripts/tests/test_docs_claims.py` (`TheParityLedgersReadTheCode`)
+> `canary-wap-mobile`'s `BUILD_PROFILE_DEV` sets the same flags. Each of these
+> flags follows its profile: `build_config.h` alone defines them, and
+> `sys_monitor.h`, `wifi_presence.h` and `audible_chirp.h` each include it
+> before reading theirs, so the profile's value stands whatever the include
+> order, `BUILD_PROFILE_MINIMAL`'s 0 included (since sweep F467;
+> `sys_monitor.h` had defined `FEATURE_SYS_MONITOR` 1 unconditionally, over
+> that 0). No canary-wap env selects that profile, and no CI job compiles
+> it. The compiles are CI's; none of these
+> cells was bench-tested in this pass. `scripts/tests/test_docs_claims.py` (`TheParityLedgersReadTheCode`)
 > holds each verdict to the code it rests on. The readings rejected: severity
 > levels, canary (PIO) kept at ⚠️, since ✅ would claim the canary-wap's
 > owner-set floor; categories ❌→⚠️, since ❌ ignored the eleven this tree

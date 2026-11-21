@@ -53,6 +53,18 @@
 /* Tighten as the window narrows: first the walk labels shrink to arrows,
    then the crumbs go — the back link and brand always survive. */
 @media (max-width: 1050px) { .scv-bar-lab .scv-pn-lb { display: none; } }
+/* A depth page has a third crumb, and with all three the bar was wider than a
+   tablet (find.html scrolled 21px sideways at 768). The bench crumb already
+   says where the reader is, so the stage crumb gives way first there. */
+@media (max-width: 900px) {
+  .scv-bar-lab.scv-deep .scv-stage, .scv-bar-lab.scv-deep .scv-stage + .scv-sep { display: none; }
+  /* ...and its own name may shorten there (it is ellipsized already): at
+     701-713px the two remaining crumbs still pushed "Help" off the edge. */
+  .scv-bar-lab.scv-deep .scv-cur { flex: 0 1 auto; min-width: 8ch; }
+}
+/* The narrowest phones (320px): back, brand, the two arrows and Help fit;
+   the Glossary link, which the Help Desk also opens, is the one to go. */
+@media (max-width: 350px) { .scv-bar-lab .scv-gloss { display: none; } }
 @media (max-width: 700px) {
   .scv-bar-lab .scv-crumb, .scv-bar-lab .scv-cur,
   .scv-bar-lab .scv-crumb + .scv-sep, .scv-bar-lab .scv-home + .scv-sep { display: none; }

@@ -349,6 +349,23 @@ setup_arduino() {
         print_warn "tz_rule not found at ${time_src} — sketch will not compile until firmware/common/time/ is restored"
     fi
 
+    # The first-boot key draw check (a flat draw is refused; repo sweep F38)
+    # is a single canonical, header-only source shared with the PIO canary
+    # tree and the headless projects. Stage a byte-identical copy next to the
+    # sketch (identity_src is set above); check_csi_sync.sh guards the two
+    # against drift.
+    if [ -f "${identity_src}/key_draw_check.h" ]; then
+        cp "${identity_src}/key_draw_check.h" "${arduino_dir}/" 2>/dev/null || true
+        if [ -f "${arduino_dir}/key_draw_check.h" ]; then
+            print_success "Copied key_draw_check header"
+        else
+            print_error "Failed to stage key_draw_check header to ${arduino_dir}"
+            return 1
+        fi
+    else
+        print_warn "key_draw_check not found at ${identity_src} — sketch will not compile until firmware/common/identity/ is restored"
+    fi
+
     # NvsManager's session depth (the per-task count under the cross-task
     # lock nvs_store.h holds from begin() to end(); repo sweep F53) is a
     # single canonical, header-only source shared with the PIO canary tree.

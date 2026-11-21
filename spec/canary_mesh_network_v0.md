@@ -728,6 +728,19 @@ the pairing callback reports failure. A joiner's refusal comes after its
 initiator has added it; the initiator cannot know. Until F73 both handlers
 ignored the refusal, persisted, went `MESH_ACTIVE` and reported success, and
 the initiator sealed the `opera_secret` to a partner it then did not hold.
+canary-wap (F318's guard, host-tested, not bench-verified): a joiner that
+holds an opera and a member refuses a `PAIR_COMPLETE` naming another opera
+from an initiator it does not hold, before it adds that initiator, with one
+health-log line, keeping its members and its opera's secret, id and name as
+they were in RAM and in NVS, while a pairing into the opera it holds, a
+re-pair with a member it holds whatever opera id that seals (since F95 a
+removal with a survivor moves the remover alone to a new id, and the re-pair
+is the way back; such a re-pair still keeps this device's other members
+beside the new id, their frames then dropped at the `opera_id` check,
+host-tested as today's behavior, not a guarantee) and a join by a device
+that holds no member go through; whether a Canary that holds an opera
+refuses a join outright, as the PlatformIO tree does (`409 opera_exists`,
+F136), is F318's open decision.
 
 canary-wap (F100, host-tested, not bench-verified): the initiator sends its
 `PAIR_COMPLETE` again every 2 s until it hears the joiner (the joiner's
