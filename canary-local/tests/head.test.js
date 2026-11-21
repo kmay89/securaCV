@@ -46,6 +46,21 @@ const headOf = (page) => {
 const unescape = (s) => s.replace(/&quot;/g, '"').replace(/&#x27;|&#39;/g, "'")
   .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 const titleOf = (page) => unescape((/<title>([^<]*)<\/title>/.exec(headOf(page)) || [])[1] || "");
+// A fragment's text as a reader sees it: tags out, entities in, runs of space
+// as one. It is read a character at a time, and every "<" and ">" is dropped
+// whether or not it closes: a regex that removes "<...>" leaves an unclosed
+// "<script" standing, and what one pass removes can uncover another. Nothing
+// here renders the result (it is compared with a title), but a helper that
+// says it removes tags should leave no angle bracket behind.
+const textOf = (fragment) => {
+  let text = "", inTag = false;
+  for (const ch of fragment) {
+    if (ch === "<") inTag = true;
+    else if (ch === ">") inTag = false;
+    else if (!inTag) text += ch;
+  }
+  return unescape(text).replace(/\s+/g, " ").trim();
+};
 const descOf = (page) => unescape((/<meta name="description" content="([^"]*)"/.exec(headOf(page)) || [])[1] || "");
 
 test("the Lab's pages are found", () => {
@@ -123,11 +138,16 @@ test("one name per bench: a page's headline leads with the name its title leads 
     const m = /<h1\b[^>]*>([\s\S]*?)<\/h1>/.exec(html.get(page));
     if (!m) continue;                      // index.html is a redirect
     headlines += 1;
-    const h1 = unescape(m[1].replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim();
+    const h1 = textOf(m[1]);
     assert.ok(h1.startsWith(nameOf(titleOf(page))),
       `${page}: the headline "${h1}" does not lead with "${nameOf(titleOf(page))}", the name its title gives it`);
   }
   assert.ok(headlines >= 25, `only ${headlines} pages have a headline to hold`);
+  assert.strictEqual(textOf("The workshop <em>map</em>"), "The workshop map");
+  assert.strictEqual(textOf('Flash over USB <span class="sub">— where Canaries hatch</span>'),
+    "Flash over USB — where Canaries hatch");
+  assert.strictEqual(textOf("Boards <script"), "Boards", "an unclosed tag takes the rest with it");
+  assert.doesNotMatch(textOf("<scr<script>ipt>x</scr</script>ipt> a > b < c"), /[<>]/);
   // The rule is the generator's too, so a page fixed by hand is caught at --check.
   const gen = read(join(ROOT, "tools/gen_head.py"));
   assert.match(gen, /def headline\(/);

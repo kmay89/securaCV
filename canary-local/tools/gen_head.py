@@ -154,7 +154,18 @@ def headline(text: str) -> str | None:
     m = H1_RE.search(text)
     if not m:
         return None
-    return " ".join(html.unescape(re.sub(r"<[^>]+>", "", m.group(1))).split())
+    # Read a character at a time; every "<" and ">" is dropped whether or not
+    # it closes, so no angle bracket survives (a regex that removes "<...>"
+    # leaves an unclosed "<script" standing).
+    out, in_tag = [], False
+    for ch in m.group(1):
+        if ch == "<":
+            in_tag = True
+        elif ch == ">":
+            in_tag = False
+        elif not in_tag:
+            out.append(ch)
+    return " ".join(html.unescape("".join(out)).split())
 
 
 def copy_problems(name: str, title: str, desc: str, h1: str | None = None) -> list[str]:

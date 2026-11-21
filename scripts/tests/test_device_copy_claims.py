@@ -153,7 +153,8 @@ def wrapped_claims(html: str) -> list[tuple[str, str]]:
     A claim that sits on one line is the per-line scan's to report."""
     one_line = {m.group(0) for line in html.splitlines() if not is_comment(line)
                 for pattern, _ in RULES for m in pattern.finditer(line)}
-    text = re.sub(r"\s+", " ", re.sub(r"<!--.*?-->", " ", html, flags=re.S))
+    # "--!>" closes a comment too (the HTML parser accepts it), so both do here.
+    text = re.sub(r"\s+", " ", re.sub(r"<!--.*?--!?>", " ", html, flags=re.S))
     return [(m.group(0), why) for pattern, why in RULES
             for m in pattern.finditer(text) if m.group(0) not in one_line]
 
@@ -230,6 +231,7 @@ class TheTree(unittest.TestCase):
                 "      can silently edit. Pick where you're starting from.</p>\n")
         self.assertEqual(len(wrapped_claims(page)), 1)
         self.assertEqual(wrapped_claims("<!-- a key nobody can\n change -->\n<p>fine</p>"), [])
+        self.assertEqual(wrapped_claims("<!-- a key nobody can\n change --!>\n<p>fine</p>"), [])
         self.assertEqual(wrapped_claims("<p>A change to any record\n will show.</p>"), [])
 
     def test_every_exemption_still_needs_one(self):
