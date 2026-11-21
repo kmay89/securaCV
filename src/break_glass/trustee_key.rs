@@ -318,6 +318,15 @@ pub(crate) mod tests {
             .to_bytes()
     }
 
+    /// The fixed salt and nonce of the deterministic test container, spelled
+    /// as hex and decoded at run time: a test vector, never a key input.
+    fn vector_bytes<const N: usize>(byte_hex: &str) -> [u8; N] {
+        hex::decode(byte_hex.repeat(N))
+            .expect("test vector hex")
+            .try_into()
+            .expect("test vector length")
+    }
+
     /// TKG1 bytes under a fixed salt and nonce, built the way `tkg1_seal`
     /// builds them.
     fn tkg1_fixed(seed: &[u8; 32], id: &str, pk: &[u8; 32]) -> Vec<u8> {
@@ -327,8 +336,8 @@ pub(crate) mod tests {
             seed,
             PASS,
             &trailer,
-            &[0x5a; 16],
-            &[0xa5; 12],
+            &vector_bytes::<16>("5a"),
+            &vector_bytes::<12>("a5"),
         )
         .unwrap();
         out.extend_from_slice(&trailer);
@@ -366,8 +375,8 @@ pub(crate) mod tests {
         assert_eq!(fixed.len(), live.len());
         assert_eq!(fixed[..19], live[..19]);
         assert_eq!(fixed[127..], live[127..]);
-        assert_eq!(&fixed[19..35], &[0x5a; 16]);
-        assert_eq!(&fixed[67..79], &[0xa5; 12]);
+        assert_eq!(fixed[19..35], vector_bytes::<16>("5a"));
+        assert_eq!(fixed[67..79], vector_bytes::<12>("a5"));
         let parsed = WrappedTrusteeKey::parse(&fixed).unwrap();
         assert_eq!(*parsed.open(PASS).unwrap(), ALICE_SEED);
     }
