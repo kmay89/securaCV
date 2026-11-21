@@ -2,9 +2,12 @@
   "carried_from": "securacv_website/upstream-contract.json",
   "generated_by": "scripts/make-upstream-contract.mjs",
   "paths": [
+    ".github/ISSUE_TEMPLATE/build_request.yml",
     ".github/ISSUE_TEMPLATE/build_submission.yml",
     ".github/ISSUE_TEMPLATE/feedback.yml",
     ".github/ISSUE_TEMPLATE/idea.yml",
+    ".github/ISSUE_TEMPLATE/industry_inquiry.yml",
+    ".github/ISSUE_TEMPLATE/maker_corps.yml",
     "canary-local/boards/seeed_grove_vision_ai_v2.glb",
     "canary-local/boards/seeed_round_display_xiao.glb",
     "canary-local/boards/seeed_xiao_esp32s3_sense.glb",
@@ -142,6 +145,12 @@
     "/upstream-contract.json",
     "/vendors.json",
     "/witness-fingerprints.json"
+  ],
+  "labels": [
+    "build-request",
+    "idea",
+    "industry-inquiry",
+    "maker-corps"
   ],
   "anchors": {
     "/": [

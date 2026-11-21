@@ -1196,6 +1196,16 @@ def site_contract(site: Path) -> bytes | None:
         if not isinstance(value, list) or not all(isinstance(x, str) and x.startswith("/") for x in value):
             sys.exit(f"{src}: \"{key}\" must be a list of site paths (\"/…\")")
         out[key] = sorted(set(value))
+    # The issue labels the site names (its Ideas board lists issues by one,
+    # its forms are opened with theirs). scripts/tests/test_issue_labels.py
+    # holds each to .github/labels.yml, because GitHub drops an unknown label
+    # silently.
+    labels = data.get("labels")
+    if labels is not None:
+        if not isinstance(labels, list) or not all(
+                isinstance(x, str) and re.fullmatch(r"[a-z][a-z0-9-]*", x) for x in labels):
+            sys.exit(f"{src}: \"labels\" must be a list of label names")
+        out["labels"] = sorted(set(labels))
     anchors = data.get("anchors")
     if anchors is not None:
         if not isinstance(anchors, dict) or not all(
