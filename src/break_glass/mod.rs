@@ -7,12 +7,13 @@ pub mod cli;
 pub mod http;
 pub mod server;
 pub mod session;
+pub(crate) mod trustee_key;
 
 pub use backend::KernelVaultOps;
 pub use cli::run;
 pub use core::{
     approvals_commitment, check_text_field, count_valid_distinct_approvals,
-    count_valid_distinct_policy_change_approvals, display_safe, sign_approval,
+    count_valid_distinct_policy_change_approvals, display_safe, recorded_approvals, sign_approval,
     sign_policy_change_approval, verify_approval, verify_policy_change_approval,
     verify_trustee_attribution, Approval, BreakGlass, BreakGlassOutcome, BreakGlassReceipt,
     BreakGlassToken, BreakGlassTokenFile, OperatorContext, PolicyChangeProposal, QuorumPolicy,

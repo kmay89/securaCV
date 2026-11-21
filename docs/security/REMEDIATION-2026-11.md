@@ -519,7 +519,9 @@ that pins it):
 
 - `cargo deny check advisories` still fails on four unmaintained direct
   dependencies (`pqcrypto-mldsa`, `pqcrypto-mlkem`, `pqcrypto-traits`,
-  `rustls-pemfile`).
+  `rustls-pemfile`). *(Three closed 2026-11-21: the `pqcrypto-*` crates left
+  the tree when the kernel moved to `ml-dsa` and `ml-kem`. `rustls-pemfile`
+  stands, and is the one advisory the check still fails on.)*
 - The signing environment's required reviewers, the move of the key into
   the `firmware-release` environment and a tag ruleset are repository
   settings: until an owner sets them, the two code checks (dispatch only

@@ -70,7 +70,7 @@ h1{margin:0 0 10px;font-size:22px;font-weight:600;letter-spacing:-.02em}
 <li><b>3</b><span>Type <strong>canary.local</strong> in the address bar and go.</span></li>
 </ol>
 <p class="fallback">canary.local not working? Type <strong class="ip">192.168.4.1</strong> in your browser instead.</p>
-<p class="foot"><strong>SecuraCV Canary.</strong> Local-only by default. Nothing leaves your home.</p>
+<p class="foot"><strong>SecuraCV Canary.</strong> Local by default: the record stays on this device. No cloud, no account.</p>
 </main>
 </body>
 </html>

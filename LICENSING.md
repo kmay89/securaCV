@@ -74,10 +74,10 @@ plus an honest margin, not for the software riding on them.
   self-built device is not a lesser citizen — it runs the identical firmware and
   earns the identical verified badge.
 
-### b) Court-grade attestation *(planned)*
+### b) Third-party attestation *(planned)*
 
-An optional service that adds *third-party* corroboration to a sealed record, so a
-clip is self-authenticating against a deepfake challenge. It runs on **hashes and
+An optional service that adds *third-party* corroboration to a sealed record, so
+its date and its integrity do not rest on its owner's word alone. It runs on **hashes and
 signatures only, never your footage**, so it can't see your space and neither can
 we. Honest status, so nobody buys a promise: **trusted timestamping (RFC-3161
 anchoring) ships today**; **notarized and C2PA / Content-Credentials-interoperable

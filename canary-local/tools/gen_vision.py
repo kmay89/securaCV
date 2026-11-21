@@ -498,8 +498,8 @@ SERIAL = {
         f"              d b          v{FW_VERSION}",
         "",
         "    This is your privacy witness device.",
-        "    It creates tamper-proof records of what it",
-        "    sees, so nobody can change the story later.",
+        "    It keeps tamper-evident records of what it",
+        "    sees, so any edit to the story shows later.",
     ],
     "boot": [
         {"tag": "[--]", "text": f"Type   {DEVICE_TYPE}"},

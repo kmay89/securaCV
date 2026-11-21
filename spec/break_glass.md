@@ -72,7 +72,7 @@ break_glass policy propose \
 # a tampered proposal is refused, not signed.
 break_glass policy approve \
   --proposal change.proposal --trustee alice \
-  --signing-key alice.key --output alice.policy-approval
+  --signing-key alice.tkey --output alice.policy-approval
 
 # Operator: apply with the collected approvals (within the same
 # 10-minute freshness window the proposal was created in)
@@ -184,7 +184,7 @@ hash" social-engineering call has nothing the tool will accept.
 break_glass approve \
   --request unlock.request \
   --trustee alice \
-  --signing-key /path/to/alice.signing.key \
+  --signing-key /path/to/alice.tkey \
   --output alice.approval
 ```
 
@@ -235,6 +235,12 @@ trustees used, and policy commitment — the receipt, not anyone's memory,
 answers who asked and why. Verification re-derives the request hash from
 those recorded fields and refuses a receipt whose recorded context is not
 what the trustees signed.
+
+The approvals recorded on a receipt are those over its request hash, in the
+order they were presented. An approval over another hash (a stale file for an
+earlier request, handed in beside the right ones) never counts and is neither
+committed nor stored; one over this hash from a trustee whose signature does
+not verify is recorded but never counted.
 
 ## Unsealing
 
@@ -320,7 +326,12 @@ one.
 
 Receipts form an append-only, signed chain in the kernel database. Use the
 `break_glass receipts` command (or `log_verify`) to validate the chain and
-confirm that approvals align with the stored quorum policy. Verification
+confirm that approvals align with the stored quorum policy. An approval that
+does not count (over another request hash, from a trustee outside the
+receipt's policy era, or with a signature that does not verify) is skipped,
+never a failure, on every outcome: a `Granted` receipt still needs `n`
+distinct valid approvals and must name exactly the trustees whose approvals
+verify. Verification
 also re-derives each receipt's request hash from its recorded purpose and
 operator context. The audit path tolerates a receipt that recorded no
 context (a pre-§3.6 build's row has nothing to bind and is reported as it

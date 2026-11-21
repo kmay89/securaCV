@@ -14153,7 +14153,7 @@ void setup() {
   boot_scene_ready(
       "It will now create a signed witness record",
       "every second and store it to the SD card.",
-      "Nobody can alter these records after the fact."
+      "A change to any record after the fact will show."
   );
   boot_separator();
   boot_kv("Device ID", g_device.device_id);

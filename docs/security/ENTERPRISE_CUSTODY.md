@@ -304,9 +304,9 @@ audit-centralization).
 | HSM / secure-element key custody | Missing on host | §1 item 2 |
 | PKI / mutual-TLS device identity | Missing | CA + certificate lifecycle + revocation; SPIFFE/x.509 |
 | RBAC + least privilege | Missing | Role model (operator / auditor / admin) atop the quorum |
-| Audit export to SIEM (CEF/syslog/OTLP) | Absent by design | Opt-in, tier-only export that does not violate non-queryability |
+| Audit export to SIEM (CEF/syslog/OTLP) | Absent by design | Opt-in, tier-only export that does not violate non-queryability; design: the read-only FHIR R4 AuditEvent projection, [`docs/compliance/SIEM_PROJECTION.md`](../compliance/SIEM_PROJECTION.md) |
 | Tamper detection + response (host) | Firmware only | Host-side key zeroization on tamper |
-| Formal compliance mapping | None | SSP + SOC-2 / ISO 27001 / NIST 800-53 / CC / CJIS mapping |
+| Formal compliance mapping | In part | Part 11, Annex 11, ALCOA+, HIPAA 164.312, US evidence, eIDAS ledgers, C2PA program, BS 10008 and FIPS-vocabulary maps in [`docs/compliance/`](../compliance/README.md); SSP, SOC 2, ISO 27001, NIST 800-53, CC and CJIS remain unmapped |
 
 ---
 
@@ -321,11 +321,19 @@ Flip the gate only after each is either bumped or given a real justification:
 
 | Advisory | Crate | Class | Note |
 |---|---|---|---|
-| RUSTSEC-2026-0161 | `pqcrypto-traits` | unmaintained | trait defs only; PQ crates are behind non-default `pqc-*` features |
-| RUSTSEC-2026-0162 | `proc-macro-error` | unmaintained | build-time proc-macro helper; not in the runtime binary |
-| RUSTSEC-2024-0370 | `rustls-pemfile` | unmaintained | small stable PEM parser; TLS-feature builds only |
-| RUSTSEC-2025-0134 | `memmap2` | unsound | confirm the pulling path and whether the aliasing pattern is reachable |
-| RUSTSEC-2026-0186 | `spin` | yanked | prefer a lockfile bump to a maintained version |
+| RUSTSEC-2024-0370 | `proc-macro-error` | unmaintained | build-time proc-macro helper under `c2pa` (`c2pa-export` builds only); not in the runtime binary |
+| RUSTSEC-2025-0134 | `rustls-pemfile` | unmaintained | small stable PEM parser; TLS-feature builds only |
+| RUSTSEC-2026-0543 | `chrono` | unmaintained | under `c2pa` and its `rasn` ASN.1 crates; `c2pa-export` builds only |
+
+That is everything `cargo audit` reports for the root `Cargo.lock` as of
+2026-11-21: three unmaintained crates, none with a fixed release, and no
+unsound or yanked entry. Closed since this table was first written: the
+unmaintained `pqcrypto-*` crates (RUSTSEC-2026-0161, -0162, -0163 and -0166)
+left the tree when the kernel moved to `ml-dsa` and `ml-kem`, and `paste`
+(RUSTSEC-2024-0436) left with them; lockfile bumps took the fixed `memmap2`
+0.9.12 (RUSTSEC-2026-0186), `rustix` 1.1.6 (RUSTSEC-2026-0486) and `tokio`
+1.54.1 (RUSTSEC-2026-0386), all three unsound, and replaced the yanked `spin`
+0.9.8 and `chacha20` 0.10.0 with 0.9.9 and 0.10.2.
 
 Toolchain/image supply-chain items handled in this pass: the PWK builder
 pins an exact Rust toolchain (was the moving `stable`), every `FROM` in

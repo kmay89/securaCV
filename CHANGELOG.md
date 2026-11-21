@@ -1,6 +1,152 @@
 # Changelog
 
 ## [Unreleased]
+### Trustee keys can be wrapped at rest: `trustee keygen`, `wrap` and `pubkey`; a passphrase comes from the terminal or `--passphrase-fd`, never argv or the environment
+
+- **`break_glass trustee keygen --id ID --output F`**, run by the trustee on
+  their own machine, mints an Ed25519 key, wraps it under a passphrase and
+  writes one line, `securacv-trustee-key:v1 <hex>`, mode 0600, never
+  overwriting. It prints the public key and its fingerprint, never the
+  secret, so a trustee no longer needs an external Ed25519 tool to enroll.
+  **`trustee wrap --signing-key OLD --id ID --output F`** migrates a
+  plaintext key (and says the plaintext file is yours to destroy; it is not
+  deleted). **`trustee pubkey --signing-key F`** prints the key a file signs
+  with.
+- **The container, TKG1**, is the vault keyguard's MKG1 layout under its own
+  magic and AAD domain: Argon2id (64 MiB, 3 passes, 1 lane, any other
+  parameters refused before derivation) and ChaCha20-Poly1305 over the
+  32-byte seed, followed by a public trailer naming the trustee id and public
+  key. The trailer is the AAD, so a renamed trustee or a swapped key does not
+  open, and the decrypted seed must yield the recorded key.
+- **`approve` and `policy approve`** read either form from `--signing-key`
+  and take `--passphrase-fd N`. A plaintext key still signs and prints
+  `WARNING: {path} is an unwrapped trustee key — anyone who copies it can
+  sign as this trustee. Wrap it: break_glass trustee wrap --signing-key
+  {path} --id <id> --output <id>.tkey`. With a wrapped key, no terminal and
+  no fd, the command refuses: `wrapped trustee key needs a passphrase: run
+  on a terminal or pass --passphrase-fd`.
+- **The passphrase prompt.** While echo is off, Ctrl-C, SIGQUIT, SIGTERM
+  and SIGHUP put the terminal back before the command dies of the signal,
+  and Ctrl-Z is ignored, so the process is never stopped with echo off and
+  resumed reading with it on. A line over 1024 bytes is refused and the rest
+  of it discarded from the terminal, so the shell never reads it. An fd
+  named by `--passphrase-fd` that is itself a terminal is read with echo
+  off too. `approve` and `policy approve` always run their stage plain, so
+  no spinner redraws over the prompt, and the next steps `request` and
+  `policy propose` print name `--signing-key <name>.tkey`.
+- **`trustee enroll --generate` is deprecated** and prints a warning: it
+  leaves the operator holding the trustee's secret.
+- **Nothing changes on the hub.** The quorum policy records nothing about
+  wrapping (the hub cannot check it), approvals are byte-identical, and the
+  vault keyguard (MKG1) is unchanged; a test pins its bytes against the
+  pre-change encoder. The ceremony runbook's trustee-key rows move from
+  **GAP** to **PROC** + **CODE** tool, and the practice statement's 6.2
+  declares key protection per trustee. Hardware trustee keys remain a gap.
+
+### Compliance maps say which mechanism stands behind which clause, and never more
+
+- **`docs/compliance/`** (roadmap item 7, CP1): eleven closed clause → mechanism → status maps (21 CFR Part 11, EU GMP Annex 11, ALCOA+, HIPAA 164.312, US evidence rules, eIDAS qualified electronic ledgers, the C2PA conformance program, BS 10008 by topic, the FIPS split-knowledge vocabulary, and the capture-provenance and enterprise-assurance trackers), each row with one status from the new `compliance_map_status` block of `spec/witness_dictionary.json`; the README's pinned posture paragraph (maps, never determinations); the verification methodology; the BS 10008 operator pack and its template; the capture-provenance note; and the design notes for the SIEM projection, validation sheets and CAWG co-signing. Every regime clause is marked unverified: no regime source could be fetched.
+- **`scripts/lint_compliance_map.py`** (in `lint.yml`) holds every map to the disk — a `structural` row names a test function and a code symbol that exist, so renaming either turns the build red until the row changes — and refuses claim words in scope; **`scripts/gen_compliance_tables.py --check`** keeps the human tables generated from the maps.
+- Four sentences of `docs/security/PROVENANCE_INTEROP.md` that read as findings of standing under a regime are rewritten and retired under `RETIRED_IN` in `scripts/tests/test_docs_claims.py`.
+
+### The post-quantum features leave the unmaintained PQClean bindings: `ml-dsa` signs, `ml-kem` seals, and `cargo audit` passes again
+
+- **Why.** Two advisories of 2026-11-20 name the crates behind the optional
+  `pqc-signatures` and `pqc-vault` features, with no fixed release, and the
+  Dependency Audit had failed on the root `Cargo.lock` since.
+  RUSTSEC-2026-0586: `pqcrypto-mldsa`, on an x86_64 CPU with AVX2, verifies
+  ML-DSA without the bound on the response z (FIPS 204, Algorithm 8, line
+  13). RUSTSEC-2026-0585: `pqcrypto-mlkem` makes neither FIPS 203 input
+  check. Both wrap PQClean, which is archived. The features now build on
+  RustCrypto's `ml-dsa` 0.1.2 and `ml-kem` 0.3.4, the four `pqcrypto-*`
+  crates are gone from `Cargo.lock`, and nothing was added to
+  `.cargo/audit.toml`. The analysis is `SECURITY.md`, Group 7.
+- **No format change.** `device_metadata` keeps the FIPS 204 public-key and
+  private-key encodings, signatures keep the `mldsa44` scheme id,
+  `kem-mlkem768.key` keeps its layout and the FIPS 203 keys in it, and
+  envelopes keep their KEM labels. `tests/fixtures/pqcrypto_kat/` holds a
+  keypair, signatures, a signed evidence envelope, a vault key file and three
+  sealed envelopes written by the kernel while it linked the old crates, and
+  the tests pass on both implementations: stored keys load and re-encode byte
+  for byte, stored signatures verify in strict mode, the key file opens every
+  stored envelope, and a kernel whose database holds the stored key signs a
+  log that `log_verify --sig-mode strict` passes. What the new code writes
+  was read back by PQClean once, before the crates were removed (the fixture
+  README has the counts). Default builds carry neither feature, so none of
+  this code is in them.
+- **Rebuild a `pqc-signatures` binary.** One built from 0.9.3 or earlier, on
+  an x86_64 CPU with AVX2, still verifies with the old code: it accepts an
+  out-of-bound ML-DSA signature that the key's holder made, and rejects one
+  boundary class of valid ones. Ed25519 was required on every entry
+  throughout.
+- **What a caller can see.** A signature that is the wrong length, has a hint
+  that is not canonical or a response at or past the bound is refused as
+  `invalid pq signature bytes: ...`; other failures stay
+  `pq signature verification failed`. A stored ML-DSA secret key with a
+  secret-vector coefficient out of range is
+  `invalid pq secret key bytes: a coefficient of s1 or s2 is out of range`
+  from `Kernel::open` (the import would otherwise panic on it). A
+  `kem-mlkem768.key` whose encapsulation key has a coefficient of q or more,
+  or whose decapsulation key has an altered hash or embedded encapsulation
+  key, is `invalid KEM public key` or `invalid KEM secret key` and the vault
+  does not open; a key the old code generated never is. ML-DSA signing
+  returns an error when the OS random source fails. Signing stays hedged:
+  two signatures over one entry differ, as before.
+- **API, inside the two modules.** `PqPublicKey` and `PqSecretKey` were
+  aliases of `pqcrypto` types and are kernel types now (`from_bytes` is
+  inherent; `PqSecretKey` is `Clone`, no longer `Copy`), and the public
+  fields of `KemKeypair` hold `ml-kem`'s key types. The kernel's function
+  signatures and feature names are unchanged.
+- **What this rests on.** Neither crate has had an independent audit, and
+  both read the stored private keys (expanded encodings, not seeds) through
+  imports they mark deprecated, so the kernel depends on those imports for
+  as long as such keys exist (`docs/pqc_mode.md`). Both features stay
+  experimental.
+- **Lockfile.** The fixed `memmap2` 0.9.12 (RUSTSEC-2026-0186), `rustix`
+  1.1.6 (RUSTSEC-2026-0486) and `tokio` 1.54.1 (RUSTSEC-2026-0386), and
+  `chacha20` 0.10.2 and `spin` 0.9.9 in place of yanked versions.
+  `cargo audit` reports no vulnerability, no unsound and no yanked entry;
+  three unmaintained warnings remain (`chrono` and `proc-macro-error` under
+  `c2pa`, and `rustls-pemfile`), none with a fixed release.
+
+### An unreadable break-glass policy lands witnessd in safe mode instead of exiting, and a stale approval no longer poisons a receipt
+
+- **Release coupling.** This change must ship in a release before the custody
+  epoch (cooling-off, veto, emergency and seal profiles; the next roadmap PR):
+  that release's policy and approval shapes rely on every reader already
+  refusing into safe mode and skipping approvals that do not count. No format,
+  signing domain or table changes.
+- **An unreadable policy no longer stops `Kernel::open`.** A stored quorum
+  policy this build cannot parse or validate is recorded as a load error; the
+  kernel opens, and every break-glass action refuses. Authorize, unseal,
+  `policy set`, `policy propose` and the trustee enrollment that completes a
+  setup roster refuse with
+  `break-glass policy could not be loaded: {e} — this build refuses every
+  break-glass action on this database (run log_verify; upgrade if the policy
+  was written by a newer release)`; the console answers
+  `500 policy_load_failed`; a token redemption (unseal or quorum export) that
+  reaches the gate is refused by the gate's own policy read. Verification
+  still refuses the database (`verification failed`), so `witnessd` boots
+  into safe mode, serving the read and verify API, where it used to exit.
+  `frigate_bridge` keeps sealing: the policy governs break-glass only.
+- **Never bootstrapped over.** A `policy set` against an unreadable policy
+  refuses: `refusing to change the break-glass policy: the stored policy could
+  not be loaded ({e}) — a quorum change needs the stored policy; it is never
+  treated as absent`.
+- **`break_glass doctor`** names the case on its own line,
+  `policy: UNREADABLE — {e}`, counts it as a problem and exits 1. A failed
+  SQL read (an empty pre-created database with no policy table yet) keeps its
+  own message and is not called UNREADABLE.
+- **Recorded approvals.** `authorize` commits, and the kernel stores, only the
+  approvals over the receipt's own request hash, in presentation order. A
+  stale approval file handed in beside the right ones used to land in the
+  signed row, and the verifier failed that row on every outcome.
+- **The verifier skips an approval that does not count** (over another request
+  hash, from a trustee outside the era's roster, or with a bad signature) on
+  every outcome, so a row an earlier build wrote with a stale approval now
+  verifies. An invalid trustee public key in the policy is still an error; a
+  `Granted` row still needs `n` distinct valid approvals and exact
+  attribution. `VerifyReport` and the JS viewer are unchanged.
 
 ### Docs: the backlog and the device-details design catch up with #1986
 
@@ -315,6 +461,7 @@
   backlog the phrase "finding P<n>" belongs to the one entry the row names;
   any other entry cites that entry's id.
 - Docs and one test. No code, firmware or generated file changes.
+
 ### Every disclosed file carries its handoff sidecar; the device records the decrypt; a quorum export names its grant
 
 - **Release coupling — merge gate.** This change adds a receipt outcome

@@ -714,7 +714,7 @@ export function buildFlash(data) {
 
   // the durable bench facts
   const facts = el("div", "wap-facts");
-  for (const [k, v] of [["Kits", f.kit_note], ["Cable", f.cable], ["Port", f.port_hint]]) {
+  for (const [k, v] of [["First flash", f.kit_note], ["Cable", f.cable], ["Port", f.port_hint]]) {
     const row = el("div", "wap-fact");
     row.append(el("span", "wap-fact-k", k), el("span", "wap-fact-v", v));
     facts.append(row);

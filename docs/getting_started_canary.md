@@ -21,11 +21,15 @@ in [the browser flasher](browser_flasher.md) or the desktop
 
 ---
 
-## What's in the box
+## What you need
+
+Nothing is sold boxed yet: today a Canary is one you built and flashed (or
+one a maker built for you). Either way you should have:
 
 - One SecuraCV Canary (a XIAO ESP32-S3 in a small enclosure)
 - A USB-C cable
-- A printed card with your device's **AP password** and **Device ID**
+- Your device's **AP password** and **Device ID**, on a card if whoever built
+  it printed one
 
 If your Canary did not come with a card, the password is made inside the
 device and shown on the serial console at every boot — see *Recovering the
@@ -511,7 +515,10 @@ Three things are **structurally impossible** with this device — not
    unmute signed (§5).
 3. Tell anyone outside your home what it sees. The Canary is on its own
    Wi-Fi network. It optionally connects to your home Wi-Fi for Home
-   Assistant integration; it never reaches the internet on its own.
+   Assistant integration. Once it is on your Wi-Fi it makes one call of
+   its own, a daily check for signed updates that carries no identifier
+   (`docs/security/SECURITY_MODEL.md`, the disclosed outbound paths); what
+   it senses goes nowhere you did not point it.
 
 If you want the long version, read `spec/canary_free_signals_v0.md`
 (Invariants A–F) and `kernel/rf_presence_architecture.md`.
@@ -736,7 +743,7 @@ Once on your network, both variants:
   the setup wizard, and only while the setup network is up.
 - **Appear in Home Assistant automatically.** Point them at the same
   MQTT broker HA uses and the entities register themselves via MQTT
-  discovery — no integration to install, same as the WAP.
+  discovery — nothing more to install for that, same as the WAP.
 
 ### Which device is which?
 

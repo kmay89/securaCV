@@ -371,6 +371,90 @@ sys.path.insert(0, str(ENC))
 from gen_builder_manifest import GROUP_RE  # noqa: E402
 
 
+def plain_text(cell: str) -> str:
+    """A README table cell as the Lab shows it: emphasis marks gone, and a
+    Markdown link reduced to its text (the Workshop printed
+    "[display research](../display_research.md)" at the reader)."""
+    cell = re.sub(r"\[(`?)([^\]`]+)\1\]\([^)\s]+\)", r"\2", cell)
+    return re.sub(r"\*+", "", cell).strip()
+
+
+# A knob line with a comment, and a continuation of that comment on the next
+# line: nothing but `//` text, indented into the comment gutter. A `//` at the
+# left margin is a new remark about what follows, never a continuation.
+_KNOB_COMMENT_RE = re.compile(r"^(\w+)\s*=\s*[^;]+;\s*//\s*\S")
+_CONTINUATION_RE = re.compile(r"^\s{8,}//\s?(.*)$")
+_DANGLING = re.compile(r"\s+(?:—|–|-)\s+(?:\S+\s*){0,3}$")
+_CONTINUATIONS: dict[Path, dict[str, str]] = {}
+
+
+def comment_continuations(path: Path) -> dict[str, str]:
+    """{knob: the lines of its comment after the first}, for the knobs whose
+    comment runs on. Read beside parse_scad, not inside it: the parameter map
+    parse_scad returns is written out as enclosures.json and held to the
+    builder's parser, and neither changes for this."""
+    if path not in _CONTINUATIONS:
+        out: dict[str, str] = {}
+        lines = path.read_text(errors="replace").splitlines()
+        for i, ln in enumerate(lines):
+            knob = _KNOB_COMMENT_RE.match(ln)
+            if not knob:
+                continue
+            more = []
+            for nxt in lines[i + 1:]:
+                cont = _CONTINUATION_RE.match(nxt)
+                if not cont:
+                    break
+                more.append(cont.group(1).strip())
+            if any(more):
+                out[knob.group(1)] = " ".join(filter(None, more))
+        _CONTINUATIONS[path] = out
+    return _CONTINUATIONS[path]
+
+
+def tidy_label(label: str, continued: bool) -> str:
+    """A knob's label is the first line of its comment. When the comment
+    runs on, that line stops wherever the column ran out: inside a
+    parenthesis, on a colon, on "— the", mid-sentence. Such a label is ended
+    at the last place it was whole; a comment that fits on its line is
+    returned as it is. (Twelve labels reached the Lab's Workshop and catalog
+    cut mid-phrase.)"""
+    text = label.strip()
+    if not continued:
+        return text
+    # A sentence that started on this line and finishes on the next: keep
+    # the sentences that are whole.
+    whole, stop, _ = text.rpartition(". ")
+    if stop:
+        return whole.rstrip(" ,;:") or text
+    depth, cut = 0, None
+    for pos, ch in enumerate(text):
+        if ch == "(":
+            if depth == 0:
+                cut = pos
+            depth += 1
+        elif ch == ")" and depth:
+            depth -= 1
+    if depth:  # an unclosed parenthesis: the aside began here and never ended
+        text = text[:cut].rstrip()
+    m = _DANGLING.search(text)
+    if m and not text[m.start():].rstrip().endswith((".", ")")):
+        text = text[:m.start()]
+    return text.rstrip(" ,;:—–-") or label.strip()
+
+
+def option_text(scad: str, p: dict) -> tuple[str, str]:
+    """(label, consequence) of a knob: the text before and after `->`, the
+    consequence looked for in the comment's later lines when the first line
+    has none."""
+    comment = p.get("comment", "")
+    more = comment_continuations(ENC / Path(scad).name).get(p["name"], "")
+    label, arrow, consequence = comment.partition("->")
+    if not arrow and "->" in more:
+        consequence = more.partition("->")[2]
+    return tidy_label(label, bool(more) and not arrow), consequence.strip()
+
+
 def parse_scad(path: Path):
     text = path.read_text(errors="replace")
     lines = text.splitlines()
@@ -1145,8 +1229,7 @@ def scad_options(scads: dict, scad: str, bom_rows_by_dev: dict, dev: str,
         for p in g["params"]:
             if not is_user_option(p):
                 continue
-            comment = p.get("comment", "")
-            label, _, consequence = comment.partition("->")
+            label, consequence = option_text(scad, p)
             link = OPTION_LINKS.get((scad, p["name"]), {"bom": [], "fw": []})
             for ref in link["bom"]:
                 if ref not in refs:
@@ -1162,8 +1245,8 @@ def scad_options(scads: dict, scad: str, bom_rows_by_dev: dict, dev: str,
             out.append({
                 "id": p["name"],
                 "group": g["name"].split("—")[0].split(" you have")[0].strip(),
-                "label": label.strip() or p["name"],
-                "consequence": consequence.strip(),
+                "label": label or p["name"],
+                "consequence": consequence,
                 "audience": "user",
                 "default": p["default"] == "true",
                 **({"enum": p["enum"]} if "enum" in p else {}),
@@ -1193,7 +1276,7 @@ def wap_packages(md: str, sets_by_id: dict):
         st = sets_by_id.get(set_id)
         if not st:
             raise SystemExit(f"workshop: preset {name} maps to missing set {set_id}")
-        contents = re.sub(r"\*+", "", c[2]).strip()
+        contents = plain_text(c[2])
         low = contents.lower()
         opts = {}
         if name == "battery_weather" and "battery_full" in low:
@@ -1213,7 +1296,7 @@ def wap_packages(md: str, sets_by_id: dict):
             "id": name,
             "label": name.replace("_", " "),
             "set": set_id,
-            "dims_mm": re.sub(r"\*+", "", c[1]).strip(),
+            "dims_mm": plain_text(c[1]),
             "contents": contents,
             "options": opts,
             "parts": st["parts"],
@@ -1235,7 +1318,7 @@ def sets_as_packages(sets, dev, exclude=()):
             "id": s["id"],
             "label": s["name"],
             "set": s["id"],
-            "contents": s.get("for") or s.get("note", ""),
+            "contents": plain_text(s.get("for") or s.get("note", "")),
             "status": s["status"],
             "parts": s["parts"],
             **({"preview": s["preview"]} if s.get("preview") else {}),
@@ -1578,15 +1661,14 @@ def catalog_options(parsed, scad: str):
             if not (is_bool or is_opt_enum):
                 continue  # numeric/tuning knob → counted as engineering below
             audience = "engineering" if name in ENGINEERING_OPTIONS else "user"
-            comment = p.get("comment", "")
-            label, _, consequence = comment.partition("->")
+            label, consequence = option_text(scad, p)
             link = OPTION_LINKS.get((scad, name), {"bom": [], "fw": []})
             dep = OPTION_DEPS.get((scad, name), {})
             opts.append({
                 "id": name,
                 "type": "enum" if "enum" in p else "bool",
-                "label": (label.strip() or name),
-                "consequence": consequence.strip(),
+                "label": (label or name),
+                "consequence": consequence,
                 "audience": audience,
                 **({"enum": p["enum"]} if "enum" in p else {}),
                 **({"default": p["default"] == "true"} if is_bool
@@ -1642,7 +1724,7 @@ def variant_from_set(s: dict, product_scad: str) -> dict:
     return {
         "id": s["id"],
         "name": s["name"],
-        "for": s.get("for") or s.get("note", ""),
+        "for": plain_text(s.get("for") or s.get("note", "")),
         "status": s["status"],
         "device": s.get("device") or UNIVERSAL_ID,
         "selects": VARIANT_SELECTS.get(s["id"], {}),

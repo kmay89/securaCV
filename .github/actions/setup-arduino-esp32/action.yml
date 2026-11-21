@@ -46,6 +46,20 @@ inputs:
       of each week refreshes it.
     required: false
     default: ""
+  core-line:
+    description: >
+      The major line a floating row stays on (e.g. "3"). With no
+      `core-version`, the row installs the newest stable esp32:esp32 release
+      whose major is this one, read from the Boards-Manager index at install
+      time, and its weekly cache key names the line. Empty keeps plain
+      "latest", which also crosses majors. A floating row is the early
+      warning for the NEXT release on the line a product ships on; a new
+      major is a port, not a warning: core 4.0.0 (2026-11) dropped the
+      mbedTLS headers the WAP sketch includes, and every firmware PR went red
+      on a file it had not touched (.github/RELEASE_LESSONS.md 2026-11-20).
+      Not valid together with `core-version`, which already names a line.
+    required: false
+    default: ""
   exclusive-core:
     description: >
       When "true", clear every esp32:esp32 install (platforms and tools)
@@ -84,13 +98,26 @@ runs:
       shell: bash
       env:
         CORE_VERSION: ${{ inputs.core-version }}
+        CORE_LINE: ${{ inputs.core-line }}
       run: |
         set -euo pipefail
+        if [ -n "$CORE_LINE" ] && [ -n "$CORE_VERSION" ]; then
+          echo "::error::core-version ($CORE_VERSION) and core-line ($CORE_LINE) were both passed: a pinned row already names its line. Pass one."
+          exit 1
+        fi
+        if [ -n "$CORE_LINE" ] && ! [[ "$CORE_LINE" =~ ^[0-9]+$ ]]; then
+          echo "::error::core-line must be a major number such as \"3\", got \"$CORE_LINE\"."
+          exit 1
+        fi
         # v2: entries saved before the restore/save split hold whatever the
         # job installed LAST, under every key it touched; the tag keeps all of
         # them from being restored.
         if [ -n "$CORE_VERSION" ]; then
           echo "key=arduino-esp32-v2-${{ runner.os }}-core-$CORE_VERSION" >> "$GITHUB_OUTPUT"
+        elif [ -n "$CORE_LINE" ]; then
+          # The newest release ON A LINE, rotated weekly like "latest": which
+          # release that is, is only known after the index update below.
+          echo "key=arduino-esp32-v2-${{ runner.os }}-core-${CORE_LINE}.x-$(date -u +%GW%V)" >> "$GITHUB_OUTPUT"
         else
           # %G/%V = ISO year/week: rotates the "latest" cache weekly.
           echo "key=arduino-esp32-v2-${{ runner.os }}-core-latest-$(date -u +%GW%V)" >> "$GITHUB_OUTPUT"
@@ -127,6 +154,7 @@ runs:
       shell: bash
       env:
         CORE_VERSION: ${{ inputs.core-version }}
+        CORE_LINE: ${{ inputs.core-line }}
         EXCLUSIVE: ${{ inputs.exclusive-core }}
         KEY: ${{ steps.key.outputs.key }}
       run: |
@@ -145,8 +173,40 @@ runs:
         # No-op seconds on a warm cache; the full download only on a cold
         # one (new week, new pinned version, cache eviction, or an exclusive
         # row whose key missed).
-        arduino-cli core install "esp32:esp32${CORE_VERSION:+@$CORE_VERSION}"
+        # A row floating on a line: the newest stable release of that major,
+        # from the index just updated (the file arduino-cli itself reads, so
+        # no second download and no dependence on the CLI's output format;
+        # core_on_line.py beside this file, unit-tested on its own). A
+        # pre-release never matches x.y.z; a line with no release is an
+        # error, not a fall back to "latest", which is the crossing this
+        # prevents.
+        WANT="$CORE_VERSION"
+        if [ -n "$CORE_LINE" ]; then
+          INDEX="$HOME/.arduino15/package_esp32_index.json"
+          if [ ! -s "$INDEX" ]; then
+            echo "::error::no Boards-Manager index at $INDEX after core update-index: cannot resolve the ${CORE_LINE}.x line."
+            exit 1
+          fi
+          WANT="$(python3 "$GITHUB_ACTION_PATH/core_on_line.py" "$INDEX" "$CORE_LINE")"
+          if [ -z "$WANT" ]; then
+            echo "::error::the Boards-Manager index lists no stable esp32:esp32 ${CORE_LINE}.x release: refusing to fall back to \"latest\"."
+            exit 1
+          fi
+          echo "core line ${CORE_LINE}.x is esp32:esp32@${WANT} this run"
+          # The weekly entry may hold last week's release of the line. Start
+          # from a clean packager tree then, so the tree (and what the
+          # compile takes for an unversioned FQBN) is this release alone.
+          HW="$HOME/.arduino15/packages/esp32/hardware/esp32"
+          if [ -d "$HW" ] && [ "$(ls -1 "$HW")" != "$WANT" ]; then
+            rm -rf "$HOME/.arduino15/packages/esp32"
+          fi
+        fi
+        arduino-cli core install "esp32:esp32${WANT:+@$WANT}"
         arduino-cli core list
+        if [ -n "$CORE_LINE" ] && ! arduino-cli core list | grep -qE "^esp32:esp32[[:space:]]+${WANT//./\\.}([[:space:]]|\$)"; then
+          echo "::error::esp32:esp32 ${WANT} (the ${CORE_LINE}.x line) is not the installed version after the install."
+          exit 1
+        fi
         # Prove the row got the core it asked for. This assertion belongs in
         # SETUP, where failing loudly is correct — the display compiles
         # downstream are deliberately non-blocking, so a wrong core there

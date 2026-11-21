@@ -166,7 +166,7 @@ textarea.txt{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;min-height:
 </details>
 </section>
 
-<p class="foot"><strong>SecuraCV Canary.</strong> Local-only by default. Nothing leaves your home.</p>
+<p class="foot"><strong>SecuraCV Canary.</strong> Local by default: the record stays on this device. No cloud, no account.</p>
 </main>
 <script>
 var CV_TOKEN='__CV_TOKEN__';

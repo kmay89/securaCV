@@ -262,8 +262,10 @@ class TheTree(unittest.TestCase):
         doc = json.loads(ca.SBOM.read_text(encoding="utf-8"))
         checked, gaps, skipped = ca.coverage(doc)
         self.assertTrue(checked)
+        # firmware.yml's PR row floats on the 3.x line (`core-line`), so its
+        # core has no version to compare and is the one component not checked.
         self.assertEqual([s.split(":")[0] + ":" + s.split(":")[1] for s in skipped],
-                         ["framework:arduino-esp32@latest"])
+                         ["framework:arduino-esp32@3.x"])
         by_ref = {c["bom-ref"]: c for c in doc["components"]}
         for gap in gaps:
             ref = gap.split(" has no exact version")[0]
