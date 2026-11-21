@@ -308,6 +308,15 @@ mod echo {
     /// SIGINT", not an exit code. The signal is blocked while this runs, so
     /// the re-raise is delivered when it returns.
     pub(super) extern "C" fn restore_and_die(sig: libc::c_int) {
+        // A signal sent from outside (SIGTERM, a `kill -INT`) does not flush
+        // the terminal the way Ctrl-C does: discard what was typed before
+        // echo comes back, or a half-typed passphrase waits in the queue
+        // for the next reader. Only while the guard still owes the restore.
+        if SAVED.load(Ordering::SeqCst) {
+            // SAFETY: tcflush is async-signal-safe and only discards this
+            // terminal's pending input.
+            unsafe { libc::tcflush(FD.load(Ordering::SeqCst), libc::TCIFLUSH) };
+        }
         restore();
         // SAFETY: signal and raise are async-signal-safe.
         unsafe {
@@ -988,6 +997,61 @@ mod tests {
                 libc::close(terminal);
                 libc::close(controller);
             }
+        }
+    }
+
+    /// SIGTERM after a half-typed passphrase: the handler must discard the
+    /// terminal's pending input before it restores echo and dies, or the
+    /// typed bytes wait in the queue for the next reader (the shell). Ctrl-C
+    /// flushes on its own; a signal sent from outside does not.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_fatal_signal_mid_passphrase_leaves_no_typed_bytes_queued() {
+        let _serial = serialize();
+        let (controller, terminal) = open_pty();
+        let half: &[u8] = b"half-typed";
+        let pause = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 100_000_000,
+        };
+        let status = in_child(|| {
+            let Ok(_guard) = EchoGuard::engage(terminal) else {
+                return 2;
+            };
+            // The trustee types, but has not pressed Enter.
+            // SAFETY: write and nanosleep are async-signal-safe.
+            unsafe {
+                if libc::write(controller, half.as_ptr().cast(), half.len()) != half.len() as isize
+                {
+                    return 4;
+                }
+                libc::nanosleep(&pause, std::ptr::null_mut());
+                libc::raise(libc::SIGTERM);
+            }
+            3
+        });
+        assert!(
+            libc::WIFSIGNALED(status) && libc::WTERMSIG(status) == libc::SIGTERM,
+            "child status {status:#x} (2 = no guard, 3 = swallowed, 4 = write failed)"
+        );
+        // The next reader of the terminal: end the line and see what it gets.
+        let mut got = [0u8; 64];
+        // SAFETY: plain reads and writes on the pair this test opened.
+        let n = unsafe {
+            libc::write(controller, b"\n".as_ptr().cast(), 1);
+            libc::nanosleep(&pause, std::ptr::null_mut());
+            let flags = libc::fcntl(terminal, libc::F_GETFL);
+            libc::fcntl(terminal, libc::F_SETFL, flags | libc::O_NONBLOCK);
+            libc::read(terminal, got.as_mut_ptr().cast(), got.len())
+        };
+        assert_eq!(
+            &got[..n.max(0) as usize],
+            b"\n",
+            "the half-typed passphrase survived the signal in the input queue"
+        );
+        unsafe {
+            libc::close(terminal);
+            libc::close(controller);
         }
     }
 
