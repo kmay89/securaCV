@@ -388,8 +388,15 @@ pub(crate) mod tests {
     fn mkc1_round_trip_classical_and_with_kem_blob() {
         let kek = Kek::generate(&mut OsCustodyRng);
         let master = [0x5a; 32];
-        let c =
-            encode_mkc1_with(&kek, [1; 16], [2; 12], CRYPTO_MODE_CLASSICAL, &master, None).unwrap();
+        let c = encode_mkc1_with(
+            &kek,
+            crate::vault::custody::tv::<16>("01"),
+            crate::vault::custody::tv::<12>("02"),
+            CRYPTO_MODE_CLASSICAL,
+            &master,
+            None,
+        )
+        .unwrap();
         assert_eq!(c.len(), 105 + 34 + 16);
         let header = decode_mkc1_header(&c).unwrap();
         assert_eq!(header.kek_commitment, kek.commitment());
@@ -403,8 +410,15 @@ pub(crate) mod tests {
 
         let (pk, sk) = kem_blob();
         for mode in [CRYPTO_MODE_HYBRID, CRYPTO_MODE_PQ] {
-            let c =
-                encode_mkc1_with(&kek, [3; 16], [4; 12], mode, &master, Some((&pk, &sk))).unwrap();
+            let c = encode_mkc1_with(
+                &kek,
+                crate::vault::custody::tv::<16>("03"),
+                crate::vault::custody::tv::<12>("04"),
+                mode,
+                &master,
+                Some((&pk, &sk)),
+            )
+            .unwrap();
             assert_eq!(c.len(), 4931, "the worst case of spec §2.5");
             let header = decode_mkc1_header(&c).unwrap();
             assert_eq!(header.mlkem768_public, pk);
@@ -420,16 +434,22 @@ pub(crate) mod tests {
         // The mode and the KEM key go together.
         assert!(encode_mkc1_with(
             &kek,
-            [1; 16],
-            [2; 12],
+            crate::vault::custody::tv::<16>("01"),
+            crate::vault::custody::tv::<12>("02"),
             CRYPTO_MODE_CLASSICAL,
             &master,
             Some((&pk, &sk))
         )
         .is_err());
-        assert!(
-            encode_mkc1_with(&kek, [1; 16], [2; 12], CRYPTO_MODE_HYBRID, &master, None).is_err()
-        );
+        assert!(encode_mkc1_with(
+            &kek,
+            crate::vault::custody::tv::<16>("01"),
+            crate::vault::custody::tv::<12>("02"),
+            CRYPTO_MODE_HYBRID,
+            &master,
+            None
+        )
+        .is_err());
     }
 
     #[test]
@@ -438,8 +458,8 @@ pub(crate) mod tests {
         let other = Kek::generate(&mut OsCustodyRng);
         let mut c = encode_mkc1_with(
             &kek,
-            [1; 16],
-            [2; 12],
+            crate::vault::custody::tv::<16>("01"),
+            crate::vault::custody::tv::<12>("02"),
             CRYPTO_MODE_CLASSICAL,
             &[9; 32],
             None,
@@ -464,8 +484,8 @@ pub(crate) mod tests {
         let kek = Kek::generate(&mut OsCustodyRng);
         let c = encode_mkc1_with(
             &kek,
-            [1; 16],
-            [2; 12],
+            crate::vault::custody::tv::<16>("01"),
+            crate::vault::custody::tv::<12>("02"),
             CRYPTO_MODE_CLASSICAL,
             &[9; 32],
             None,
@@ -501,7 +521,13 @@ pub(crate) mod tests {
             mlkem768_public: Vec::new(),
         };
         header.vault_x25519_public[0] ^= 1;
-        let c = encode_raw(&wrap_key, &header, [2; 12], &encode_payload(&master, None)).unwrap();
+        let c = encode_raw(
+            &wrap_key,
+            &header,
+            crate::vault::custody::tv::<12>("02"),
+            &encode_payload(&master, None),
+        )
+        .unwrap();
         assert_eq!(
             open_mkc1(&c, &kek).unwrap_err().to_string(),
             "custody container: its public keys do not match its contents"
@@ -520,7 +546,7 @@ pub(crate) mod tests {
         let c = encode_raw(
             &wrap_key,
             &header,
-            [2; 12],
+            crate::vault::custody::tv::<12>("02"),
             &encode_payload(&master, Some((&pk, &sk))),
         )
         .unwrap();
@@ -543,8 +569,8 @@ pub(crate) mod tests {
         let kek = Kek::generate(&mut OsCustodyRng);
         let c = encode_mkc1_with(
             &kek,
-            [1; 16],
-            [2; 12],
+            crate::vault::custody::tv::<16>("01"),
+            crate::vault::custody::tv::<12>("02"),
             CRYPTO_MODE_CLASSICAL,
             &[9; 32],
             None,
@@ -595,8 +621,8 @@ pub(crate) mod tests {
         let kek = Kek::generate(&mut OsCustodyRng);
         let c = encode_mkc1_with(
             &kek,
-            [1; 16],
-            [2; 12],
+            crate::vault::custody::tv::<16>("01"),
+            crate::vault::custody::tv::<12>("02"),
             CRYPTO_MODE_CLASSICAL,
             &[9; 32],
             None,

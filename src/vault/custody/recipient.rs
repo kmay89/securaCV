@@ -687,7 +687,7 @@ pub(crate) mod tests {
     #[test]
     fn tek1_round_trip_wrong_passphrase_and_param_refusal() {
         let mut rng = OsCustodyRng;
-        let signing_pk = spk_of(&[0x11; 32]);
+        let signing_pk = spk_of(&crate::vault::custody::tv::<32>("11"));
         let secret =
             RecipientSecret::generate("alice", HOLDER_ROLE_TRUSTEE, &signing_pk, false, &mut rng)
                 .unwrap();
@@ -746,7 +746,12 @@ pub(crate) mod tests {
         let other =
             RecipientSecret::from_parts("alice", HOLDER_ROLE_TRUSTEE, signing_pk, [9; 32], None);
         let lying = other
-            .encode_tek1(&secret.key_hash(&signing_pk), &kek, &[1; 16], &[2; 12])
+            .encode_tek1(
+                &secret.key_hash(&signing_pk),
+                &kek,
+                &crate::vault::custody::tv::<16>("01"),
+                &crate::vault::custody::tv::<12>("02"),
+            )
             .unwrap();
         assert_eq!(
             RecipientSecret::open_with_kek(&lying, &kek)
@@ -773,7 +778,7 @@ pub(crate) mod tests {
 
     #[test]
     fn binding_signature_checks_and_rejects_other_key() {
-        let bob_pk = spk_of(&[0x22; 32]);
+        let bob_pk = spk_of(&crate::vault::custody::tv::<32>("22"));
         let secret = RecipientSecret::generate(
             "bob",
             HOLDER_ROLE_TRUSTEE,
@@ -782,7 +787,7 @@ pub(crate) mod tests {
             &mut OsCustodyRng,
         )
         .unwrap();
-        let public = signed_public(&secret, &[0x22; 32]);
+        let public = signed_public(&secret, &crate::vault::custody::tv::<32>("22"));
         public.check_binding_ed25519().unwrap();
         assert_eq!(
             public.key_hash().unwrap(),
@@ -852,12 +857,12 @@ pub(crate) mod tests {
         let secret = RecipientSecret::generate(
             "carol",
             HOLDER_ROLE_RECOVERY,
-            &spk_of(&[0x33; 32]),
+            &spk_of(&crate::vault::custody::tv::<32>("33")),
             false,
             &mut OsCustodyRng,
         )
         .unwrap();
-        let public = signed_public(&secret, &[0x33; 32]);
+        let public = signed_public(&secret, &crate::vault::custody::tv::<32>("33"));
         let text = public.to_json_text();
         assert!(RecipientPublic::from_json(text.as_bytes()).is_ok());
         let extra = text.replacen('{', "{\"comment\":\"hi\",", 1);

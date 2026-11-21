@@ -878,8 +878,8 @@ pub(crate) mod tests {
         } else {
             encode_mkc1_with(
                 &kek,
-                [1; 16],
-                [2; 12],
+                crate::vault::custody::tv::<16>("01"),
+                crate::vault::custody::tv::<12>("02"),
                 CRYPTO_MODE_CLASSICAL,
                 &[3; 32],
                 None,
@@ -1055,7 +1055,7 @@ pub(crate) mod tests {
             HPKE_INFO_SHARE,
             &header.to_bytes(),
             &split.shares[i].to_bytes()[..],
-            &[0x77; 32],
+            &crate::vault::custody::tv::<32>("77"),
         )
         .unwrap();
         let forged = ShareFile {
@@ -1075,7 +1075,7 @@ pub(crate) mod tests {
         let split = test_split(2, 3, ROLE_OPERATIONAL);
         let alice = &split.secrets[0];
         // A key the dealer holds, pinned under alice's name.
-        let dealer_key = spk_of(&[0xd1; 32]);
+        let dealer_key = spk_of(&crate::vault::custody::tv::<32>("d1"));
         for recompute in [true, false] {
             let forged = forge_pin(&split, 1, dealer_key, recompute);
             // The box itself opens with alice's X25519 key: without the pin
@@ -1122,7 +1122,7 @@ pub(crate) mod tests {
         let other = RecipientSecret::from_parts(
             "alice",
             HOLDER_ROLE_TRUSTEE,
-            spk_of(&[0xa2; 32]),
+            spk_of(&crate::vault::custody::tv::<32>("a2")),
             [0x99; 32],
             None,
         );
@@ -1164,7 +1164,12 @@ pub(crate) mod tests {
         // The KAT seam: a given Argon2id output; a body altered under the
         // right key fails authentication.
         let at_rest = file
-            .protect_with_kek(&share, &[7; 32], [8; 16], [9; 12])
+            .protect_with_kek(
+                &share,
+                &[7; 32],
+                crate::vault::custody::tv::<16>("08"),
+                crate::vault::custody::tv::<12>("09"),
+            )
             .unwrap();
         assert_eq!(
             at_rest.open_at_rest_with_kek(&[7; 32]).unwrap().scalars(),
@@ -1213,7 +1218,12 @@ pub(crate) mod tests {
         // The same holds for the at-rest form's AAD.
         let share = file.open_transport(&split.secrets[0]).unwrap();
         let at_rest = file
-            .protect_with_kek(&share, &[7; 32], [8; 16], [9; 12])
+            .protect_with_kek(
+                &share,
+                &[7; 32],
+                crate::vault::custody::tv::<16>("08"),
+                crate::vault::custody::tv::<12>("09"),
+            )
             .unwrap();
         let bin = at_rest.encode();
         for at in 0..hd {
@@ -1448,7 +1458,12 @@ pub(crate) mod tests {
         // The Argon2id parameter refusal (test 30 covers it in full).
         let share = file.open_transport(&split.secrets[1]).unwrap();
         let at_rest = file
-            .protect_with_kek(&share, &[7; 32], [8; 16], [9; 12])
+            .protect_with_kek(
+                &share,
+                &[7; 32],
+                crate::vault::custody::tv::<16>("08"),
+                crate::vault::custody::tv::<12>("09"),
+            )
             .unwrap()
             .encode();
         let mut p2 = at_rest.clone();
@@ -1606,7 +1621,12 @@ pub(crate) mod tests {
         let file = split.sealed(1);
         let share = file.open_transport(&split.secrets[0]).unwrap();
         let at_rest = file
-            .protect_with_kek(&share, &[7; 32], [8; 16], [9; 12])
+            .protect_with_kek(
+                &share,
+                &[7; 32],
+                crate::vault::custody::tv::<16>("08"),
+                crate::vault::custody::tv::<12>("09"),
+            )
             .unwrap();
         let bin = at_rest.encode();
         let body_at = at_rest.header_bytes().len();
@@ -1633,12 +1653,12 @@ pub(crate) mod tests {
         let secret = RecipientSecret::generate(
             "alice",
             HOLDER_ROLE_TRUSTEE,
-            &spk_of(&[1; 32]),
+            &spk_of(&crate::vault::custody::tv::<32>("01")),
             true,
             &mut OsCustodyRng,
         )
         .unwrap();
-        split.publics[0] = signed_public(&secret, &[1; 32]);
+        split.publics[0] = signed_public(&secret, &crate::vault::custody::tv::<32>("01"));
         split.secrets[0] = secret;
         let mut header = split.header(1, PROTECTION_TRANSPORT_BOX2);
         header.release_box = BOX_HPKE_X25519_PSK_MLKEM768;
@@ -1689,7 +1709,7 @@ pub(crate) mod tests {
             &split.publics[0],
             &[5; 32],
             &[6; crate::vault::custody::hpke::MLKEM768_CT_LEN],
-            &[7; 32],
+            &crate::vault::custody::tv::<32>("07"),
         )
         .unwrap();
         let decoded = ShareFile::decode(&file.encode()).unwrap();

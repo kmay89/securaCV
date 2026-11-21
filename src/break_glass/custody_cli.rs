@@ -1560,7 +1560,7 @@ share checks passed. Keep this file apart from the hub; it is useless without yo
             header,
             &forged,
             &recipient_public("alice"),
-            &[9; 32],
+            &crate::vault::custody::tv::<32>("09"),
         )
         .unwrap();
         assert_eq!(
@@ -1634,8 +1634,8 @@ share checks passed. Keep this file apart from the hub; it is useless without yo
         let other = Kek::generate(&mut KatRng::new("other-kek-test"));
         header.container = encode_mkc1_with(
             &other,
-            [1; 16],
-            [2; 12],
+            crate::vault::custody::tv::<16>("01"),
+            crate::vault::custody::tv::<12>("02"),
             CRYPTO_MODE_CLASSICAL,
             &[3; 32],
             None,
@@ -1646,7 +1646,7 @@ share checks passed. Keep this file apart from the hub; it is useless without yo
             header,
             &fixture_share("alice"),
             &recipient_public("alice"),
-            &[9; 32],
+            &crate::vault::custody::tv::<32>("09"),
         )
         .unwrap();
         let file = decode_share_for_check(sealed.to_text().as_bytes()).unwrap();

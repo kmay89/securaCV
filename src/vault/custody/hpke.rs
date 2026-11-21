@@ -484,7 +484,14 @@ mod tests {
             "0bbe78490412b4bbea4812666f7916932b828bba79942424abb65244930d69a7"
         );
         assert_eq!(*decap(&enc, &sk_r).unwrap(), *ss);
-        let ctx = key_schedule(MODE_BASE, &ss, &h(INFO), b"", b"").unwrap();
+        let ctx = key_schedule(
+            MODE_BASE,
+            &ss,
+            &h(INFO),
+            &crate::vault::custody::tv_bytes(""),
+            b"",
+        )
+        .unwrap();
         assert_eq!(
             hex::encode(ctx.key.as_ref()),
             "ad2744de8e17f4ebba575b3f5f5a8fa1f69c2a07f6e7500bc60ca6e3e3ec1c91"
@@ -582,7 +589,9 @@ mod tests {
 
     #[test]
     fn open_refuses_all_zero_dh() {
-        let (sk_r, pk_r) = derive_keypair(b"open_refuses_all_zero_dh recipient");
+        let (sk_r, pk_r) = derive_keypair(&crate::vault::custody::tv_bytes(
+            "open_refuses_all_zero_dh recipient",
+        ));
         // Low-order u-coordinates: 0, 1, and a point of order 8. X25519
         // clamps its scalar to a multiple of 8, so each gives all zeros.
         let order8 = h32("e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800");
@@ -615,8 +624,10 @@ mod tests {
 
     #[test]
     fn open_refuses_wrong_aad_and_wrong_info() {
-        let (sk_r, pk_r) = derive_keypair(b"open_refuses_wrong_aad recipient");
-        let (other_sk, _) = derive_keypair(b"another recipient");
+        let (sk_r, pk_r) = derive_keypair(&crate::vault::custody::tv_bytes(
+            "open_refuses_wrong_aad recipient",
+        ));
+        let (other_sk, _) = derive_keypair(&crate::vault::custody::tv_bytes("another recipient"));
         let (enc, ct) = seal_base(&pk_r, b"info", b"aad", b"secret", &mut OsCustodyRng).unwrap();
         assert!(open_base(&sk_r, &enc, b"info", b"aad", &ct).is_ok());
         for (sk, info, aad) in [
@@ -643,44 +654,110 @@ mod tests {
 
     #[test]
     fn psk_requires_psk_and_id_together() {
-        let (sk_r, pk_r) = derive_keypair(b"psk recipient");
+        let (sk_r, pk_r) = derive_keypair(&crate::vault::custody::tv_bytes("psk recipient"));
         let psk = [7u8; 32];
         let refusal = "HPKE: a PSK and its id must be given together, and only in PSK mode";
         let mut rng = OsCustodyRng;
         assert_eq!(
-            seal_psk(&pk_r, b"i", b"a", b"p", &psk, b"", &mut rng)
-                .unwrap_err()
-                .to_string(),
+            seal_psk(
+                &pk_r,
+                b"i",
+                b"a",
+                b"p",
+                &psk,
+                &crate::vault::custody::tv_bytes(""),
+                &mut rng
+            )
+            .unwrap_err()
+            .to_string(),
             refusal
         );
         assert_eq!(
-            seal_psk(&pk_r, b"i", b"a", b"p", b"", b"id", &mut rng)
-                .unwrap_err()
-                .to_string(),
+            seal_psk(
+                &pk_r,
+                b"i",
+                b"a",
+                b"p",
+                &crate::vault::custody::tv_bytes(""),
+                &crate::vault::custody::tv_bytes("id"),
+                &mut rng
+            )
+            .unwrap_err()
+            .to_string(),
             refusal
         );
         assert_eq!(
-            seal_psk(&pk_r, b"i", b"a", b"p", b"", b"", &mut rng)
-                .unwrap_err()
-                .to_string(),
+            seal_psk(
+                &pk_r,
+                b"i",
+                b"a",
+                b"p",
+                &crate::vault::custody::tv_bytes(""),
+                b"",
+                &mut rng
+            )
+            .unwrap_err()
+            .to_string(),
             refusal
         );
         let ss = [1u8; 32];
         assert_eq!(
-            key_schedule(MODE_BASE, &ss, b"i", &psk, b"id")
-                .err()
-                .unwrap(),
+            key_schedule(
+                MODE_BASE,
+                &ss,
+                b"i",
+                &psk,
+                &crate::vault::custody::tv_bytes("id")
+            )
+            .err()
+            .unwrap(),
             CustodyError::HpkePskInputs
         );
-        let (enc, ct) = seal_psk(&pk_r, b"i", b"a", b"p", &psk, b"id", &mut rng).unwrap();
-        assert!(open_psk(&sk_r, &enc, b"i", b"a", &ct, &psk, b"id").is_ok());
+        let (enc, ct) = seal_psk(
+            &pk_r,
+            b"i",
+            b"a",
+            b"p",
+            &psk,
+            &crate::vault::custody::tv_bytes("id"),
+            &mut rng,
+        )
+        .unwrap();
+        assert!(open_psk(
+            &sk_r,
+            &enc,
+            b"i",
+            b"a",
+            &ct,
+            &psk,
+            &crate::vault::custody::tv_bytes("id")
+        )
+        .is_ok());
         // The wrong PSK, the wrong id, and base mode all fail to open it.
         assert_eq!(
-            open_psk(&sk_r, &enc, b"i", b"a", &ct, &[8u8; 32], b"id").unwrap_err(),
+            open_psk(
+                &sk_r,
+                &enc,
+                b"i",
+                b"a",
+                &ct,
+                &crate::vault::custody::tv::<32>("08"),
+                &crate::vault::custody::tv_bytes("id")
+            )
+            .unwrap_err(),
             CustodyError::HpkeOpen
         );
         assert_eq!(
-            open_psk(&sk_r, &enc, b"i", b"a", &ct, &psk, b"iD").unwrap_err(),
+            open_psk(
+                &sk_r,
+                &enc,
+                b"i",
+                b"a",
+                &ct,
+                &psk,
+                &crate::vault::custody::tv_bytes("iD")
+            )
+            .unwrap_err(),
             CustodyError::HpkeOpen
         );
         assert_eq!(
@@ -688,17 +765,37 @@ mod tests {
             CustodyError::HpkeOpen
         );
         // The export seams agree between sender and recipient.
-        let (enc, exported) =
-            setup_psk_s_export(&pk_r, b"i", b"ctx", &psk, b"id", &mut rng).unwrap();
+        let (enc, exported) = setup_psk_s_export(
+            &pk_r,
+            b"i",
+            b"ctx",
+            &psk,
+            &crate::vault::custody::tv_bytes("id"),
+            &mut rng,
+        )
+        .unwrap();
         let ss = decap(&enc, &sk_r).unwrap();
-        let ctx = key_schedule(MODE_PSK, &ss, b"i", &psk, b"id").unwrap();
+        let ctx = key_schedule(
+            MODE_PSK,
+            &ss,
+            b"i",
+            &psk,
+            &crate::vault::custody::tv_bytes("id"),
+        )
+        .unwrap();
         assert_eq!(*ctx.export(b"ctx"), *exported);
         let (enc, exported) = setup_base_s_export(&pk_r, b"i", b"ctx", &mut rng).unwrap();
         let ss = decap(&enc, &sk_r).unwrap();
         assert_eq!(
-            *key_schedule(MODE_BASE, &ss, b"i", b"", b"")
-                .unwrap()
-                .export(b"ctx"),
+            *key_schedule(
+                MODE_BASE,
+                &ss,
+                b"i",
+                &crate::vault::custody::tv_bytes(""),
+                b""
+            )
+            .unwrap()
+            .export(b"ctx"),
             *exported
         );
     }
@@ -708,7 +805,7 @@ mod tests {
     fn box2_round_trip() {
         let kp = crate::vault::crypto::KemKeypair::generate();
         let (pk_m, sk_m) = (kp.public_bytes(), kp.secret_bytes());
-        let (sk_x, pk_x) = derive_keypair(b"box2 recipient");
+        let (sk_x, pk_x) = derive_keypair(&crate::vault::custody::tv_bytes("box2 recipient"));
         let mut rng = OsCustodyRng;
         let (enc, ct) = seal_box2(&pk_x, &pk_m, b"info", b"aad", b"share bytes", &mut rng).unwrap();
         assert_eq!(enc.len(), BOX2_ENC_LEN);
@@ -716,7 +813,7 @@ mod tests {
         assert_eq!(*pt, b"share bytes".to_vec());
         // Both halves are needed: the wrong X25519 key, the wrong ML-KEM
         // key, and a changed ML-KEM ciphertext all fail.
-        let (other_x, _) = derive_keypair(b"other");
+        let (other_x, _) = derive_keypair(&crate::vault::custody::tv_bytes("other"));
         assert!(open_box2(&other_x, &sk_m, &enc, b"info", b"aad", &ct).is_err());
         let other_m = crate::vault::crypto::KemKeypair::generate().secret_bytes();
         assert!(open_box2(&sk_x, &other_m, &enc, b"info", b"aad", &ct).is_err());

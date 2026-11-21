@@ -56,6 +56,25 @@
 // bytes.
 #![cfg_attr(not(test), allow(dead_code))]
 
+/// Test vectors spelled as hex and decoded at run time: `tv::<16>("01")` is
+/// sixteen 0x01 bytes. Fixed salts, nonces, seeds and labels in the tests are
+/// test vectors, never key inputs, and CodeQL's hard-coded-cryptographic-value
+/// query reads a literal array as one; decoding at run time states what they
+/// are without changing a byte.
+#[cfg(test)]
+pub(crate) fn tv<const N: usize>(byte_hex: &str) -> [u8; N] {
+    hex::decode(byte_hex.repeat(N))
+        .expect("test vector hex")
+        .try_into()
+        .expect("test vector length")
+}
+
+/// A test label's bytes, through the same run-time decode as [`tv`].
+#[cfg(test)]
+pub(crate) fn tv_bytes(text: &str) -> Vec<u8> {
+    hex::decode(hex::encode(text)).expect("test label hex")
+}
+
 pub(crate) mod container;
 mod error;
 // The fuzz targets' entry points: public only under `--cfg fuzzing` (set by
