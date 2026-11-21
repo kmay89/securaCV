@@ -665,6 +665,304 @@ mod tests {
         );
     }
 
+    /// The known-answer material in `tests/fixtures/pqcrypto_kat/`: an
+    /// ML-DSA-44 keypair in the encodings `device_metadata` stores, and a
+    /// signature over a sealed-log entry hash, all written by the kernel while
+    /// it linked `pqcrypto-mldsa` 0.1.2 (the README there says how). These
+    /// tests hold whichever ML-DSA implementation this build links to that
+    /// material: a device keeps its stored key and every entry it has signed.
+    #[cfg(feature = "pqc-signatures")]
+    mod pqcrypto_kat {
+        use super::*;
+
+        pub(super) const KAT_PATH: &str = "tests/fixtures/pqcrypto_kat/mldsa44_kat.json";
+
+        pub(super) struct Kat {
+            pub domain: String,
+            pub entry_hash: [u8; 32],
+            pub ed25519_public_key: VerifyingKey,
+            pub ed25519_signature: Vec<u8>,
+            pub scheme_id: String,
+            pub public_key: Vec<u8>,
+            pub secret_key: Vec<u8>,
+            pub signature: Vec<u8>,
+        }
+
+        impl Kat {
+            pub fn signature_set(&self, pq_signature: Vec<u8>) -> SignatureSet {
+                SignatureSet::from_storage(
+                    &self.ed25519_signature,
+                    Some(pq_signature),
+                    Some(self.scheme_id.clone()),
+                )
+                .expect("the stored columns form a signature set")
+            }
+
+            pub fn verify(&self, pq_signature: Vec<u8>, mode: SignatureMode) -> Result<()> {
+                let keypair = PqKeypair::from_bytes(&self.public_key, &self.secret_key)?;
+                verify_with_domain(
+                    &self.domain,
+                    &self.ed25519_public_key,
+                    &self.entry_hash,
+                    &self.signature_set(pq_signature),
+                    mode,
+                    Some(&keypair.public_key),
+                )
+            }
+        }
+
+        pub(super) fn load() -> Kat {
+            let text = std::fs::read_to_string(KAT_PATH)
+                .unwrap_or_else(|e| panic!("read {KAT_PATH}: {e}"));
+            let doc: serde_json::Value =
+                serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {KAT_PATH}: {e}"));
+            let bytes = |name: &str| -> Vec<u8> {
+                let field = doc[name]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{KAT_PATH}: no string field {name}"));
+                hex::decode(field).unwrap_or_else(|e| panic!("{KAT_PATH}: {name} is not hex: {e}"))
+            };
+            let text = |name: &str| -> String {
+                doc[name]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{KAT_PATH}: no string field {name}"))
+                    .to_string()
+            };
+            let ed25519_public_key: [u8; 32] = bytes("ed25519_public_key")
+                .try_into()
+                .expect("32-byte Ed25519 public key");
+            Kat {
+                domain: text("domain"),
+                entry_hash: bytes("entry_hash").try_into().expect("32-byte entry hash"),
+                ed25519_public_key: verifying_key_strict(&ed25519_public_key)
+                    .expect("fixture Ed25519 key"),
+                ed25519_signature: bytes("ed25519_signature"),
+                scheme_id: text("scheme_id"),
+                public_key: bytes("pq_public_key"),
+                secret_key: bytes("pq_secret_key"),
+                signature: bytes("pq_signature"),
+            }
+        }
+
+        /// Writes the fixture with the ML-DSA-44 implementation this build
+        /// links. It is run once, by hand, while that implementation is
+        /// `pqcrypto-mldsa`, and never again:
+        ///   cargo test --features pqc-signatures --lib write_pqcrypto_mldsa44_kat -- --ignored
+        #[test]
+        #[ignore = "writes tests/fixtures/pqcrypto_kat/mldsa44_kat.json; see the README beside it"]
+        fn write_pqcrypto_mldsa44_kat() {
+            let ed25519 = SigningKey::from_bytes(&[42u8; 32]);
+            let entry_hash: [u8; 32] =
+                Sha256::digest(b"securacv pqcrypto kat: sealed log entry").into();
+            let keypair = PqKeypair::generate();
+            let keys = SignatureKeys::with_pq(&ed25519, Some(&keypair.secret_key));
+            let set = sign_with_domain(DOMAIN_SEALED_LOG_ENTRY, &keys, &entry_hash).unwrap();
+            let pq = set.pq_signature.as_ref().expect("a pq signature");
+            let doc = serde_json::json!({
+                "description": "ML-DSA-44 known-answer material: a keypair in the byte encodings \
+                    device_metadata.pq_public_key and .pq_secret_key hold, and the signature set \
+                    sign_with_domain() produced over entry_hash under domain. Never regenerate.",
+                "written_by": "witness-kernel linking pqcrypto-mldsa 0.1.2 (PQClean ML-DSA-44)",
+                "scheme_id": pq.scheme_id,
+                "domain": DOMAIN_SEALED_LOG_ENTRY,
+                "entry_hash": hex::encode(entry_hash),
+                "signing_hash": hex::encode(domain_separated_hash(DOMAIN_SEALED_LOG_ENTRY, &entry_hash)),
+                "ed25519_public_key": hex::encode(ed25519.verifying_key().to_bytes()),
+                "ed25519_signature": hex::encode(&set.ed25519_signature),
+                "pq_public_key": hex::encode(keypair.public_key_bytes()),
+                "pq_secret_key": hex::encode(keypair.secret_key_bytes()),
+                "pq_signature": hex::encode(&pq.signature),
+            });
+            let json = serde_json::to_string_pretty(&doc).unwrap();
+            std::fs::write(KAT_PATH, json + "\n").unwrap();
+        }
+
+        #[test]
+        fn stored_key_encodings_load_and_come_back_byte_for_byte() {
+            let kat = load();
+            assert_eq!(kat.public_key.len(), 1312, "FIPS 204 ML-DSA-44 public key");
+            assert_eq!(kat.secret_key.len(), 2560, "FIPS 204 ML-DSA-44 private key");
+            let keypair = PqKeypair::from_bytes(&kat.public_key, &kat.secret_key)
+                .expect("a key the kernel stored must load");
+            assert_eq!(keypair.public_key_bytes(), kat.public_key);
+            assert_eq!(keypair.secret_key_bytes(), kat.secret_key);
+        }
+
+        #[test]
+        fn stored_signature_verifies_in_strict_mode() {
+            let kat = load();
+            assert_eq!(kat.scheme_id, PQ_SCHEME_MLDSA44);
+            assert_eq!(kat.signature.len(), 2420, "FIPS 204 ML-DSA-44 signature");
+            kat.verify(kat.signature.clone(), SignatureMode::Strict)
+                .expect("an entry the kernel signed must keep verifying");
+            kat.verify(kat.signature.clone(), SignatureMode::Compat)
+                .expect("and in compat mode, which checks a pq signature that is present");
+        }
+
+        #[test]
+        fn stored_key_signs_and_its_new_signatures_verify() {
+            let kat = load();
+            let ed25519 = SigningKey::from_bytes(&[42u8; 32]);
+            assert_eq!(ed25519.verifying_key(), kat.ed25519_public_key);
+            let keypair = PqKeypair::from_bytes(&kat.public_key, &kat.secret_key).unwrap();
+            let keys = SignatureKeys::with_pq(&ed25519, Some(&keypair.secret_key));
+            for entry_hash in [kat.entry_hash, [0u8; 32], [0xFFu8; 32]] {
+                let set = sign_with_domain(&kat.domain, &keys, &entry_hash).unwrap();
+                let pq = set.pq_signature.as_ref().expect("a pq signature");
+                assert_eq!(pq.scheme_id, PQ_SCHEME_MLDSA44);
+                assert_eq!(pq.signature.len(), 2420);
+                verify_with_domain(
+                    &kat.domain,
+                    &kat.ed25519_public_key,
+                    &entry_hash,
+                    &set,
+                    SignatureMode::Strict,
+                    Some(&keypair.public_key),
+                )
+                .expect("a fresh signature from the stored key verifies");
+            }
+        }
+
+        #[test]
+        fn stored_signature_fails_under_any_other_message_domain_or_key() {
+            let kat = load();
+            let keypair = PqKeypair::from_bytes(&kat.public_key, &kat.secret_key).unwrap();
+            let set = kat.signature_set(kat.signature.clone());
+
+            // The Ed25519 half is re-signed for each case, so the only thing
+            // that can refuse is the post-quantum signature.
+            let ed25519 = SigningKey::from_bytes(&[42u8; 32]);
+            let resigned = |domain: &str, entry_hash: &[u8; 32]| {
+                let mut other = set.clone();
+                other.ed25519_signature = sign_ed25519_only(domain, &ed25519, entry_hash).to_vec();
+                other
+            };
+
+            let mut other_hash = kat.entry_hash;
+            other_hash[31] ^= 1;
+            assert!(verify_with_domain(
+                &kat.domain,
+                &kat.ed25519_public_key,
+                &other_hash,
+                &resigned(&kat.domain, &other_hash),
+                SignatureMode::Strict,
+                Some(&keypair.public_key),
+            )
+            .is_err());
+            assert!(verify_with_domain(
+                DOMAIN_CHECKPOINT,
+                &kat.ed25519_public_key,
+                &kat.entry_hash,
+                &resigned(DOMAIN_CHECKPOINT, &kat.entry_hash),
+                SignatureMode::Strict,
+                Some(&keypair.public_key),
+            )
+            .is_err());
+
+            let stranger = PqKeypair::generate();
+            assert!(verify_with_domain(
+                &kat.domain,
+                &kat.ed25519_public_key,
+                &kat.entry_hash,
+                &set,
+                SignatureMode::Strict,
+                Some(&stranger.public_key),
+            )
+            .is_err());
+            // Compat checks a pq signature whenever one and its key are present.
+            assert!(verify_with_domain(
+                &kat.domain,
+                &kat.ed25519_public_key,
+                &kat.entry_hash,
+                &set,
+                SignatureMode::Compat,
+                Some(&stranger.public_key),
+            )
+            .is_err());
+        }
+
+        #[test]
+        fn one_flipped_byte_anywhere_in_the_stored_signature_fails() {
+            let kat = load();
+            kat.verify(kat.signature.clone(), SignatureMode::Strict)
+                .expect("the untouched signature verifies");
+            // The challenge hash is bytes 0..32, the response z is 32..2336
+            // and the hint is 2336..2420: the ends of each, and a stride
+            // across all three.
+            let mut positions: Vec<usize> = vec![0, 31, 32, 2335, 2336, 2419];
+            positions.extend((0..kat.signature.len()).step_by(41));
+            for position in positions {
+                for mask in [0x01u8, 0x80] {
+                    let mut tampered = kat.signature.clone();
+                    tampered[position] ^= mask;
+                    assert!(
+                        kat.verify(tampered.clone(), SignatureMode::Strict).is_err(),
+                        "strict accepted the signature with byte {position} xor {mask:#04x}"
+                    );
+                    assert!(
+                        kat.verify(tampered, SignatureMode::Compat).is_err(),
+                        "compat accepted the signature with byte {position} xor {mask:#04x}"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn a_signature_of_the_wrong_length_fails() {
+            let kat = load();
+            for len in [0usize, 64, 2419] {
+                assert!(
+                    kat.verify(kat.signature[..len].to_vec(), SignatureMode::Strict)
+                        .is_err(),
+                    "accepted a {len}-byte signature"
+                );
+            }
+            let mut long = kat.signature.clone();
+            long.push(0);
+            assert!(kat.verify(long, SignatureMode::Strict).is_err());
+        }
+
+        #[test]
+        fn keys_of_the_wrong_length_are_refused() {
+            let kat = load();
+            assert!(PqKeypair::from_bytes(&kat.public_key[..1311], &kat.secret_key).is_err());
+            assert!(PqKeypair::from_bytes(&kat.public_key, &kat.secret_key[..2559]).is_err());
+            assert!(PqKeypair::from_bytes(&[], &[]).is_err());
+            let mut long = kat.secret_key.clone();
+            long.push(0);
+            assert!(PqKeypair::from_bytes(&kat.public_key, &long).is_err());
+        }
+
+        #[test]
+        fn a_generated_keypair_round_trips_through_its_stored_encodings() {
+            let ed25519 = SigningKey::from_bytes(&[7u8; 32]);
+            let entry_hash = [9u8; 32];
+            let generated = PqKeypair::generate();
+            assert_eq!(generated.public_key_bytes().len(), 1312);
+            assert_eq!(generated.secret_key_bytes().len(), 2560);
+            let reloaded =
+                PqKeypair::from_bytes(&generated.public_key_bytes(), &generated.secret_key_bytes())
+                    .expect("what generate() stores must load");
+            assert_eq!(reloaded.public_key_bytes(), generated.public_key_bytes());
+            assert_eq!(reloaded.secret_key_bytes(), generated.secret_key_bytes());
+
+            // Signed by one copy, verified with the other's public key, both ways.
+            for (signer, verifier) in [(&generated, &reloaded), (&reloaded, &generated)] {
+                let keys = SignatureKeys::with_pq(&ed25519, Some(&signer.secret_key));
+                let set = sign_with_domain(DOMAIN_CHECKPOINT, &keys, &entry_hash).unwrap();
+                verify_with_domain(
+                    DOMAIN_CHECKPOINT,
+                    &ed25519.verifying_key(),
+                    &entry_hash,
+                    &set,
+                    SignatureMode::Strict,
+                    Some(&verifier.public_key),
+                )
+                .expect("round trip");
+            }
+        }
+    }
+
     #[test]
     fn legacy_dilithium2_scheme_id_not_rejected_as_unsupported() {
         let (signing_key, entry_hash) = test_keys();
