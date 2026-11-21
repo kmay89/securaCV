@@ -285,8 +285,11 @@ were not the owner's after all and are closed below.
   three releases behind, and the Witness Wall's vendored verifier predated
   the handoff-sidecar work, so the hosted Wall called a genuine export from
   a current kernel a failed one. `scripts/carry_to_site.py` was run from
-  main and its output is in the site's PR #267. The cause is in the owner's
-  list above, item 11.
+  main and its output is in the site's PR #267. The CAD carry was stale the
+  same way (four case sources and the builder data, since at least
+  2026-11-16, when the job built the carry and could not open its pull
+  request) and is the site's PR #268. The cause is in the owner's list
+  above, item 11.
 - **The social queue, again.** Two queued posts still said "a 24-hour
   memory" and "clips auto-delete after 24 hours" in a title, a card and two
   by-hand channels. The site's social desk now refuses the claim the way its

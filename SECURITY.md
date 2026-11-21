@@ -427,7 +427,7 @@ upstream fix lets the ignore go.
   the crates were removed and is recorded in the fixture README; it is not a
   standing test, because the old implementation is no longer a dependency.
 
-### Group 8 — the desktop apps' lockfiles: `tokio` and `event-listener` (RUSTSEC-2026-0386, -0221) FIXED by bumps; `glib` (RUSTSEC-2024-0429) NOT REACHABLE, no fix on its line
+### Group 8 — the desktop apps' lockfiles: `tokio` and `event-listener` (RUSTSEC-2026-0386, -0221) FIXED by bumps; `glib` (RUSTSEC-2024-0429) NOT REACHABLE, no fix Tauri can take yet
 
 - **What the audit said.** `cargo audit` files all three under *unsound*, a
   warning: it prints them and exits 0, so `audit.yml` stayed green over them.
@@ -451,12 +451,16 @@ upstream fix lets the ignore go.
   `concurrent-queue`); no manifest changed, and each lockfile passes
   `cargo metadata --locked`. Whether either unsound API was on a path the
   apps ran was not analyzed: the fixed releases were one lockfile bump away.
-- **`glib`: no fix on the line the apps can use.** `glib` 0.18.5 is required
-  by `gtk` 0.18.2, the GTK 3 bindings, and `gtk` 0.18 is what `tauri` 2.12.5,
+- **`glib`: no fix the apps can reach yet.** `glib` 0.18.5 is required by
+  `gtk` 0.18.2, the GTK 3 bindings, and `gtk` 0.18 is what `tauri` 2.12.5,
   `tao` 0.37.1, `wry` 0.57.0, `webkit2gtk` 2.0.2 and `muda` 0.20.0 build
-  their Linux windows on. The fix is in `glib` 0.20, which no release of
-  those bindings takes. It is compiled into the Linux builds only: the macOS
-  and Windows apps have no GTK.
+  their Linux windows on. The bindings do have a release on a fixed `glib`
+  (`gtk` 0.19.0 and `webkit2gtk` 3.0.0, both on `glib` 0.22), and nothing in
+  the Tauri stack requires it: the newest `tao` (0.37.3), `wry` (0.57.3,
+  which pins `webkit2gtk` to exactly 2.0.2), `muda` (0.21.2) and `tauri`
+  (2.12.7, and the 3.0 alpha) all still require `gtk` 0.18 (their manifests
+  on crates.io, 2026-11-21). It is compiled into the Linux builds only: the
+  macOS and Windows apps have no GTK.
 - **Reachable? No.** The advisory names one iterator type, which
   `Variant::array_iter_str` returns. Of the 605 registry packages in the
   Flasher's graph and the 552 in the Lab app's, the only one whose source
@@ -468,8 +472,8 @@ upstream fix lets the ignore go.
   an advisory that fails the gate, and this one warns. Dependabot's security
   update for it fails on every run (the newest `glib` it can resolve is
   0.18.5) and will until the alert is dismissed with this reasoning, which
-  takes a repository admin (backlog A135). The bump comes with the release of
-  Tauri that leaves GTK 3 on Linux.
+  takes a repository admin (backlog A135). The bump comes with the first
+  release of `tauri`, `tao` and `wry` that requires `gtk` 0.19.
 - **Still printed.** The same audits list unmaintained crates in the
   transitive long tail. [`deny.toml`](deny.toml) states the policy for those:
   an error when the workspace depends on one directly, a warning otherwise.

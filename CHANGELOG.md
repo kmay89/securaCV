@@ -204,11 +204,12 @@
   1.14.0 → 1.14.1. `cargo audit` prints an unsound or yanked crate as a
   warning and exits 0, so the gate had stayed green over all four. Only
   those package entries changed; no manifest did.
-- **`glib` 0.18.5 (RUSTSEC-2024-0429, unsound) stays**, because the GTK 3
-  bindings Tauri builds its Linux windows on never take the fixed 0.20.
-  `SECURITY.md` Group 8 records why no code in either app reaches the
-  affected type, and backlog A135 the step that is a repository admin's:
-  dismissing the Dependabot alert whose update fails on every run.
+- **`glib` 0.18.5 (RUSTSEC-2024-0429, unsound) stays.** It is required by
+  `gtk` 0.18, which every release of Tauri's Linux window stack still
+  requires; the fixed `glib` arrives with `gtk` 0.19, which that stack does
+  not take yet. `SECURITY.md` Group 8 records why no code in either app
+  reaches the affected type, and backlog A135 the step that is a repository
+  admin's: dismissing the Dependabot alert whose update fails on every run.
 
 ### Compliance maps say which mechanism stands behind which clause, and never more
 

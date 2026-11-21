@@ -3929,15 +3929,16 @@ so — see D2 below.)
 - [ ] **A135 [human] Dependabot's security update for `glib` fails on every
   run, and its alert has no recorded answer on GitHub.** Both desktop apps'
   lockfiles carry `glib` 0.18.5 (RUSTSEC-2024-0429, unsound) under `gtk`
-  0.18.2, the GTK 3 bindings Tauri 2 builds its Linux windows on; the fix is
-  in `glib` 0.20, which those bindings never take, so the updater ends in
+  0.18.2, which every release of `tauri`, `tao`, `wry` and `muda` still
+  requires; the fix is in `glib` 0.20 and later, which `gtk` 0.19 takes and
+  the Tauri stack does not yet, so the updater ends in
   `security_update_not_possible` each time (seen 2026-11-21 for
   `/desktop-lab/src-tauri`) and shows as a failed run on main. `SECURITY.md`
   Group 8 has the reachability reading (no package in either graph but
   `glib` names the affected type). What remains is a repository admin's:
   dismiss the alert for both lockfiles with that reason, and drop this item
-  and the Group 8 entry when a Tauri release moves Linux off GTK 3. Found
-  while landing #1993.
+  and the Group 8 entry when a Tauri release takes `gtk` 0.19. Found while
+  landing #1993.
 
 ---
 
