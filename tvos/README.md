@@ -15,17 +15,20 @@ self-update design is in [`../docs/tvos/AUTOPIPELINE.md`](../docs/tvos/AUTOPIPEL
 > so the watch runs while the Wall is the app on the TV. See
 > [`ResidentWatch.swift`](WitnessWall/Sources/WitnessWall/ResidentWatch.swift).
 >
-> **Status: built and continuously tested; the App Store upload is waiting on
-> an Apple Developer account.** The app and its verification core are real and
+> **Status: built, continuously tested, and uploaded to App Store Connect from
+> `tvos-v*` tags since `tvos-v0.2.2` (August 2026); there is no public App
+> Store release.** The app and its verification core are real and
 > are exercised on every PR by
 > [`.github/workflows/tvos.yml`](../.github/workflows/tvos.yml) — the Rust core
 > (including the check that pins its chain math to the kernel's own fixtures)
 > and a full SwiftUI build + unit-test run on the **tvOS Simulator**, with no
-> signing and no secrets. What still no-ops is only the *signed upload*
-> ([`tvos-release.yml`](../.github/workflows/tvos-release.yml)): a `tvos-v*`
-> tag today prints a helpful message and exits green until you enable it,
-> because signing needs **your Apple Developer account** and that can't come
-> from CI or this repo alone. The checklist below is the whole remaining gap,
+> signing and no secrets. The *signed upload*
+> ([`tvos-release.yml`](../.github/workflows/tvos-release.yml)) runs only where
+> it has been switched on: in a fork, or anywhere the repository variable
+> `ENABLE_TVOS_BUILD` and the Apple signing secrets are missing, a `tvos-v*`
+> tag prints a helpful message and exits green, because signing needs **your
+> Apple Developer account** and that can't come from CI or this repo alone.
+> The checklist below is what switching it on takes,
 > and it's the same shape as [`../desktop-lab/MOBILE.md`](../desktop-lab/MOBILE.md).
 
 ## What makes this the best at what it does
