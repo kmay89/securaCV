@@ -48,6 +48,9 @@ REPO = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 ACTION = os.path.join(REPO, ".github", "actions", "setup-arduino-esp32", "action.yml")
 
 LATEST = "3.3.10"  # what the stand-in installs for an unversioned request
+# What the stand-in's Boards-Manager index lists (FAKE_INDEX_VERSIONS): the
+# releases a row floating on a line chooses from. A job may replace it.
+INDEX_VERSIONS = "2.0.17 3.3.8 3.3.10"
 
 FAKE_CLI = textwrap.dedent(r"""
     #!/usr/bin/env bash
@@ -61,7 +64,18 @@ FAKE_CLI = textwrap.dedent(r"""
       "config init") mkdir -p "$D"; echo "directories: {data: $D}" > "$D/arduino-cli.yaml" ;;
       "config add"|"lib install") : ;;
       "config get") echo "$HOME/Arduino" ;;
-      "core update-index") mkdir -p "$D"; echo '{}' > "$D/package_esp32_index.json" ;;
+      "core update-index")
+        # The index arduino-cli downloads: one "esp32" package whose platforms
+        # are every release of the esp32 architecture.
+        mkdir -p "$D"
+        {
+          printf '{"packages":[{"name":"esp32","platforms":['
+          sep=""
+          for v in ${FAKE_INDEX_VERSIONS:-}; do
+            printf '%s{"architecture":"esp32","version":"%s"}' "$sep" "$v"; sep=","
+          done
+          printf ']}]}\n'
+        } > "$D/package_esp32_index.json" ;;
       "core uninstall")
         v="$(newest)"
         if [ -z "$v" ]; then echo "platform not installed" >&2; exit 1; fi
@@ -102,6 +116,8 @@ class Job:
         self.posts: list[tuple[str, list[str], list[str]]] = []
         self.saves: list[str] = []  # keys this job wrote, in order
         self.log: list[str] = []
+        self.latest = LATEST                  # FAKE_LATEST for this job
+        self.index_versions = INDEX_VERSIONS  # FAKE_INDEX_VERSIONS for this job
 
     # -- the modeled actions/cache ------------------------------------------
     def _paths(self, spec: str) -> tuple[list[str], list[str]]:
@@ -218,7 +234,11 @@ class Job:
             "HOME": self.home,
             "PATH": self.bin + os.pathsep + os.environ.get("PATH", ""),
             "GITHUB_OUTPUT": out_file,
-            "FAKE_LATEST": LATEST,
+            # A composite action's run steps see the action's own directory
+            # here; action.yml reads core_on_line.py from it.
+            "GITHUB_ACTION_PATH": os.path.dirname(ACTION),
+            "FAKE_LATEST": self.latest,
+            "FAKE_INDEX_VERSIONS": self.index_versions,
             "LC_ALL": "C",
         }
         for k, v in (step.get("env") or {}).items():
@@ -440,6 +460,194 @@ class TheFirstAndThirdRowsShareOneCore(Sim):
         self.assertEqual(self.tree(j)["platforms"], ["3.3.11"])
 
 
+class TheFloatingRowStaysOnItsLine(Sim):
+    """firmware.yml's WAP PR row passes no core-version on purpose: it is the
+    early warning that the next core breaks the sketch (firmware/PLATFORMS.md).
+    On plain "latest" it also crossed majors: on 2026-11-20 esp32:esp32 4.0.0
+    became the index's newest release, the sketch's `#include
+    "mbedtls/sha256.h"` no longer resolved, and the row went red on every
+    firmware PR whatever it touched. `core-line` keeps the warning and names
+    the line it is for."""
+
+    INDEX = "2.0.17 3.3.8 3.3.10 3.3.11 4.0.0"
+
+    def line_job(self, versions: str = INDEX, latest: str = "4.0.0") -> Job:
+        j = self.job()
+        j.index_versions, j.latest = versions, latest
+        return j
+
+    def test_a_new_major_is_not_taken(self):
+        j = self.line_job()
+        j.call(self.action, core_line="3", libraries="ArduinoJson")
+        j.end()
+        self.assertEqual(self.tree(j)["platforms"], ["3.3.11"])
+        self.assertEqual(len(j.saves), 1, j.saves)
+        self.assertRegex(j.saves[0], r"-core-3\.x-\d{4}W\d{2}$")
+        got = contents(self.cache[j.saves[0]])
+        self.assertEqual((got["platforms"], got["tools"], got["staging"]),
+                         (["3.3.11"], ["toolchain-3.3.11"], []), got)
+
+    def test_plain_latest_is_what_crossed_it(self):
+        # The row as it was: nothing names a line, so the newest release is
+        # the new major. Kept as the model of the failure.
+        j = self.line_job()
+        j.call(self.action, libraries="ArduinoJson")
+        j.end()
+        self.assertEqual(self.tree(j)["platforms"], ["4.0.0"])
+        self.assertRegex(j.saves[0], r"-core-latest-\d{4}W\d{2}$")
+
+    def test_the_next_release_on_the_line_is_taken_alone(self):
+        # The early warning itself: this week's entry holds 3.3.10, 3.3.11
+        # ships. The row builds on 3.3.11, with 3.3.10 gone from the tree
+        # (side by side, an unversioned FQBN takes the newest, and the tree
+        # would no longer be what the key says).
+        first = self.line_job("2.0.17 3.3.10", latest="3.3.10")
+        first.call(self.action, core_line="3")
+        first.end()
+        self.assertEqual(self.tree(first)["platforms"], ["3.3.10"])
+        j = self.line_job()
+        j.call(self.action, core_line="3")
+        j.end()
+        got = self.tree(j)
+        self.assertEqual((got["platforms"], got["tools"]), (["3.3.11"], ["toolchain-3.3.11"]), got)
+        self.assertEqual(j.saves, [])  # the weekly key was a hit; an entry is never replaced
+        self.assertFalse([s for s in j.log if "not saving the cache key" in s], j.log)
+
+    def test_a_warm_entry_holding_the_newest_downloads_nothing(self):
+        self.line_job().call(self.action, core_line="3")
+        j = self.line_job()
+        j.call(self.action, core_line="3")
+        j.end()
+        got = self.tree(j)
+        self.assertEqual((got["platforms"], got["staging"]), (["3.3.11"], []), got)
+        self.assertEqual(j.saves, [])
+
+    def test_newest_is_numeric(self):
+        j = self.line_job("3.3.9 3.3.10 3.10.0 3.9.9", latest="3.10.0")
+        j.call(self.action, core_line="3")
+        self.assertEqual(self.tree(j)["platforms"], ["3.10.0"])
+
+    def test_a_pre_release_on_the_line_is_not_taken(self):
+        j = self.line_job("3.3.11 3.4.0-rc1 3.4.0-alpha2 4.0.0")
+        j.call(self.action, core_line="3")
+        self.assertEqual(self.tree(j)["platforms"], ["3.3.11"])
+
+    def test_a_line_with_no_release_fails_instead_of_falling_back_to_latest(self):
+        j = self.line_job("2.0.17 4.0.0")
+        with self.assertRaises(AssertionError) as ctx:
+            j.call(self.action, core_line="3")
+        self.assertIn("refusing to fall back", str(ctx.exception))
+        self.assertEqual(self.tree(j)["platforms"], [])
+        self.assertEqual(j.saves, [])
+
+    def test_a_line_and_a_pin_together_are_refused(self):
+        j = self.line_job()
+        with self.assertRaises(AssertionError) as ctx:
+            j.call(self.action, core_version="3.3.11", core_line="3")
+        self.assertIn("Pass one", str(ctx.exception))
+        self.assertEqual(self.tree(j)["platforms"], [])
+
+    def test_a_line_must_be_a_major_number(self):
+        for bad in ("3.3", "3.x", "latest", "v3"):
+            j = self.line_job()
+            with self.assertRaises(AssertionError, msg=bad) as ctx:
+                j.call(self.action, core_line=bad)
+            self.assertIn("core-line must be a major number", str(ctx.exception), bad)
+
+    def test_a_pinned_row_is_unchanged_by_the_new_major(self):
+        j = self.line_job()
+        j.call(self.action, core_version="3.3.11")
+        j.end()
+        self.assertEqual(self.tree(j)["platforms"], ["3.3.11"])
+        self.assertTrue(j.saves[0].endswith("-core-3.3.11"), j.saves)
+
+
+class TheResolver(unittest.TestCase):
+    """core_on_line.py, the one piece of the line logic that is not bash."""
+
+    def setUp(self):
+        import importlib.util
+        path = os.path.join(os.path.dirname(ACTION), "core_on_line.py")
+        spec = importlib.util.spec_from_file_location("core_on_line", path)
+        self.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.mod)  # type: ignore[union-attr]
+        self.path = path
+
+    def index(self, *versions: str) -> dict:
+        return {"packages": [
+            {"name": "esp32", "platforms": [{"architecture": "esp32", "version": v} for v in versions]
+             + [{"architecture": "other", "version": "3.99.0"}]},
+            {"name": "someone-else", "platforms": [{"architecture": "esp32", "version": "3.98.0"}]},
+        ]}
+
+    def test_newest_stable_on_the_line(self):
+        idx = self.index("2.0.17", "3.3.9", "3.3.10", "3.3.11", "4.0.0", "4.0.1")
+        self.assertEqual(self.mod.newest_on_line(idx, "3"), "3.3.11")
+        self.assertEqual(self.mod.newest_on_line(idx, "2"), "2.0.17")
+        self.assertEqual(self.mod.newest_on_line(idx, "4"), "4.0.1")
+
+    def test_only_the_esp32_packagers_esp32_platform_counts(self):
+        self.assertEqual(self.mod.newest_on_line(self.index("3.3.11"), "3"), "3.3.11")
+
+    def test_nothing_on_the_line_is_none_and_prints_nothing(self):
+        self.assertIsNone(self.mod.newest_on_line(self.index("2.0.17", "4.0.0"), "3"))
+        self.assertIsNone(self.mod.newest_on_line(self.index("3.4.0-rc1"), "3"))
+        self.assertIsNone(self.mod.newest_on_line({}, "3"))
+        with tempfile.TemporaryDirectory() as d:
+            f = os.path.join(d, "index.json")
+            with open(f, "w", encoding="utf-8") as h:
+                h.write('{"packages": []}')
+            r = subprocess.run([sys.executable, self.path, f, "3"], capture_output=True, text=True)
+            self.assertEqual((r.returncode, r.stdout), (0, ""))
+
+    def test_a_malformed_call_is_a_usage_error(self):
+        r = subprocess.run([sys.executable, self.path, "x.json", "3.x"], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 2)
+
+
+class NoRowFloatsAcrossAMajor(unittest.TestCase):
+    """Read off the workflows: every call of the action names a version or a
+    line, and the WAP PR row's line is the major its sketch pins."""
+
+    WAP_SKETCH = "firmware/projects/canary-wap/arduino/canary_wap/sketch.yaml"
+
+    def rows(self):
+        wfdir = os.path.join(REPO, ".github", "workflows")
+        for name in sorted(os.listdir(wfdir)):
+            if not name.endswith((".yml", ".yaml")):
+                continue
+            with open(os.path.join(wfdir, name), encoding="utf-8") as f:
+                wf = yaml.safe_load(f) or {}
+            for job, spec in (wf.get("jobs") or {}).items():
+                for step in (spec or {}).get("steps") or []:
+                    if (step or {}).get("uses") == "./.github/actions/setup-arduino-esp32":
+                        yield f"{name}:{job}", step.get("with") or {}
+
+    def test_every_row_names_a_version_or_a_line(self):
+        rows = list(self.rows())
+        self.assertGreaterEqual(len(rows), 9, rows)
+        for where, with_ in rows:
+            version = str(with_.get("core-version") or "").strip()
+            line = str(with_.get("core-line") or "").strip()
+            self.assertTrue(bool(version) != bool(line),
+                            f"{where}: pass core-version or core-line, exactly one "
+                            f"(neither is plain \"latest\", which crosses a major)")
+
+    def test_the_wap_pr_row_floats_on_the_line_its_sketch_pins(self):
+        rows = dict(self.rows())
+        with_ = rows["firmware.yml:build-arduino-cli"]
+        self.assertNotIn("core-version", with_)
+        with open(os.path.join(REPO, self.WAP_SKETCH), encoding="utf-8") as f:
+            sketch = yaml.safe_load(f)
+        pins = {m.group(1)
+                for profile in sketch["profiles"].values()
+                for p in profile.get("platforms", [])
+                for m in [re.match(r"^esp32:esp32 \((\d+)\.\d+\.\d+\)$", str(p.get("platform", "")))]
+                if m}
+        self.assertEqual(len(pins), 1, pins)
+        self.assertEqual(str(with_["core-line"]), pins.pop())
+
+
 class TheActionIsTwoSteps(unittest.TestCase):
     """The shape the simulation above relies on, read straight off the file."""
 
@@ -469,12 +677,26 @@ class TheActionIsTwoSteps(unittest.TestCase):
 
     def test_an_exclusive_call_clears_before_the_restore_and_nothing_uninstalls_after_it(self):
         restore = self._index(lambda s: str(s.get("uses", "")).startswith("actions/cache/restore@"))
-        clear = self._index(lambda s: "rm -rf" in str(s.get("run", ""))
-                            and ".arduino15/packages/esp32" in str(s.get("run", "")))
-        self.assertEqual((len(restore), len(clear)), (1, 1))
+        clears = self._index(lambda s: "rm -rf" in str(s.get("run", ""))
+                             and ".arduino15/packages/esp32" in str(s.get("run", "")))
+        install = self._index(lambda s: "core install" in str(s.get("run", "")))
+        # Two places clear the packager tree, and only these two: the
+        # exclusive step before the restore, and the install step's own
+        # line branch (a row floating on a line whose weekly entry holds an
+        # older release of that line).
+        clear = [i for i in clears if i != install[0]]
+        self.assertEqual((len(restore), len(clear), len(clears)), (1, 1, 2))
         self.assertLess(clear[0], restore[0])
         self.assertEqual(str(self.steps[clear[0]].get("if", "")).strip(),
                          "inputs.exclusive-core == 'true'")
+        # The line branch clears only inside `if [ -n "$CORE_LINE" ]`, only
+        # when the tree is not already the release it resolved, and before
+        # the install: a pinned or plain-latest row never reaches it.
+        run = str(self.steps[install[0]]["run"])
+        branch = run[run.index('if [ -n "$CORE_LINE" ]; then'):run.index("arduino-cli core install")]
+        self.assertEqual(run.count("rm -rf"), 1)
+        self.assertIn('[ "$(ls -1 "$HW")" != "$WANT" ]', branch)
+        self.assertIn('rm -rf "$HOME/.arduino15/packages/esp32"', branch)
         # After the restore, `core uninstall esp32:esp32` would remove the
         # newest version, on a warm row the one just restored.
         for s in self.steps[restore[0]:]:

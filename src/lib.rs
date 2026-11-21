@@ -43,8 +43,6 @@ use crate::storage::ensure_columns;
 use crate::crypto::signatures::PqKeypair;
 #[cfg(feature = "pqc-signatures")]
 use crate::crypto::signatures::PqSecretKey;
-#[cfg(feature = "pqc-signatures")]
-use pqcrypto_traits::sign::PublicKey as PqPublicKeyTrait;
 
 pub mod adapter;
 pub mod anchor_policy;
@@ -2236,7 +2234,10 @@ CREATE TABLE IF NOT EXISTS conformance_alarms (
         {
             SignatureKeyMaterial {
                 device_key: self.device_key.clone(),
-                pq_secret_key: self.device_pq_key.as_ref().map(|key| key.secret_key),
+                pq_secret_key: self
+                    .device_pq_key
+                    .as_ref()
+                    .map(|key| key.secret_key.clone()),
             }
         }
         #[cfg(not(feature = "pqc-signatures"))]

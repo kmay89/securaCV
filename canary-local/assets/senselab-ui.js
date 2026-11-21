@@ -622,7 +622,7 @@ export function buildGlassBridge(data, getState) {
   const canvas = el("canvas", "slab-glass-canvas");
   canvas.width = 240; canvas.height = 240;
   const boot = el("button", "primary", "Boot the glass + join this witness");
-  const status = el("p", "muted slab-glass-status", "The display artifact loads only when you ask (≈1 MB, from this repo — nothing phones anywhere).");
+  const status = el("p", "muted slab-glass-status", "The display artifact loads only when you ask (≈1 MB, from this site's own files; nothing is uploaded).");
   stage.append(canvas, boot, status);
   wrap.append(stage);
 

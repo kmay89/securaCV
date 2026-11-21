@@ -475,6 +475,16 @@ jobs:
         # here means BLE is actually compile-tested in CI.
         uses: ./.github/actions/setup-arduino-esp32
         with:
+          # This row floats on purpose (firmware/PLATFORMS.md): it is the
+          # early warning that the NEXT core release breaks the sketch,
+          # before anyone moves the release pin. It floats on the 3.x line
+          # the sketch pins, not on "latest": core 4.0.0 became latest on
+          # 2026-11-20, the sketch's `#include "mbedtls/sha256.h"` no longer
+          # resolved, and this row went red on every firmware PR, whatever
+          # the PR touched. A new major is a port with its own PR; that PR
+          # moves this line. test_setup_arduino_esp32.py holds the line to
+          # the major sketch.yaml pins.
+          core-line: "3"
           libraries: |
             Crypto
             ArduinoJson

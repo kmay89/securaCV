@@ -178,8 +178,9 @@ images are compile-tested on the pin until a bench pass. Rolling back is one
   NimBLE split their majors along the core boundary) is pinned to the same
   version by that product's profiles on that core
   ([`sbom/README.md`](../sbom/README.md)).
-- **The WAP's Arduino-CLI rows: release rows pinned, the PR row floats** (a
-  release decision, made in #1802, sweep F21; maintainer to confirm). The
+- **The WAP's Arduino-CLI rows: release rows pinned, the PR row floats on
+  the 3.x line** (a release decision, made in #1802, sweep F21, and bounded
+  to a line on 2026-11-20; maintainer to confirm). The
   rows that make or measure what a release ships (`firmware-release.yml`,
   `flasher-release.yml`, `ram_audit.yml`, `csi_module_disable_matrix.yml`)
   pass `core-version: "3.3.11"`, the WAP sketch's pin and the core inside
@@ -194,11 +195,23 @@ images are compile-tested on the pin until a bench pass. Rolling back is one
   is each job's first install. `flasher-release.yml` reads its pin from the
   dispatch ref, not from the tag it rebuilds, so a refresh of an older tag
   builds that tag's WAP image on today's pin. `firmware.yml`'s
-  PR row (`build-arduino-cli`) keeps passing no `core-version` and builds on
-  the action's weekly "latest", on purpose: it is the early warning that the
-  next core breaks the sketch, before anyone moves the pin. The cost is
-  stated, not hidden: **a cut release can differ from its PR build's core**.
-  On a PR the Arduino-CLI row proves the sketch on "latest"; the same sources
+  PR row (`build-arduino-cli`) keeps passing no `core-version`, on purpose:
+  it is the early warning that the next core breaks the sketch, before
+  anyone moves the pin. Since 2026-11-20 it passes `core-line: "3"` and
+  builds on the newest stable 3.x release the Boards-Manager index lists
+  that week, not on "latest": that day esp32:esp32 4.0.0 became the newest
+  release, the sketch's `#include "mbedtls/sha256.h"` stopped resolving, and
+  the row went red on every firmware PR whatever the PR touched (#1991 was a
+  change to five strings). The warning was correct and it was delivered; what
+  was wrong was that a new **major** arrived through the same door as a patch
+  release. A major is a port with a PR of its own, and that PR moves the
+  line (`.github/scripts/test_setup_arduino_esp32.py` holds the line to the
+  major `sketch.yaml` pins, and refuses any row that names neither a version
+  nor a line). **Open: the WAP sketch does not compile on core 4.x.** The
+  first error is the mbedTLS header; nobody has looked past it. The cost of
+  floating is stated, not hidden: **a cut release can differ from its PR
+  build's core**.
+  On a PR the Arduino-CLI row proves the sketch on the line's newest; the same sources
   compile on 3.3.11 through the PlatformIO `canary-wap-*` envs and the
   CSI-module matrix, but the release's own Arduino-CLI invocation on 3.3.11
   runs only when a release does. Moving the pin is one edit per row plus the
