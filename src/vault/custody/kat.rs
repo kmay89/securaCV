@@ -831,13 +831,13 @@ mod tests {
         let at_rest = ShareFile::decode(&h(&fx()["share_file_at_rest"]["file_hex"])).unwrap();
         errors.push(
             at_rest
-                .open_at_rest_with_kek(&[1; 32])
+                .open_at_rest_with_kek(&crate::vault::custody::tv::<32>("01"))
                 .unwrap_err()
                 .to_string(),
         );
         let tek1 = h(&fx()["tek1"]["tek1_hex"]);
         errors.push(
-            RecipientSecret::open_with_kek(&tek1, &[1; 32])
+            RecipientSecret::open_with_kek(&tek1, &crate::vault::custody::tv::<32>("01"))
                 .unwrap_err()
                 .to_string(),
         );

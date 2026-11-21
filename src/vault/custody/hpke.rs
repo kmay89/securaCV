@@ -700,7 +700,7 @@ mod tests {
             .to_string(),
             refusal
         );
-        let ss = [1u8; 32];
+        let ss = crate::vault::custody::tv::<32>("01");
         assert_eq!(
             key_schedule(
                 MODE_BASE,

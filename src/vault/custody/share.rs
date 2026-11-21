@@ -1004,7 +1004,8 @@ pub(crate) mod tests {
             .starts_with(&format!("cannot open this share with the supplied recipient key: it was encrypted to recipient {recorded}…, yours is ")));
         // A transport share does not open as an at-rest one.
         assert_eq!(
-            file.open_at_rest_with_kek(&[0; 32]).unwrap_err(),
+            file.open_at_rest_with_kek(&crate::vault::custody::tv::<32>("00"))
+                .unwrap_err(),
             CustodyError::WrongProtection
         );
         // Sealing refuses a header that names another holder or share.
@@ -1166,13 +1167,16 @@ pub(crate) mod tests {
         let at_rest = file
             .protect_with_kek(
                 &share,
-                &[7; 32],
+                &crate::vault::custody::tv::<32>("07"),
                 crate::vault::custody::tv::<16>("08"),
                 crate::vault::custody::tv::<12>("09"),
             )
             .unwrap();
         assert_eq!(
-            at_rest.open_at_rest_with_kek(&[7; 32]).unwrap().scalars(),
+            at_rest
+                .open_at_rest_with_kek(&crate::vault::custody::tv::<32>("07"))
+                .unwrap()
+                .scalars(),
             share.scalars()
         );
         let mut altered = at_rest.clone();
@@ -1180,11 +1184,15 @@ pub(crate) mod tests {
             ct[0] ^= 1;
         }
         assert_eq!(
-            altered.open_at_rest_with_kek(&[7; 32]).unwrap_err(),
+            altered
+                .open_at_rest_with_kek(&crate::vault::custody::tv::<32>("07"))
+                .unwrap_err(),
             CustodyError::AtRestAuthentication
         );
         assert_eq!(
-            at_rest.open_at_rest_with_kek(&[6; 32]).unwrap_err(),
+            at_rest
+                .open_at_rest_with_kek(&crate::vault::custody::tv::<32>("06"))
+                .unwrap_err(),
             CustodyError::WrongPassphrase
         );
     }
@@ -1220,7 +1228,7 @@ pub(crate) mod tests {
         let at_rest = file
             .protect_with_kek(
                 &share,
-                &[7; 32],
+                &crate::vault::custody::tv::<32>("07"),
                 crate::vault::custody::tv::<16>("08"),
                 crate::vault::custody::tv::<12>("09"),
             )
@@ -1231,7 +1239,8 @@ pub(crate) mod tests {
             flipped[at] ^= 0x80;
             if let Ok(f) = ShareFile::decode(&refile(flipped)) {
                 assert!(
-                    f.open_at_rest_with_kek(&[7; 32]).is_err(),
+                    f.open_at_rest_with_kek(&crate::vault::custody::tv::<32>("07"))
+                        .is_err(),
                     "at-rest header byte {at} is not authenticated"
                 );
             }
@@ -1460,7 +1469,7 @@ pub(crate) mod tests {
         let at_rest = file
             .protect_with_kek(
                 &share,
-                &[7; 32],
+                &crate::vault::custody::tv::<32>("07"),
                 crate::vault::custody::tv::<16>("08"),
                 crate::vault::custody::tv::<12>("09"),
             )
@@ -1623,7 +1632,7 @@ pub(crate) mod tests {
         let at_rest = file
             .protect_with_kek(
                 &share,
-                &[7; 32],
+                &crate::vault::custody::tv::<32>("07"),
                 crate::vault::custody::tv::<16>("08"),
                 crate::vault::custody::tv::<12>("09"),
             )

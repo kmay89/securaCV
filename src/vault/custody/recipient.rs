@@ -927,7 +927,9 @@ pub(crate) mod tests {
         // magic before deriving anything.
         let secret =
             RecipientSecret::from_parts("alice", HOLDER_ROLE_TRUSTEE, [2; 32], [1; 32], None);
-        let tek1 = secret.wrap_with_kek(&[3; 32], &salt, &nonce).unwrap();
+        let tek1 = secret
+            .wrap_with_kek(&crate::vault::custody::tv::<32>("03"), &salt, &nonce)
+            .unwrap();
         assert_eq!(
             &tek1[4..19],
             &frozen[4..19],
