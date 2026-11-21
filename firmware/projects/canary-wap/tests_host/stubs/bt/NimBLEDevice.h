@@ -472,14 +472,35 @@ namespace host_sim {
 size_t server_start();   // NimBLEServer::start() on the one server (below NimBLEDevice)
 }  // namespace host_sim
 
+namespace host_sim {
+// The advertiser's data, under NimBLE's own lock as on a device (sweep
+// F460: the Chirp sender's suite reads the manufacturer blob it set).
+inline std::mutex adv_data_mu;
+}  // namespace host_sim
+
 class NimBLEAdvertising {
  public:
   void addServiceUUID(const NimBLEUUID&) {}
   void setAppearance(uint16_t) {}
   bool setName(const std::string&) { return true; }
   bool enableScanResponse(bool) { return true; }
-  bool setAdvertisementData(const NimBLEAdvertisementData&) { return true; }
+  bool setAdvertisementData(const NimBLEAdvertisementData& d) {
+    std::lock_guard<std::mutex> g(host_sim::adv_data_mu);
+    adv_data_ = d;
+    ++adv_data_sets_;
+    return true;
+  }
   bool setScanResponseData(const NimBLEAdvertisementData&) { return true; }
+  // What the last setAdvertisementData() put on the air, and how many times
+  // it was called.
+  NimBLEAdvertisementData advertisement_data() const {
+    std::lock_guard<std::mutex> g(host_sim::adv_data_mu);
+    return adv_data_;
+  }
+  unsigned advertisement_data_sets() const {
+    std::lock_guard<std::mutex> g(host_sim::adv_data_mu);
+    return adv_data_sets_;
+  }
   // NimBLE's own state, which it keeps under its own lock (ble_gap's):
   // read and written atomically here, so the threaded test finds only the
   // channel's races.
@@ -497,6 +518,8 @@ class NimBLEAdvertising {
   bool isAdvertising() const { return __atomic_load_n(&advertising_, __ATOMIC_ACQUIRE); }
  private:
   bool advertising_ = false;
+  NimBLEAdvertisementData adv_data_;
+  unsigned adv_data_sets_ = 0;
 };
 
 class NimBLEAdvertisedDevice {

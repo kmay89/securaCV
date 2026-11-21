@@ -144,14 +144,40 @@ section "mbedTLS API (Core 3.x compatibility)"
 # ESP32 Arduino Core 3.x removed _ret suffix from mbedTLS functions.
 # Using _ret functions causes compile failure on Core 3.x.
 # This was a painful lesson learned during initial development.
+#
+# One place may name them (sweep F455): the mbedTLS 2.x branch of a version
+# guard, the #else of a line that is exactly
+#   #if defined(MBEDTLS_VERSION_NUMBER) && MBEDTLS_VERSION_NUMBER >= 0x03000000
+# up to its #endif. Core 2.0.17's mbedTLS 2.28 answers a SHA-256 step only
+# through the _ret names (its plain names return void), so a helper that
+# checks each step needs them there, and the guard compiles the plain names
+# on 3.x. A _ret call anywhere else, the 3.x branch included, still fails.
+ret_outside_guard() {  # "file:line:text" hits on stdin; prints those not in a 2.x branch
+  local hit f rest ln
+  while IFS= read -r hit; do
+    [ -n "$hit" ] || continue
+    f=${hit%%:*}; rest=${hit#*:}; ln=${rest%%:*}
+    if ! awk -v want="$ln" '
+      BEGIN { state = 0; nested = 0 }
+      NR == want { exit (state == 2 ? 0 : 1) }
+      state == 0 && /^#if defined\(MBEDTLS_VERSION_NUMBER\) && MBEDTLS_VERSION_NUMBER >= 0x03000000[[:space:]]*$/ { state = 1; next }
+      state != 0 && /^[[:space:]]*#[[:space:]]*if/ { nested++; next }
+      state != 0 && /^[[:space:]]*#[[:space:]]*endif/ { if (nested > 0) nested--; else state = 0; next }
+      state == 1 && nested == 0 && /^[[:space:]]*#[[:space:]]*(else|elif)/ { state = 2; next }
+      END { if (NR < want) exit 1 }
+    ' "$f"; then
+      echo "$hit"
+    fi
+  done
+}
 
-MBEDTLS_HITS=$(grep -rn "mbedtls_sha256_ret\|mbedtls_md_hmac_ret\|mbedtls_.*_ret(" "${SRC_DIRS[@]}" 2>/dev/null || true)
+MBEDTLS_HITS=$(grep -rn "mbedtls_sha256_ret\|mbedtls_md_hmac_ret\|mbedtls_.*_ret(" "${SRC_DIRS[@]}" 2>/dev/null | ret_outside_guard || true)
 if [ -n "$MBEDTLS_HITS" ]; then
   check_fail "Found deprecated mbedtls _ret() functions — won't compile on Core 3.x"
   echo "$MBEDTLS_HITS" | while read -r line; do blue "  $line"; done
   blue "  Fix: Remove '_ret' suffix. E.g., mbedtls_sha256_ret() → mbedtls_sha256()"
 else
-  check_pass "No deprecated mbedtls _ret() functions"
+  check_pass "No deprecated mbedtls _ret() functions outside a version guard's mbedTLS 2.x branch"
 fi
 
 echo ""
@@ -1129,25 +1155,42 @@ echo ""
 # statement on its own line (a comment that merely names the function does not
 # count); it cannot prove the call ORDER (enable must precede the draw, and must
 # never run while RF is up) — that is code review plus the U1 bench.
-echo "── Security: first-boot keygen is entropy-seeded ──"
+#
+# The same files must also look at the draw before it becomes a key (sweep
+# F38): key_draw_check::is_flat() (firmware/common/identity/key_draw_check.h)
+# refuses a draw that came out flat, every byte equal or its bit count out of
+# bounds. This greps for the call as a statement assigning its answer; the
+# order inside the bootloader_random pair and the refusal it leads to are
+# held on the host (test_key_draw_check.cpp, test_witness_key_load_projects.cpp).
+# Five keygen trees: the canary (PIO) tree, canary-sense, canary-vision,
+# canary-sentinel (sense's copy, check_sentinel_net_sync.sh) and the
+# canary-wap sketch. A tree that drops out of this list is a tree no gate
+# reads, so a missing file fails here rather than warning.
+echo "── Security: first-boot keygen is entropy-seeded and refuses a flat draw ──"
 
 KEYGEN_FILES=(
   "$CANARY_DIR/lib/securacv_crypto/src/securacv_crypto.cpp"
   "$PROJECTS_DIR/canary-sense/src/witness.cpp"
   "$PROJECTS_DIR/canary-vision/src/witness.cpp"
+  "$PROJECTS_DIR/canary-sentinel/src/witness.cpp"
   "$PROJECTS_DIR/canary-wap/arduino/canary_wap/canary_wap.ino"
 )
 
 for kf in "${KEYGEN_FILES[@]}"; do
   rel=${kf#"$FIRMWARE_DIR/"}
   if [ ! -f "$kf" ]; then
-    check_warn "Keygen file not found (moved?): $rel"
+    check_fail "Keygen file not found (moved?): $rel — move its entry with it"
     continue
   fi
   if grep -Eq '^[[:space:]]*bootloader_random_enable[[:space:]]*\([[:space:]]*\)[[:space:]]*;' "$kf"; then
     check_pass "First-boot keygen seeds entropy: $rel"
   else
     check_fail "Keygen file '$rel' has no bootloader_random_enable() around its first-boot esp_fill_random() — predictable-key risk on fresh units (#921)"
+  fi
+  if grep -Eq '^[[:space:]]*const[[:space:]]+bool[[:space:]]+flat[[:space:]]*=[[:space:]]*key_draw_check::is_flat[[:space:]]*\(' "$kf"; then
+    check_pass "First-boot keygen refuses a flat draw: $rel"
+  else
+    check_fail "Keygen file '$rel' does not ask key_draw_check::is_flat() of its first-boot draw — a buffer the RNG never filled would become the identity (F38)"
   fi
 done
 

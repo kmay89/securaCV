@@ -59,7 +59,10 @@ RULES = [
      "every product with pull-OTA asks the release host for a signed manifest "
      "each day and the networked ones sync time (SECURITY_MODEL.md, disclosed "
      "outbound paths 2 and 3); a Lab page is fetched from its host"),
-    (re.compile(r"\b(?:nobody|no[ -]one)\s+can\s+(?:quietly\s+)?"
+    # An aside between the subject and the verb ("nobody — not even you — can
+    # quietly edit") hid two Lab strings from the first form of this rule.
+    (re.compile(r"\b(?:nobody|no[ -]one)\b(?:\s*[—–-]+[^—–.\n]{0,40}[—–-]+)?\s*"
+                r"\bcan\s+(?:(?:quietly|silently)\s+)?"
                 r"(?:alter|change|edit|forge|rewrite)\b", re.I),
      "a signed, hash-chained log shows a change; it prevents none"),
     (re.compile(r"\bnothing\s+leaves\s+your\s+home\b", re.I),
@@ -83,6 +86,8 @@ MUST_FAIL = [
     "works offline · nothing here phones anywhere",
     '"custody": "No cloud, nothing phones home; the image is pinned."',
     "so no one can forge an entry",
+    "give:'One dashboard and one timeline nobody — not even you — can quietly edit.'",
+    '"The record it keeps now is one nobody — including you — can silently edit."',
 ]
 MUST_PASS = [
     '"verify their chains on its own silicon, with no cloud in between.",',
@@ -93,6 +98,8 @@ MUST_PASS = [
     "audio never recorded, never leaves this board",
     "the phone at home can change the setting",
     "Nothing leaves this page.",
+    "give:'One dashboard, and one timeline where any edit shows — yours included.'",
+    "Nobody answered: commit anyway, forgetting the session",
 ]
 
 
@@ -120,6 +127,17 @@ def verdict(line: str) -> str | None:
         if pattern.search(line):
             return why
     return None
+
+
+def wrapped_claims(html: str) -> list[tuple[str, str]]:
+    """Claims a page makes across a line break: (the words, the reason).
+    Comments are dropped first, then every run of whitespace is one space.
+    A claim that sits on one line is the per-line scan's to report."""
+    one_line = {m.group(0) for line in html.splitlines() if not is_comment(line)
+                for pattern, _ in RULES for m in pattern.finditer(line)}
+    text = re.sub(r"\s+", " ", re.sub(r"<!--.*?-->", " ", html, flags=re.S))
+    return [(m.group(0), why) for pattern, why in RULES
+            for m in pattern.finditer(text) if m.group(0) not in one_line]
 
 
 class TheRules(unittest.TestCase):
@@ -174,7 +192,20 @@ class TheTree(unittest.TestCase):
                 why = verdict(line)
                 if why:
                     found.append(f"{rel}:{n}: {why}")
+            # A page wraps its sentences, and a claim broken across two lines
+            # is still the claim: start.html said "a witness log nobody —
+            # including you —" on one line and "can silently edit" on the next.
+            if f.suffix == ".html":
+                for sentence, why in wrapped_claims(text):
+                    found.append(f"{rel}: {why} (across lines: \"{sentence}\")")
         self.assertEqual(found, [], "\n" + "\n".join(found[:40]))
+
+    def test_a_claim_wrapped_across_lines_is_still_read(self):
+        page = ("<p>Four ways in, one destination: a witness log nobody — including you —\n"
+                "      can silently edit. Pick where you're starting from.</p>\n")
+        self.assertEqual(len(wrapped_claims(page)), 1)
+        self.assertEqual(wrapped_claims("<!-- a key nobody can\n change -->\n<p>fine</p>"), [])
+        self.assertEqual(wrapped_claims("<p>A change to any record\n will show.</p>"), [])
 
     def test_every_exemption_still_needs_one(self):
         for rel, reason in STATES_THE_RULE.items():

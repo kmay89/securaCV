@@ -570,7 +570,9 @@ void test_c6_a_failed_session_hash_refuses() {
       CHECK(c->confirm_count == 0 && !c->validated);
     }
   }
-  // A suppress vote hashes the voter's id.
+  // A suppress vote hashes the voter's id, then, as an ACK does, its nearby
+  // row's (sweep F234: a vote counts only from a key whose row is ten
+  // minutes old, and it read no row).
   cc::ChirpSuppressVotePayload vote;
   memset(&vote, 0, sizeof vote);
   memcpy(vote.original_nonce, nonce, 8);
@@ -580,11 +582,13 @@ void test_c6_a_failed_session_hash_refuses() {
   CHECK(cl > 0);
   Ed25519::sign(vote.signature, b.priv, b.pub, canonical, cl);
   const std::vector<uint8_t> v = frame_of(header_of(b, cc::CHIRP_MSG_SUPPRESS_VOTE, 0x7A), vote);
-  for (const auto& f : fails) {
-    stub_sha256::arm(f.step, 0, f.update, Out::Digest);
-    deliver(b, v);
-    CHECK(stub_sha256::fired && stub_sha256::live == 0);
-    CHECK(c->suppress_count == 0);
+  for (int hash = 0; hash < 2; ++hash) {
+    for (const auto& f : fails) {
+      stub_sha256::arm(f.step, hash, f.update, Out::Digest);
+      deliver(b, v);
+      CHECK(stub_sha256::fired && stub_sha256::live == 0);
+      CHECK(c->suppress_count == 0);
+    }
   }
   stub_sha256::disarm();
   deliver(b, v);

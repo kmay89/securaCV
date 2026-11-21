@@ -119,9 +119,11 @@ entities appear on the *Privacy Witness Kernel* device:
 - **Storage Free** (%), **Storage Wear Estimate** (%), **Storage Write Rate**
   (MB/day), **SoC Temperature** (°C)
 
-Canary devices additionally expose **SD Wear Estimate** and **SD Replacement
-Recommended** per device, fed by the firmware's NVS-persisted lifetime write
-counters over the existing MQTT health topic.
+Canary devices additionally expose **SD Replacement Recommended** per device
+and, when the firmware reports its `sd` health object, **SD Wear Estimate**,
+fed by the firmware's NVS-persisted lifetime write counters over the existing
+MQTT health topic. Today only the canary base sends that object (on every
+health, built with diagnostics); no other Canary gets SD Wear Estimate.
 
 A useful automation: notify when *Storage Replacement Recommended* turns on —
 you will typically have weeks of comfortable lead time.

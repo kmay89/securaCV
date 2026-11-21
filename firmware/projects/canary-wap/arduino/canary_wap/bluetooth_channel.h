@@ -289,6 +289,20 @@ typedef void (*DataCallback)(const uint8_t* data, size_t len);
 // (set_device_metadata() below): pushed before it runs, on the caller's
 // task (hold_scanners_on_init()), taken once by the init() that runs
 // next; init(bool) is that push and the bring-up in one call.
+//
+// init() refuses a server it did not make (sweep F449): NimBLE keeps one
+// server (createServer() is a singleton), and on FULL, after a refused boot
+// init(), ble_manager::init() can bring NimBLE up on its own and Opera take
+// that server and start advertising. A later init() would set the stack's
+// security and power under Opera's links and register the channel's
+// services on a server that may have started, so it answers false before
+// touching the stack, with init_fail_reason() "Not started: Bluetooth
+// Discovery started its server this boot; restart to pair" and one health
+// WARNING. A clean boot never meets it (the channel's init() runs before
+// ble_manager's), and a retry after the channel's own refusal meets it only
+// when Discovery made a server in between (the channel's refusals leave
+// none behind). NimBLE up with no server (the Scout's nimble_scan_init(),
+// a ble_manager::init() whose Opera made none) is not refused.
 bool init();
 void hold_scanners_on_init(bool held);
 inline bool init(bool scanners_held) {
@@ -374,7 +388,9 @@ inline const char* boot_bring_up_skipped_error() {
 // since F259 is the only time a tap brings the stack up) does not run them,
 // and registering them then would put services on a server that already
 // started (the case F167's hold exists to prevent; whether NimBLE-Arduino
-// 2.x serves them is not read here). So the sketch's worker tells the
+// 2.x serves them is not read here). (On FULL, a tap after ble_manager made
+// Opera's server is refused instead, F449: a late bring-up there is one
+// whose Discovery made no server.) So the sketch's worker tells the
 // channel each one it registered (boot_service_registered(), on the
 // worker's task, release); the channel knows which this build's worker
 // registers (FEATURE_BLE_STATUS, FEATURE_BLE), and once the boot bring-up is
@@ -411,7 +427,8 @@ const char* init_fail_reason();
 // when that bring-up has finished with the stack up since. These routes are
 // served by one esp_http_server task, so no other tap is inside init() then.
 // False means init() refused, and init_fail_reason() names
-// why (the heap guard, NimBLE's init, the server). The tap answers
+// why (the heap guard, NimBLE's init, the server, or a server Bluetooth
+// Discovery made, F449). The tap answers
 // bring_up_starting_error() with a 503 for the first and the refusal for
 // the second; it submits nothing either way.
 bool bring_up_starting();
