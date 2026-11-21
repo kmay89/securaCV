@@ -22,8 +22,9 @@ error[E0277]: the trait bound `InferenceView<'_>: serde::Serialize` is not satis
 note: required by a bound in `_serde::ser::SerializeStruct::serialize_field`
  --> $CARGO/serde_core-$VERSION/src/ser/mod.rs
   |
+  | pub trait SerializeStruct {
+...
   |     fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>
-  |        --------------- required by a bound in this associated function
   |     where
   |         T: ?Sized + Serialize;
   |                     ^^^^^^^^^ required by this bound in `SerializeStruct::serialize_field`
