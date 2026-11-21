@@ -971,9 +971,11 @@ class ArduinoCorePins(unittest.TestCase):
     def test_the_wap_release_rows_pin_the_sketch_core_and_the_pr_row_floats(self):
         # The release decision recorded in firmware/PLATFORMS.md (sweep F21,
         # #1802): the rows that make or measure a release pin the WAP
-        # sketch's 3.3.11, and firmware.yml's PR row stays on the action's
-        # "latest" as the early warning for the next core. A row moved either
-        # way is a change to that decision, so it fails here.
+        # sketch's 3.3.11, and firmware.yml's PR row pins no version: it
+        # floats as the early warning for the next core (on the 3.x line
+        # since 2026-11-20, `core-line`, which is no pin and reads as None
+        # here). A row moved either way is a change to that decision, so it
+        # fails here.
         wap = {w["where"]: w["version"] for w in self.workflow if "canary-wap" in w["products"]}
         self.assertEqual(wap, {
             "csi_module_disable_matrix.yml:build-with-module-disabled": "3.3.11",
@@ -1111,7 +1113,7 @@ class ArduinoCorePins(unittest.TestCase):
         self.assertIn("sketch.yaml (canary_display/watch-core3)",
                       paths["framework:arduino-esp32@3.3.11"])
         self.assertIn("sketch.yaml (canary_display/watch)", paths["framework:arduino-esp32@2.0.17"])
-        self.assertNotIn("sketch.yaml", paths["framework:arduino-esp32@latest"])
+        self.assertNotIn("sketch.yaml", paths["framework:arduino-esp32@3.x"])
 
 
 class ReleaseRowLibraryPins(unittest.TestCase):

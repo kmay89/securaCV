@@ -1,7 +1,7 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:a1cc91c7-fb25-5b81-915f-605b5508e7e7",
+  "serialNumber": "urn:uuid:6dd26751-ab2f-5e53-8c29-780247a4f386",
   "version": 1,
   "metadata": {
     "tools": {
@@ -1169,7 +1169,7 @@
       "type": "framework",
       "group": "espressif",
       "name": "arduino-esp32",
-      "description": "Arduino core for the ESP32 (esp32:esp32 Boards Manager package, Arduino-CLI build path)",
+      "description": "Arduino core for the ESP32 (esp32:esp32 Boards Manager package, Arduino-CLI build path); no fixed version: the newest stable 3.x release the Boards-Manager index lists the week the row builds",
       "licenses": [
         {
           "license": {
@@ -1177,7 +1177,7 @@
           }
         }
       ],
-      "bom-ref": "framework:arduino-esp32@latest",
+      "bom-ref": "framework:arduino-esp32@3.x",
       "properties": [
         {
           "name": "securacv:build_paths",
@@ -2012,7 +2012,7 @@
       ]
     },
     {
-      "ref": "framework:arduino-esp32@latest",
+      "ref": "framework:arduino-esp32@3.x",
       "dependsOn": []
     },
     {
@@ -2219,7 +2219,7 @@
       "dependsOn": [
         "framework:arduino-esp32@2.0.17",
         "framework:arduino-esp32@3.3.11",
-        "framework:arduino-esp32@latest",
+        "framework:arduino-esp32@3.x",
         "product:canary",
         "product:canary-display",
         "product:canary-sense",
