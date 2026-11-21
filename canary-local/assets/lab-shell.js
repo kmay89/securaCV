@@ -646,7 +646,7 @@ function overviewView() {
       h("div", { class: "ov-glow", "aria-hidden": "true" }),
       h("div", { class: "room-wrap" },
         h("iframe", { class: "room", src: "room.html", loading: "eager",
-          title: "The Canary Lab — a workshop you can walk. Tap a station to open its bench." }))),
+          title: "The workshop map — a workshop you can walk. Tap a station to open its bench." }))),
     h("div", { class: "ov-line" },
       h("div", { class: "ov-cards-head" }, "Jump straight to a stage"),
       h("div", { class: "ov-prog", role: "img",

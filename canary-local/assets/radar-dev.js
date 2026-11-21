@@ -1076,7 +1076,7 @@ function buildKeepGoing(mount) {
   const s = section(mount, "more", "keep going", "Where this goes next", null);
   const grid = el("div", "hub-links");
   const items = [
-    ["The Nursery", "flash a Sense over USB in the browser — this bench's front door", "flash.html", true],
+    ["Flash over USB", "put firmware on a Sense in the browser — this bench's front door", "flash.html", true],
     ["The Sense — radar school", "the guided story: cone, FSMs, MQTT, the privacy chokepoint", "sense.html", true],
     ["The Sense Lab", "the deep bench: wire protocol, placement physics, the power lab", "senselab.html", true],
     ["The Hub", "Home Assistant — where the tuned knobs surface as number entities", "homeassistant.html", true],

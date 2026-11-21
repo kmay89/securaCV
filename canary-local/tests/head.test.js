@@ -16,6 +16,7 @@
 //   · a title drops the Lab's name, or outgrows a result    → "the hand-written half"
 //   · a description regrows past what a result shows         → "the hand-written half"
 //   · "nothing phones anywhere" comes back in a description  → "no retired claim"
+//   · a bench's headline keeps a name its title dropped       → "one name per bench"
 //   · a <title> lands in <body> again (room.html's did)      → "the title is in the head"
 //   · the share card stops being a file the website serves   → "the share card exists"
 //   · the gate is dropped from CI                            → "CI runs this gate"
@@ -109,6 +110,28 @@ test("no description makes the retired network claim", () => {
     assert.ok(!/phones? (?:home|anywhere)|nothing leaves/i.test(descOf(page)),
       `${page}: its description says what the network does not do — say "runs in your browser; nothing is uploaded"`);
   }
+});
+
+test("one name per bench: a page's headline leads with the name its title leads with", () => {
+  // build-line.json's noun is what a tab, the stage rail and every link call a
+  // bench. Seven pages kept an older name in their own <h1> after the manifest
+  // renamed them ("The Canary Nursery" under a tab that said "Flash over USB"),
+  // and two map pages led with a slogan or the Lab's old name.
+  const nameOf = (title) => title.replace(/ — SecuraCV(?: Lab)?$/, "").split(" — ")[0].trim();
+  let headlines = 0;
+  for (const page of PAGES) {
+    const m = /<h1\b[^>]*>([\s\S]*?)<\/h1>/.exec(html.get(page));
+    if (!m) continue;                      // index.html is a redirect
+    headlines += 1;
+    const h1 = unescape(m[1].replace(/<[^>]+>/g, "")).replace(/\s+/g, " ").trim();
+    assert.ok(h1.startsWith(nameOf(titleOf(page))),
+      `${page}: the headline "${h1}" does not lead with "${nameOf(titleOf(page))}", the name its title gives it`);
+  }
+  assert.ok(headlines >= 25, `only ${headlines} pages have a headline to hold`);
+  // The rule is the generator's too, so a page fixed by hand is caught at --check.
+  const gen = read(join(ROOT, "tools/gen_head.py"));
+  assert.match(gen, /def headline\(/);
+  assert.match(gen, /one name per bench/);
 });
 
 test("the title is in the head, once", () => {

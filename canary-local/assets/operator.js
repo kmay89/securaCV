@@ -28,7 +28,7 @@ async function main() {
       if (!data[k]) throw new Error("missing section: " + k);
   } catch (e) {
     mount.append(el("p", "muted",
-      "The Operator's Bench data failed to load (" + e.message + "). It's all written " +
+      "This bench's data failed to load (" + e.message + "). It's all written " +
       "out in docs/operator_guide.md and docs/design/vault_operator_ux_v1_1.md."));
     const a = el("a", null, "Open the operator guide →");
     a.href = GH + "docs/operator_guide.md";
