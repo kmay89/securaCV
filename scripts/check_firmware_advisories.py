@@ -16,9 +16,9 @@ reads the upstreams' own records instead:
      name must map to an upstream repository in UPSTREAM below. Either gap
      fails the check, so it cannot pass on a component it did not compare.
      The one exception is an Arduino core with no version that only CI rows
-     outside RELEASE_WORKFLOWS build (firmware.yml's PR row on the action's
-     "latest", the early warning for the next core): it ships in nothing and
-     is listed as not checked.
+     outside RELEASE_WORKFLOWS build (firmware.yml's PR row, which floats on
+     the 3.x line as the early warning for the next core): it ships in
+     nothing and is listed as not checked.
   2. For each upstream repository, its published GitHub repository security
      advisories (`GET /repos/{owner}/{repo}/security-advisories`), compared
      with every pinned version mapped to it. An affected range that matches
@@ -288,7 +288,7 @@ def coverage(doc: dict) -> tuple[list[dict], list[str], list[str]]:
     for c in third_party(doc):
         ref = c.get("bom-ref", c.get("name"))
         if _floats_on_ci_only(c):
-            skipped.append(f"{ref}: the action's latest core on CI-only rows "
+            skipped.append(f"{ref}: a floating core on CI-only rows "
                            f"({_prop(c, 'securacv:build_paths')}); ships in no image")
             continue
         version = str(c.get("version") or "")
