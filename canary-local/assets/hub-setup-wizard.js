@@ -62,7 +62,7 @@ export function wizardSteps(facts) {
         "Home Assistant (HA) is a free app you run at home — think of it as the " +
         "front desk where all your Canaries report in. MQTT is just the language " +
         "they speak to it: a tiny local “post office” that carries short messages " +
-        "from each Canary to HA. Nothing leaves your home; there’s no cloud and no " +
+        "from each Canary to HA. Those messages stay on your own network; there’s no cloud and no " +
         "account to make.",
       do: [
         "You’ll do this once, in about 15 minutes.",

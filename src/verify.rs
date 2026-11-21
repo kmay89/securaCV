@@ -1755,6 +1755,20 @@ pub fn verify_export_authorizations(conn: &Connection) -> Result<u64> {
 /// database with no history the pre-history lenient behavior is preserved
 /// (the era cannot be proven either way), so old deployments do not
 /// false-alarm.
+///
+/// An approval that does not count is **skipped**, never an error, on every
+/// outcome: one over another request hash, one from a trustee outside the
+/// era's roster, and one whose signature does not verify. The approvals are
+/// bound by `approvals_commitment` inside the device-signed payload (the
+/// caller checks that commitment before this runs), so only the writer could
+/// have placed a non-counting approval on the row, and such an approval can
+/// neither raise the count nor be named: the count takes only approvals that
+/// verify, and [`crate::break_glass::verify_trustee_attribution`] credits only
+/// those. The checks that matter are unchanged — at least `n` distinct valid
+/// approvals for `Granted`, and exact attribution. Failing the row instead let
+/// one stale file handed to `authorize` (which never counted it) poison an
+/// honest receipt for good. An unusable public key in the policy stays an
+/// error: that is a policy defect, not an approval defect.
 pub(crate) fn verify_receipt_quorum(
     current_policy: &QuorumPolicy,
     history: &[QuorumPolicy],
@@ -1778,22 +1792,24 @@ pub(crate) fn verify_receipt_quorum(
         return Ok(());
     };
 
+    // A non-counting approval is skipped (see the doc comment): it can
+    // neither raise the count nor be named.
     let mut distinct_keys = std::collections::HashSet::new();
     for approval in approvals {
         if approval.request_hash != receipt.request_hash {
-            return Err(anyhow!(
-                "approval request_hash mismatch for trustee {}",
-                approval.trustee.0
-            ));
+            continue;
         }
-        let trustee = policy
+        let Some(trustee) = policy
             .trustees
             .iter()
             .find(|t| t.id.0 == approval.trustee.0)
-            .ok_or_else(|| anyhow!("unknown trustee approval: {}", approval.trustee.0))?;
-        // Distinct message for an unusable key; the signature check itself is
+        else {
+            continue;
+        };
+        // An unusable key in the policy is a policy defect, not an approval
+        // defect: it stays an error. The signature check itself is
         // domain-separated (verify_approval rejects a bare-hash or
-        // cross-context signature), matching how authorize now signs.
+        // cross-context signature), matching how authorize signs.
         crate::crypto::signatures::verifying_key_strict(&trustee.public_key)
             .map_err(|_| anyhow!("invalid public key for trustee {}", trustee.id.0))?;
         if !verify_approval(
@@ -1801,7 +1817,7 @@ pub(crate) fn verify_receipt_quorum(
             &approval.request_hash,
             &approval.signature,
         ) {
-            return Err(anyhow!("invalid signature for trustee {}", trustee.id.0));
+            continue;
         }
         distinct_keys.insert(trustee.public_key);
     }

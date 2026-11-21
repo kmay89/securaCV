@@ -827,8 +827,8 @@ BANNER = [
     f"              d b          v{FW_VERSION}",
     "",
     "    This is your privacy witness device.",
-    "    It creates tamper-proof records of what it",
-    "    sees, so nobody can change the story later.",
+    "    It keeps tamper-evident records of what it",
+    "    sees, so any edit to the story shows later.",
     "",
     f"    Type        {DEVICE_TYPE}",
     f"    Model       {MODEL_PREFIX}{S3_BOARD_NAME}{MODEL_SUFFIX}",
@@ -1631,7 +1631,7 @@ must(BENCH_JS, "DOWNLOAD(USB/UART0)", "ROM download strap line")
 must(BENCH_JS, "waiting for download", "ROM waiting line")
 
 FLASH = {
-    "kit_note": "Kits arrive already flashed — you flash when you build from parts, or to update over USB. "
+    "kit_note": "A Canary you build from parts starts blank: this is where it gets its firmware, and where you update it over USB. "
                 "Updates never touch the ROM's USB recovery, so a Canary can always be re-flashed.",
     "cable": "a data-capable USB-C cable (not charge-only) — the #1 'device not detected' cause",
     "port_hint": "the board shows up as a USB-CDC serial port · 115200 8N1",

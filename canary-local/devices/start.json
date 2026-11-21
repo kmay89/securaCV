@@ -405,7 +405,7 @@
     {
      "id": "lab",
      "title": "1 · Start in the Lab",
-     "intro": "Your browser does the flashing over WebSerial — macOS, Windows, and Linux are the same three clicks.",
+     "intro": "Your browser does the flashing over WebSerial — macOS, Windows, and Linux are the same two clicks.",
      "steps": [
       {
        "title": "Meet the family, pick your bird",
@@ -418,7 +418,7 @@
           },
           {
            "label": "Meet the Canaries (live firmware)",
-           "href": "index.html"
+           "href": "fleet.html"
           },
           {
            "label": "The Board Room (wiring)",
@@ -435,7 +435,7 @@
         "all": {
          "bullets": [
           "The Workshop specs your exact build (parts, pins, enclosure).",
-          "Kits and BOMs: see Build It in the Lab — plans are free forever."
+          "Parts lists: see Build in the Lab. The plans are free."
          ],
          "links": [
           {

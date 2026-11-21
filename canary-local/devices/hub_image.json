@@ -177,7 +177,7 @@
     "wifi": "A NetworkManager keyfile (CONFIG/network/my-network) seeded onto the boot partition \u2014 the same secret the Canary flasher already collects (wifi-memory.js). Local-only: it goes on the card, never to a cloud.",
     "seed": "A narrated bundle (the hub_seed.json plan + the hub_seed_apply.py executor, hub_provision_bundle.json) written to CONFIG/securacv/ on the boot partition, run by the Flasher's first-boot companion over the HAOS developer console. True zero-touch (the hub running it with no companion) is still planned.",
     "self_heal": "Inherited from HAOS: A/B rollback + Supervisor watchdog + hands-off updates; our add-on rides the Supervisor update channel.",
-    "custody": "No cloud, nothing phones home; the image is a post-processed pinned official artifact (Inv. IV)."
+    "custody": "No cloud account and no SecuraCV server in the loop; the image is a post-processed pinned official artifact (Inv. IV)."
   },
   "meta": {
     "design": "docs/design/raspberry_pi_hub_flashing.md",

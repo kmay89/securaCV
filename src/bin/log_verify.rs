@@ -938,7 +938,7 @@ mod tests {
     }
 
     #[test]
-    fn log_verify_rejects_unknown_trustee_approvals() -> Result<()> {
+    fn log_verify_skips_unknown_trustee_approvals_and_rejects_a_grant_on_them() -> Result<()> {
         let db = TempDb::new();
         let mut kernel = Kernel::open(&KernelConfig {
             db_path: db.path().to_string_lossy().to_string(),
@@ -966,23 +966,49 @@ mod tests {
         let approval = Approval::signed(TrusteeId::new("bob"), request.request_hash(), &bob_key);
         let (_, receipt) =
             BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
-        let _entry_hash = kernel.append_break_glass_receipt(&receipt, &[approval])?;
+        assert!(matches!(
+            receipt.outcome,
+            witness_kernel::BreakGlassOutcome::Denied { .. }
+        ));
+        let _entry_hash =
+            kernel.append_break_glass_receipt(&receipt, std::slice::from_ref(&approval))?;
 
         let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
-        drop(kernel);
+        let walk = |db: &Path| -> Result<()> {
+            let conn = open_encrypted_test_db(db);
+            let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
+            let policy = verify::load_break_glass_policy(&conn)?;
+            verify::verify_break_glass_receipts_with(
+                &conn,
+                std::slice::from_ref(&verifying_key),
+                policy.as_ref(),
+                SignatureMode::Compat,
+                None,
+                |_, _| {},
+            )
+            .map(|_| ())
+        };
+        // The honest denial verifies: an approval from a trustee outside the
+        // roster never counted, and the reader skips it (reader hardening).
+        walk(db.path())?;
 
-        let conn = open_encrypted_test_db(db.path());
-        let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
-        let policy = verify::load_break_glass_policy(&conn)?;
-        let result = verify::verify_break_glass_receipts_with(
-            &conn,
-            std::slice::from_ref(&verifying_key),
-            policy.as_ref(),
-            SignatureMode::Compat,
-            None,
-            |_, _| {},
+        // A device-signed row relabeled Granted on that approval still fails:
+        // a skipped approval is never counted.
+        let forged = witness_kernel::BreakGlassReceipt {
+            outcome: witness_kernel::BreakGlassOutcome::Granted,
+            trustees_used: vec![TrusteeId::new("bob")],
+            ..receipt
+        };
+        kernel.append_break_glass_receipt(&forged, &[approval])?;
+        drop(kernel);
+        let err = walk(db.path()).unwrap_err();
+        assert!(
+            format!("{err:#}").contains(
+                "break-glass receipt claims Granted but only 0 of the required 1 distinct \
+                 trustee approvals are valid"
+            ),
+            "{err:#}"
         );
-        assert!(result.is_err());
 
         Ok(())
     }
@@ -1046,7 +1072,7 @@ mod tests {
     }
 
     #[test]
-    fn log_verify_rejects_invalid_trustee_signature() -> Result<()> {
+    fn log_verify_skips_an_invalid_trustee_signature_and_rejects_a_grant_on_it() -> Result<()> {
         let db = TempDb::new();
         let mut kernel = Kernel::open(&KernelConfig {
             db_path: db.path().to_string_lossy().to_string(),
@@ -1076,23 +1102,49 @@ mod tests {
             Approval::signed(TrusteeId::new("alice"), request.request_hash(), &wrong_key);
         let (_, receipt) =
             BreakGlass::authorize(&policy, &request, std::slice::from_ref(&approval), bucket);
-        let _entry_hash = kernel.append_break_glass_receipt(&receipt, &[approval])?;
+        assert!(matches!(
+            receipt.outcome,
+            witness_kernel::BreakGlassOutcome::Denied { .. }
+        ));
+        let _entry_hash =
+            kernel.append_break_glass_receipt(&receipt, std::slice::from_ref(&approval))?;
 
         let public_key_hex = hex::encode(kernel.device_key_for_verify_only());
-        drop(kernel);
+        let walk = |db: &Path| -> Result<()> {
+            let conn = open_encrypted_test_db(db);
+            let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
+            let policy = verify::load_break_glass_policy(&conn)?;
+            verify::verify_break_glass_receipts_with(
+                &conn,
+                std::slice::from_ref(&verifying_key),
+                policy.as_ref(),
+                SignatureMode::Compat,
+                None,
+                |_, _| {},
+            )
+            .map(|_| ())
+        };
+        // The honest denial verifies: a signature that does not verify never
+        // counted, and the reader skips it (reader hardening).
+        walk(db.path())?;
 
-        let conn = open_encrypted_test_db(db.path());
-        let verifying_key = load_verifying_key(&conn, Some(&public_key_hex), None)?;
-        let policy = verify::load_break_glass_policy(&conn)?;
-        let result = verify::verify_break_glass_receipts_with(
-            &conn,
-            std::slice::from_ref(&verifying_key),
-            policy.as_ref(),
-            SignatureMode::Compat,
-            None,
-            |_, _| {},
+        // A device-signed row relabeled Granted on that signature still
+        // fails: a skipped approval is never counted.
+        let forged = witness_kernel::BreakGlassReceipt {
+            outcome: witness_kernel::BreakGlassOutcome::Granted,
+            trustees_used: vec![TrusteeId::new("alice")],
+            ..receipt
+        };
+        kernel.append_break_glass_receipt(&forged, &[approval])?;
+        drop(kernel);
+        let err = walk(db.path()).unwrap_err();
+        assert!(
+            format!("{err:#}").contains(
+                "break-glass receipt claims Granted but only 0 of the required 1 distinct \
+                 trustee approvals are valid"
+            ),
+            "{err:#}"
         );
-        assert!(result.is_err());
 
         Ok(())
     }

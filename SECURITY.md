@@ -354,6 +354,79 @@ upstream fix lets the ignore go.
   entry (version and checksum) changed; each lockfile passes
   `cargo metadata --locked`.
 
+### Group 7 — ML-DSA and ML-KEM in the PQClean bindings (RUSTSEC-2026-0586 and RUSTSEC-2026-0585) — FIXED by moving to `ml-dsa` and `ml-kem`
+
+- **Bug:** two advisories published 2026-11-20 against the crates behind the
+  optional `pqc-signatures` and `pqc-vault` features, neither with a fixed
+  release.
+  - RUSTSEC-2026-0586, `pqcrypto-mldsa` 0.1.2: built with its default `avx2`
+    feature and run on an x86_64 CPU with AVX2, it verifies with PQClean's
+    AVX2 code, which does not check that the infinity norm of the response z
+    is below `gamma1 - beta` (FIPS 204, Algorithm 8, line 13) and mishandles
+    a `UseHint` boundary case. It accepts signatures a conforming verifier
+    rejects and rejects one class of valid signatures. Making an accepted
+    out-of-bound signature takes the private key.
+  - RUSTSEC-2026-0585, `pqcrypto-mlkem` 0.1.1: neither input check of
+    FIPS 203 is made. Encapsulation takes an encapsulation key with a
+    coefficient not reduced mod q (section 7.2), and decapsulation takes a
+    decapsulation key whose stored hash or embedded encapsulation key was
+    altered (section 7.3). The advisory says no key material is disclosed.
+- **Where it came from:** both were direct dependencies and both wrap
+  PQClean, which is archived; the crates are unmaintained (RUSTSEC-2026-0166
+  and -0161, with `pqcrypto-traits` -0162 and `pqcrypto-internals` -0163).
+  The kernel took `pqcrypto-mldsa` with its default features, so `avx2` was
+  on. Neither feature is in the default build and no Dockerfile or release
+  workflow in this repository enables one, so a binary has them only if its
+  builder asked for them.
+- **Exposure, signatures:** this one was on a path the kernel ran. A kernel
+  or verifier binary built with `pqc-signatures`, through kernel 0.9.3, on an
+  x86_64 CPU with AVX2 checked every ML-DSA-44 signature with the affected
+  verifier. What that allows is narrower than a forgery. Nobody without the
+  device's ML-DSA private key can make a signature that verifier accepts and
+  a conforming one rejects, and the key's holder can sign validly anyway.
+  Ed25519 is required on every entry in both verification modes, so no entry
+  ever rested on ML-DSA alone. What is left is a verdict that depends on the
+  machine: an entry the key's holder signed out of bounds passes strict mode
+  on an AVX2 verifier and fails on a conforming one, and a valid signature of
+  the boundary class fails only on the AVX2 verifier. The advisory limits the
+  defect to that code path; PQClean's portable verifier gave the expected
+  verdict on all 180 Wycheproof ML-DSA-44 cases when run here (2026-11-21).
+- **Exposure, vault:** the only ML-KEM keys the vault handles are its own,
+  read from `kem-mlkem768.key` in its own directory; it takes no
+  encapsulation or decapsulation key from anyone else. Whoever can write that
+  file can replace the keypair outright, which neither check would stop, and
+  a key PQClean generated passes both. The missing checks never changed what
+  a vault sealed or opened.
+- **Fix:** a migration, not an ignore; nothing was added to
+  [`.cargo/audit.toml`](.cargo/audit.toml). `pqc-signatures` builds on
+  `ml-dsa` 0.1.2 and `pqc-vault` on `ml-kem` 0.3.4 (RustCrypto, pure Rust),
+  and the four `pqcrypto-*` crates are absent from `Cargo.lock`. `ml-dsa`
+  refuses an out-of-bound response when it decodes a signature. `ml-kem`
+  makes both input checks when it imports a key, which the vault does when it
+  loads its key file, before anything is sealed to the key or opened with
+  it. No stored format changed. A binary built with `pqc-signatures` from
+  0.9.3 or earlier still carries the AVX2 verifier: rebuild it.
+- **What this does not claim:** neither `ml-dsa` nor `ml-kem` has had an
+  independent audit (their READMEs say so), and both read the stored private
+  keys, which are expanded encodings and not seeds, through imports they mark
+  deprecated ([`docs/pqc_mode.md`](docs/pqc_mode.md)). Both features stay
+  experimental.
+- **Standing tests:** [`tests/fixtures/pqcrypto_kat/`](tests/fixtures/pqcrypto_kat/README.md)
+  holds a keypair, signatures, a signed envelope, a vault key file and sealed
+  envelopes written by the kernel while it linked the PQClean crates;
+  `pqcrypto_kat` in `src/crypto/signatures.rs` and `src/vault/crypto.rs`, and
+  `tests/pqcrypto_kat_fixtures.rs`, hold the current implementation to them.
+  `mldsa44_checks` requires four Wycheproof infinity-norm cases
+  ([`tests/fixtures/wycheproof/`](tests/fixtures/wycheproof/README.md)) and a
+  response coefficient set to each side of the bound to be refused when the
+  signature is decoded, and a Wycheproof `UseHint` boundary case to verify.
+  `mlkem768_checks` requires a key file with a coefficient of q or more, an
+  altered hash or an altered embedded encapsulation key to be refused by
+  `KemKeypair::from_bytes` and by `FilesystemVaultStore::new`. The other
+  direction (what the new code writes, read by PQClean) was run once before
+  the crates were removed and is recorded in the fixture README; it is not a
+  standing test, because the old implementation is no longer a dependency.
+
 ## Non-goals
 
 The following are explicitly out of scope:
