@@ -3,6 +3,11 @@ use chacha20poly1305::{
     aead::{AeadInOut, KeyInit},
     ChaCha20Poly1305, Nonce, Tag,
 };
+#[cfg(feature = "pqc-vault")]
+use ml_kem::{
+    Decapsulate, DecapsulationKey768, Encapsulate, EncapsulationKey768, ExpandedDecapsulationKey,
+    Generate, KeyExport, MlKem768, TryKeyInit,
+};
 use rand::rngs::SysRng;
 use rand::TryRng;
 use serde::{Deserialize, Serialize};
@@ -687,22 +692,39 @@ fn decrypt_in_place(
     Ok(())
 }
 
-#[derive(Clone, Debug)]
+/// The vault's ML-KEM-768 (FIPS 203) keypair, with the decapsulation key's
+/// stored encoding.
+#[derive(Clone)]
 pub struct KemKeypair {
     #[cfg(feature = "pqc-vault")]
-    pub public: pqcrypto_mlkem::mlkem768::PublicKey,
+    pub public: EncapsulationKey768,
     #[cfg(feature = "pqc-vault")]
-    pub secret: pqcrypto_mlkem::mlkem768::SecretKey,
+    pub secret: DecapsulationKey768,
     #[cfg(feature = "pqc-vault")]
     secret_bytes: zeroize::Zeroizing<Vec<u8>>,
 }
 
+impl std::fmt::Debug for KemKeypair {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KemKeypair").finish_non_exhaustive()
+    }
+}
+
 #[cfg(feature = "pqc-vault")]
 impl KemKeypair {
+    /// Generates a keypair (`ML-KEM.KeyGen`, FIPS 203 section 7.1) from the
+    /// OS RNG. What is stored is the 2400-byte decapsulation key, the same
+    /// encoding every earlier build stored and reads back, not the seed.
     pub fn generate() -> Self {
-        use pqcrypto_traits::kem::SecretKey as _;
-        let (public, secret) = pqcrypto_mlkem::mlkem768::keypair();
-        let secret_bytes = zeroize::Zeroizing::new(secret.as_bytes().to_vec());
+        let secret =
+            DecapsulationKey768::try_generate_from_rng(&mut SysRng).expect("OS RNG unavailable");
+        let public = secret.encapsulation_key().clone();
+        // Deprecated upstream in favor of the seed, like the import in
+        // `KemKeypair::from_bytes`.
+        #[allow(deprecated)]
+        let mut encoded = ml_kem::ExpandedKeyEncoding::to_expanded_bytes(&secret);
+        let secret_bytes = zeroize::Zeroizing::new(encoded.to_vec());
+        encoded.zeroize();
         Self {
             public,
             secret,
@@ -711,24 +733,44 @@ impl KemKeypair {
     }
 
     pub fn public_bytes(&self) -> Vec<u8> {
-        use pqcrypto_traits::kem::PublicKey;
-        self.public.as_bytes().to_vec()
+        self.public.to_bytes().to_vec()
     }
 
     pub fn secret_bytes(&self) -> Vec<u8> {
         self.secret_bytes.to_vec()
     }
 
+    /// Loads a stored keypair: the FIPS 203 encapsulation key (1184 bytes)
+    /// and decapsulation key (2400 bytes), the two halves of
+    /// `kem-mlkem768.key`.
+    ///
+    /// Both FIPS 203 input checks are `ml-kem`'s, made here on import and so
+    /// before any encapsulation or decapsulation:
+    ///
+    /// - section 7.2, the encapsulation key check: the length, and the
+    ///   modulus check (every 12-bit coefficient is below q), on `public` and
+    ///   on the copy inside `secret`;
+    /// - section 7.3, the decapsulation key check: the length, and the hash
+    ///   check (the stored `H(ek)` is the hash of the encapsulation key
+    ///   stored beside it).
+    ///
+    /// `ml-kem` keeps the decapsulation-key import for keys that were not
+    /// stored as a seed and marks it deprecated in favor of seeds; a stored
+    /// key has no seed to return to, so the vault depends on it for as long
+    /// as such key files exist.
     pub fn from_bytes(public: &[u8], secret: &[u8]) -> Result<Self> {
-        use pqcrypto_traits::kem::{PublicKey as _, SecretKey as _};
-        let public = pqcrypto_mlkem::mlkem768::PublicKey::from_bytes(public)
+        let public = EncapsulationKey768::new_from_slice(public)
             .map_err(|_| anyhow!("invalid KEM public key"))?;
-        let secret = pqcrypto_mlkem::mlkem768::SecretKey::from_bytes(secret)
+        let mut encoded = ExpandedDecapsulationKey::<MlKem768>::try_from(secret)
             .map_err(|_| anyhow!("invalid KEM secret key"))?;
-        let secret_bytes = zeroize::Zeroizing::new(secret.as_bytes().to_vec());
+        #[allow(deprecated)]
+        let decoded = DecapsulationKey768::from_expanded(&encoded);
+        encoded.zeroize();
+        let secret_key = decoded.map_err(|_| anyhow!("invalid KEM secret key"))?;
+        let secret_bytes = zeroize::Zeroizing::new(secret.to_vec());
         Ok(Self {
             public,
-            secret,
+            secret: secret_key,
             secret_bytes,
         })
     }
@@ -756,9 +798,15 @@ impl KemKeypair {
 fn kem_encapsulate(kem: &KemKeypair) -> Result<(Vec<u8>, Vec<u8>)> {
     #[cfg(feature = "pqc-vault")]
     {
-        use pqcrypto_traits::kem::{Ciphertext, SharedSecret};
-        let (shared, ct) = pqcrypto_mlkem::mlkem768::encapsulate(&kem.public);
-        Ok((ct.as_bytes().to_vec(), shared.as_bytes().to_vec()))
+        // `ML-KEM.Encaps` (FIPS 203 section 7.2). Its 32 random bytes come
+        // from the OS RNG, and a failure of that RNG panics here, as it does
+        // for the nonce and the DEK drawn beside this call.
+        let (ciphertext, mut shared) = kem
+            .public
+            .encapsulate_with_rng(&mut rand::rand_core::UnwrapErr(SysRng));
+        let out = (ciphertext.to_vec(), shared.to_vec());
+        shared.zeroize();
+        Ok(out)
     }
     #[cfg(not(feature = "pqc-vault"))]
     {
@@ -770,11 +818,15 @@ fn kem_encapsulate(kem: &KemKeypair) -> Result<(Vec<u8>, Vec<u8>)> {
 fn kem_decapsulate(kem: &KemKeypair, kem_ct: &[u8]) -> Result<Vec<u8>> {
     #[cfg(feature = "pqc-vault")]
     {
-        use pqcrypto_traits::kem::{Ciphertext, SharedSecret};
-        let ct = pqcrypto_mlkem::mlkem768::Ciphertext::from_bytes(kem_ct)
+        // `ML-KEM.Decaps` (FIPS 203 section 7.3). The ciphertext type check
+        // of that section is the length check; the key was checked on import.
+        let mut shared = kem
+            .secret
+            .decapsulate_slice(kem_ct)
             .map_err(|_| anyhow!("invalid KEM ciphertext"))?;
-        let shared = pqcrypto_mlkem::mlkem768::decapsulate(&ct, &kem.secret);
-        Ok(shared.as_bytes().to_vec())
+        let out = shared.to_vec();
+        shared.zeroize();
+        Ok(out)
     }
     #[cfg(not(feature = "pqc-vault"))]
     {
@@ -1091,9 +1143,9 @@ mod tests {
     /// ML-KEM-768 key file and sealed envelopes exactly as a vault directory
     /// holds them, with a ciphertext and its shared secret, all written by the
     /// kernel while it linked `pqcrypto-mlkem` 0.1.1 (the README there says
-    /// how). These tests hold whichever ML-KEM implementation this build
-    /// links to that material: a vault keeps its key file and every envelope
-    /// sealed to it.
+    /// how). These tests hold the implementation this build links to that
+    /// material: a vault keeps its key file and every envelope sealed to it.
+    /// They passed unchanged on `pqcrypto-mlkem` before `ml-kem` replaced it.
     #[cfg(feature = "pqc-vault")]
     mod pqcrypto_kat {
         use super::*;
@@ -1193,118 +1245,6 @@ mod tests {
                 key_material: VaultKeyMaterial::Plaintext,
             })
             .expect("open the vault directory")
-        }
-
-        /// Writes the fixture with the ML-KEM-768 implementation this build
-        /// links. It is run once, by hand, while that implementation is
-        /// `pqcrypto-mlkem`, and never again:
-        ///   cargo test --features pqc-vault --lib write_pqcrypto_mlkem768_kat -- --ignored
-        #[test]
-        #[ignore = "writes tests/fixtures/pqcrypto_kat/mlkem768_kat.json; see the README beside it"]
-        fn write_pqcrypto_mlkem768_kat() {
-            let dir = tempfile::tempdir().unwrap();
-            let ruleset_hash: [u8; 32] = Sha256::digest(b"securacv pqcrypto kat: ruleset").into();
-            let mut envelopes = Vec::new();
-
-            // One vault directory, opened once per mode through the store the
-            // daemon uses: the first open writes master.key and the KEM key
-            // file, the second loads them. Each envelope is the file that
-            // store wrote.
-            for (mode, envelope_id, clear) in [
-                (
-                    VaultCryptoMode::Pq,
-                    "pqcrypto-kat-pq",
-                    &b"sealed in pq mode by the pqcrypto-mlkem vault"[..],
-                ),
-                (
-                    VaultCryptoMode::Hybrid,
-                    "pqcrypto-kat-hybrid",
-                    &b"sealed in hybrid mode by the pqcrypto-mlkem vault"[..],
-                ),
-            ] {
-                let store = open_store(dir.path(), mode);
-                let mut clear_bytes = clear.to_vec();
-                store
-                    .seal_bytes(envelope_id, ruleset_hash, &mut clear_bytes)
-                    .unwrap();
-                let file = std::fs::read(dir.path().join(format!("{envelope_id}.vault"))).unwrap();
-                envelopes.push(serde_json::json!({
-                    "mode": mode.to_string(),
-                    "envelope_id": envelope_id,
-                    "plaintext": hex::encode(clear),
-                    "file": hex::encode(file),
-                }));
-            }
-
-            let key_file = std::fs::read(dir.path().join(KEY_FILE_NAME)).unwrap();
-            let master_key: [u8; 32] = std::fs::read(dir.path().join("master.key"))
-                .unwrap()
-                .try_into()
-                .unwrap();
-            let (public, secret) = split_key_file(&key_file);
-            let keypair = KemKeypair::from_bytes(public, secret).unwrap();
-
-            // The shape hybrid mode wrote before `hybrid-ml-kem-768`: the
-            // `ml-kem-768` label with a wrap of the DEK itself beside the KEM
-            // ciphertext. Nothing seals it anymore, so it is assembled the way
-            // `legacy_or_shaped_envelope_still_opens_with_either_secret` does.
-            let legacy_id = "pqcrypto-kat-legacy-or";
-            let legacy_clear =
-                &b"sealed in the earlier hybrid shape by the pqcrypto-mlkem vault"[..];
-            let mut legacy = seal_v2(
-                legacy_id,
-                ruleset_hash,
-                legacy_clear,
-                VaultCryptoMode::Pq,
-                &master_key,
-                Some(&keypair),
-            )
-            .unwrap();
-            let mut shared = kem_decapsulate(&keypair, &legacy.kem_ct).unwrap();
-            let dek = kdf_dek(&shared, &legacy.kdf_info);
-            shared.zeroize();
-            legacy.classical_wrap =
-                Some(wrap_dek(&master_key, legacy_id, &ruleset_hash, &dek).unwrap());
-            envelopes.push(serde_json::json!({
-                "mode": "legacy-or",
-                "envelope_id": legacy_id,
-                "plaintext": hex::encode(legacy_clear),
-                "file": hex::encode(VaultEnvelope::V2(legacy).encode().unwrap()),
-            }));
-
-            let (ciphertext, shared_secret) = kem_encapsulate(&keypair).unwrap();
-            assert_eq!(
-                kem_decapsulate(&keypair, &ciphertext).unwrap(),
-                shared_secret
-            );
-            // Implicit rejection: a ciphertext that is not an encapsulation
-            // to this key still decapsulates, to a secret derived from the
-            // key's z value and the ciphertext.
-            let mut rejected_ciphertext = ciphertext.clone();
-            rejected_ciphertext[0] ^= 0x01;
-            let rejected_shared_secret = kem_decapsulate(&keypair, &rejected_ciphertext).unwrap();
-            assert_ne!(rejected_shared_secret, shared_secret);
-
-            let doc = serde_json::json!({
-                "description": "ML-KEM-768 known-answer material: a vault directory's KEM key \
-                    file and master key, envelopes sealed to them (each `file` is a .vault file), \
-                    and one encapsulation with its shared secret. Never regenerate.",
-                "written_by": "witness-kernel linking pqcrypto-mlkem 0.1.1 (PQClean ML-KEM-768)",
-                "kem_alg": KEM_ALG_ML_KEM_768,
-                "public_key": hex::encode(keypair.public_bytes()),
-                "secret_key": hex::encode(keypair.secret_bytes()),
-                "ciphertext": hex::encode(&ciphertext),
-                "shared_secret": hex::encode(&shared_secret),
-                "rejected_ciphertext": hex::encode(&rejected_ciphertext),
-                "rejected_shared_secret": hex::encode(&rejected_shared_secret),
-                "key_file_name": KEY_FILE_NAME,
-                "key_file": hex::encode(&key_file),
-                "master_key": hex::encode(master_key),
-                "ruleset_hash": hex::encode(ruleset_hash),
-                "envelopes": envelopes,
-            });
-            let json = serde_json::to_string_pretty(&doc).unwrap();
-            std::fs::write(KAT_PATH, json + "\n").unwrap();
         }
 
         #[test]
@@ -1516,6 +1456,269 @@ mod tests {
                 decrypt_v2(&envelope, &second.master_key, second.kem_keypair.as_ref()).unwrap(),
                 b"round trip"
             );
+        }
+    }
+
+    /// The two input checks FIPS 203 requires and RUSTSEC-2026-0585 found
+    /// missing from the implementation this module used before `ml-kem`. The
+    /// checks are `ml-kem`'s; these tests prove they are made where a key
+    /// enters the vault, before anything is encapsulated to it or
+    /// decapsulated with it.
+    #[cfg(feature = "pqc-vault")]
+    mod mlkem768_checks {
+        use super::*;
+        use crate::vault::{FilesystemVaultStore, VaultConfig, VaultKeyMaterial};
+
+        /// The field modulus q of ML-KEM.
+        const Q: u16 = 3329;
+        /// The decapsulation key is
+        /// `dk_pke (1152) || ek (1184) || H(ek) (32) || z (32)`
+        /// (FIPS 203, `ML-KEM.KeyGen_internal`), and the encapsulation key is
+        /// `t-hat (1152) || rho (32)`.
+        const EK_IN_DK: usize = 1152;
+        const HASH_IN_DK: usize = EK_IN_DK + 1184;
+        const Z_IN_DK: usize = HASH_IN_DK + 32;
+
+        /// Writes one coefficient of t-hat. `ByteEncode_12` (FIPS 203 section
+        /// 4.2.1) packs two 12-bit coefficients into three bytes, least
+        /// significant bits first.
+        fn set_coefficient(key: &mut [u8], index: usize, value: u16) {
+            assert!(value < 1 << 12);
+            let start = (index / 2) * 3;
+            if index.is_multiple_of(2) {
+                key[start] = value as u8;
+                key[start + 1] = (key[start + 1] & 0xF0) | (value >> 8) as u8;
+            } else {
+                key[start + 1] = (key[start + 1] & 0x0F) | ((value & 0x0F) << 4) as u8;
+                key[start + 2] = (value >> 4) as u8;
+            }
+        }
+
+        fn refusal(public: &[u8], secret: &[u8]) -> String {
+            KemKeypair::from_bytes(public, secret)
+                .expect_err("the key must be refused")
+                .to_string()
+        }
+
+        #[test]
+        fn an_encapsulation_key_with_a_coefficient_not_below_q_is_refused() {
+            let kat = pqcrypto_kat::load();
+            // FIPS 203 section 7.2, modulus check. The first coefficient set
+            // to 0xFFF, then q itself and 0xFFF at the first and last
+            // coefficient of each of the three polynomials (the positions of
+            // Wycheproof's ModulusOverflow cases).
+            let mut public = kat.public_key.clone();
+            set_coefficient(&mut public, 0, 0xFFF);
+            assert_eq!(&public[..2], &[0xFF, kat.public_key[1] | 0x0F]);
+            assert_eq!(refusal(&public, &kat.secret_key), "invalid KEM public key");
+
+            for index in [0, 255, 256, 511, 512, 767] {
+                for value in [Q, 0xFFF] {
+                    let mut public = kat.public_key.clone();
+                    set_coefficient(&mut public, index, value);
+                    assert_eq!(
+                        refusal(&public, &kat.secret_key),
+                        "invalid KEM public key",
+                        "coefficient {index} = {value}"
+                    );
+                }
+                // One below q is a coefficient. The key is then another
+                // well-formed key, and it loads: nothing here ties the public
+                // half of the file to the secret half, as nothing did before.
+                let mut public = kat.public_key.clone();
+                set_coefficient(&mut public, index, Q - 1);
+                assert_ne!(public, kat.public_key);
+                let keypair = KemKeypair::from_bytes(&public, &kat.secret_key)
+                    .unwrap_or_else(|e| panic!("coefficient {index} = q - 1: {e}"));
+                assert_eq!(keypair.public_bytes(), public);
+            }
+        }
+
+        #[test]
+        fn a_decapsulation_key_whose_stored_hash_is_altered_is_refused() {
+            let kat = pqcrypto_kat::load();
+            // FIPS 203 section 7.3, hash check: H(ek) stored in the key must
+            // be the hash of the encapsulation key stored beside it.
+            for offset in [0, 15, 31] {
+                for mask in [0x01u8, 0x80] {
+                    let mut secret = kat.secret_key.clone();
+                    secret[HASH_IN_DK + offset] ^= mask;
+                    assert_eq!(
+                        refusal(&kat.public_key, &secret),
+                        "invalid KEM secret key",
+                        "hash byte {offset} xor {mask:#04x}"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn a_decapsulation_key_whose_embedded_encapsulation_key_is_altered_is_refused() {
+            let kat = pqcrypto_kat::load();
+            assert_eq!(
+                &kat.secret_key[EK_IN_DK..HASH_IN_DK],
+                &kat.public_key[..],
+                "the decapsulation key embeds the encapsulation key"
+            );
+            // A bit of t-hat, a bit of rho, and a coefficient past q: the
+            // stored hash no longer matches in the first two, and the third
+            // fails the modulus check on the embedded copy as well.
+            let mut altered_t_hat = kat.secret_key.clone();
+            altered_t_hat[EK_IN_DK + 700] ^= 0x01;
+            let mut altered_rho = kat.secret_key.clone();
+            altered_rho[HASH_IN_DK - 1] ^= 0x01;
+            let mut overflowed = kat.secret_key.clone();
+            set_coefficient(&mut overflowed[EK_IN_DK..HASH_IN_DK], 0, 0xFFF);
+            for (what, secret) in [
+                ("t-hat", altered_t_hat),
+                ("rho", altered_rho),
+                ("coefficient", overflowed),
+            ] {
+                assert_eq!(
+                    refusal(&kat.public_key, &secret),
+                    "invalid KEM secret key",
+                    "{what}"
+                );
+            }
+        }
+
+        #[test]
+        fn a_vault_directory_whose_key_file_fails_a_check_does_not_open() {
+            let kat = pqcrypto_kat::load();
+            let key_file = |public: &[u8], secret: &[u8]| -> Vec<u8> {
+                let mut file = Vec::new();
+                file.extend_from_slice(&(public.len() as u32).to_le_bytes());
+                file.extend_from_slice(public);
+                file.extend_from_slice(&(secret.len() as u32).to_le_bytes());
+                file.extend_from_slice(secret);
+                file
+            };
+            assert_eq!(key_file(&kat.public_key, &kat.secret_key), kat.key_file);
+
+            let mut overflowed_public = kat.public_key.clone();
+            set_coefficient(&mut overflowed_public, 0, 0xFFF);
+            let mut altered_hash = kat.secret_key.clone();
+            altered_hash[HASH_IN_DK] ^= 0x01;
+
+            for (file, expected) in [
+                (
+                    key_file(&overflowed_public, &kat.secret_key),
+                    "invalid KEM public key",
+                ),
+                (
+                    key_file(&kat.public_key, &altered_hash),
+                    "invalid KEM secret key",
+                ),
+            ] {
+                for mode in [
+                    VaultCryptoMode::Classical,
+                    VaultCryptoMode::Pq,
+                    VaultCryptoMode::Hybrid,
+                ] {
+                    let dir = tempfile::tempdir().unwrap();
+                    std::fs::write(dir.path().join("kem-mlkem768.key"), &file).unwrap();
+                    std::fs::write(dir.path().join("master.key"), kat.master_key).unwrap();
+                    let opened = FilesystemVaultStore::new(VaultConfig {
+                        local_path: dir.path().to_path_buf(),
+                        crypto_mode: mode,
+                        key_material: VaultKeyMaterial::Plaintext,
+                    });
+                    match opened {
+                        Ok(_) => panic!("a vault opened in {mode} mode with a refused key file"),
+                        Err(e) => assert_eq!(e.to_string(), expected, "{mode} mode"),
+                    }
+                    assert_eq!(
+                        std::fs::read(dir.path().join("kem-mlkem768.key")).unwrap(),
+                        file,
+                        "a refused key file is left as it was"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn what_no_check_covers_still_cannot_open_an_envelope() {
+            // Neither check reads the secret vector (the first 1152 bytes) or
+            // z (the last 32). A key altered there loads, as it always did.
+            // An altered secret vector then decapsulates the stored
+            // ciphertext to another secret; an altered z changes only the
+            // implicit-rejection secret.
+            let kat = pqcrypto_kat::load();
+
+            let mut altered_vector = kat.secret_key.clone();
+            for byte in altered_vector[..EK_IN_DK].iter_mut().step_by(7) {
+                *byte ^= 0x55;
+            }
+            let keypair = KemKeypair::from_bytes(&kat.public_key, &altered_vector).unwrap();
+            assert_ne!(
+                kem_decapsulate(&keypair, &kat.ciphertext).unwrap(),
+                kat.shared_secret
+            );
+            let pq = kat
+                .envelopes
+                .iter()
+                .find(|envelope| envelope.mode == "pq")
+                .expect("the pq envelope");
+            let crate::vault::format::VaultEnvelope::V2(envelope) =
+                crate::vault::format::VaultEnvelope::decode(&pq.file).unwrap()
+            else {
+                panic!("not a v2 envelope");
+            };
+            assert!(decrypt_v2(&envelope, &kat.master_key, Some(&keypair)).is_err());
+
+            let mut altered_z = kat.secret_key.clone();
+            altered_z[Z_IN_DK] ^= 0x01;
+            let keypair = KemKeypair::from_bytes(&kat.public_key, &altered_z).unwrap();
+            assert_eq!(
+                kem_decapsulate(&keypair, &kat.ciphertext).unwrap(),
+                kat.shared_secret
+            );
+            assert_ne!(
+                kem_decapsulate(&keypair, &kat.rejected_ciphertext).unwrap(),
+                kat.rejected_shared_secret
+            );
+        }
+
+        /// Deterministic filler: SHA-256 in counter mode.
+        fn filler(label: &str, len: usize) -> Vec<u8> {
+            let mut out = Vec::with_capacity(len + 32);
+            let mut counter = 0u32;
+            while out.len() < len {
+                let mut hasher = Sha256::new();
+                hasher.update(label.as_bytes());
+                hasher.update(counter.to_le_bytes());
+                out.extend_from_slice(&hasher.finalize());
+                counter += 1;
+            }
+            out.truncate(len);
+            out
+        }
+
+        #[test]
+        fn arbitrary_bytes_as_a_key_file_or_ciphertext_never_panic() {
+            let kat = pqcrypto_kat::load();
+            let keypair = kat.keypair();
+            for case in 0..32u32 {
+                // 1184 arbitrary bytes hold a coefficient at or past q with
+                // near certainty, and 2400 arbitrary bytes do not hash to
+                // themselves: both are refused.
+                let public = filler(&format!("public {case}"), 1184);
+                let secret = filler(&format!("secret {case}"), 2400);
+                assert_eq!(refusal(&public, &kat.secret_key), "invalid KEM public key");
+                assert_eq!(refusal(&kat.public_key, &secret), "invalid KEM secret key");
+                // Any 1088 bytes decapsulate (implicit rejection), to a
+                // secret that is not the stored one.
+                let ciphertext = filler(&format!("ciphertext {case}"), 1088);
+                let shared = kem_decapsulate(&keypair, &ciphertext).unwrap();
+                assert_eq!(shared.len(), 32);
+                assert_ne!(shared, kat.shared_secret);
+            }
+        }
+
+        #[test]
+        fn debug_output_carries_no_key_material() {
+            let kat = pqcrypto_kat::load();
+            assert_eq!(format!("{:?}", kat.keypair()), "KemKeypair { .. }");
         }
     }
 
