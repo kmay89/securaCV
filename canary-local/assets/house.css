@@ -8,7 +8,9 @@
 .house-main { display: grid; grid-template-columns: minmax(0, 1fr) 330px;
   gap: 22px; max-width: 1280px; margin: 26px auto 70px; padding: 0 24px;
   align-items: start; }
-@media (max-width: 940px) { .house-main { grid-template-columns: 1fr; } }
+/* minmax(0, 1fr), not 1fr: a bare 1fr track is as wide as its widest item
+   (the panel), and the page scrolled sideways on a phone. */
+@media (max-width: 940px) { .house-main { grid-template-columns: minmax(0, 1fr); } }
 
 .house-stagecol { min-width: 0; }
 .house-stage { position: relative; border: 1px solid var(--edge);

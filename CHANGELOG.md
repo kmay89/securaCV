@@ -157,7 +157,7 @@
   Arduino compiles are CI's, and `BUILD_PROFILE_MINIMAL` is compiled by no
   job. Nothing was run on a device, and no new bench row has been run.
 
-### One name per Lab bench, and three app screens say what their search does
+### One name per Lab bench, no Lab page that scrolls sideways, and three app screens say what their search does
 
 - **The Lab's benches.** `canary-local/build-line.json` renamed seven benches
   and keeps the old names as `wasNamed`; the page titles followed in #1991
@@ -173,6 +173,19 @@
   `tests/head.test.js` holds the rule on its own reading of the pages. The
   flasher keeps "where Canaries hatch"; its screens still call it the
   Nursery, and its lede now introduces the nickname.
+- **Pages that scrolled sideways.** The Lab's landing page scrolled 142px
+  sideways at 1280 wide and 99px on a 390px phone: a decorative glow bled
+  past its box and widened the document. The break-glass bench scrolled
+  168px on a phone and 295px on a tablet, the House 80px, the Vision 54px
+  and the radar school 49px on a phone, the case finder 21px on a tablet,
+  and every bench 22px at 320. Five causes, each a line or two of CSS: the
+  glow is clipped by the main column; grid tracks may no longer be as wide
+  as their widest item; a value that is one long token may break; two
+  control rows may wrap; and the Lab bar, which never wraps, drops its
+  stage crumb on a depth page below 900px and its Glossary link at 320.
+  Measured in Chromium with a fresh load at each of twelve widths from 320
+  to 1440: no page scrolls sideways. `tests/sideways_scroll.test.js` holds
+  the five fixes at the source; no CI job measures a layout.
 - **The apps.** Two iPhone screens said "nothing leaves your home" about a
   Bluetooth search, and the Witness Wall's searching card said "nothing
   leaves this room" while its settings screen takes a hub address somewhere

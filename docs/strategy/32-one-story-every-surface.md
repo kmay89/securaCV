@@ -321,10 +321,13 @@ defects with one right fix; each is stated as the choice it is.
    deck says Pick, Case, Wire, Switch on, Home, Check, and puts flashing
    under "Switch on". So the site's stop 4 opens a page the Lab's rail
    files under stage 3, and "Watch it work" is a Check on the site and a
-   Home bench in the Lab. Taking the rail's six means one station redrawn
-   in the room and one scene in the deck; taking the older six means
-   re-sorting the rail. After the choice, the deck should be held to the
-   manifest by a test and a carried copy, not restated by hand.
+   Home bench in the Lab. The Lab's own landing page shows two of the sets
+   at once: the room's chips read Choose, Enclosure, Board, Sense, Home,
+   Proof, and the cards under them Choose, Build, Flash. Taking the rail's
+   six means one station redrawn in the room and one scene in the deck;
+   taking the older six means re-sorting the rail. After the choice, the
+   deck should be held to the manifest by a test and a carried copy, not
+   restated by hand.
 2. **The device status vocabulary.** The site's four words (Available, Maker
    build, Preview, Concept) are each mapped onto the ladder
    `canary-local/devices/figures.json` derives. The Lab has two more
