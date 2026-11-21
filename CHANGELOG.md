@@ -106,16 +106,17 @@
   hub-io's real decompress, seed and rehash (before the replay onto main put
   the staging in the app's cache and the decompress in `decompress_into`,
   which only the replay's own unit tests cover); the merged backoffice suite
-  (207 of 207, Playwright included) at today's clock and under a Date shim at
-  2028-01-01; the four `firmware/tests_host` lanes and the canary-wap host
-  suite; the Lab's node suites and headless Chromium 153 probes. Left to CI,
-  not run here: the PlatformIO builds of the glue against the real NimBLE
-  (Sense on core 3, Vision on core 2), the canary-wap sketch, the new
-  host-lane job itself, the PQC cargo lanes, the Tauri builds on Windows and
-  macOS (the Flasher's owner-only change was type-checked for both), the
-  backoffice image and the tvOS build. Nothing was tried in WKWebView,
-  WebKitGTK, Safari or Firefox, against a reCamera, on a deployed backoffice,
-  or on a device.
+  (216 of 216 after the replay, Playwright included) at today's clock and
+  under a Date shim at 2028-01-01; the four `firmware/tests_host` lanes and
+  the canary-wap host suite; the Lab's node suites and headless Chromium 153
+  probes. Left to CI, not run here: the PlatformIO builds of the glue against
+  the real NimBLE (Sense on core 3, Vision on core 2), the canary-wap sketch,
+  the new host-lane job itself, the PQC cargo lanes, the Tauri builds on
+  Windows and macOS (hub-io and the Flasher as replayed were type-checked for
+  both, clippy with `-D warnings` included, and nothing was built or linked
+  for either), the backoffice image and the tvOS build. Nothing was tried in
+  WKWebView, WebKitGTK, Safari or Firefox, against a reCamera, on a deployed
+  backoffice, or on a device.
 
 ### canary-wap reads each POST body by its own members and refuses a Chirp TTL, a Beacon pairing and a mesh hash it cannot honor, four secret compares go through a constant-time helper, the setup doors log what they refused, the Vision app keeps to its CSP, the dash sheet, the watch's boot log and the splash wordmark follow their glass, the Lab's bench keeps an erase, and the 7-inch frame's words, the build matrix's claims and the parity plan are held to what they rest on (#2013, wave 26)
 

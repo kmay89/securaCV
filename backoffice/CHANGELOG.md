@@ -37,18 +37,20 @@ the package version, so neither moves without the other.
   `Cache-Control: no-store` unless its route names its own caching (`/status`,
   `/status.json`, the store's catalog and estimate, `robots.txt`,
   `security.txt`). The JSON API, the CSV exports and a contact's data-access
-  export used to carry none, and `/api/users` and `/api/health` also lacked
-  `nosniff` and `X-Frame-Options`: a browser's disk cache kept customer
-  emails, and Back after logout showed `/api/users` again.
+  export used to carry none (`/api/users` and `/api/health` also lacked
+  `nosniff` and `X-Frame-Options` until #1972 sent them through the shared
+  answer): a browser's disk cache kept customer emails, and Back after
+  logout showed `/api/users` again.
 - **A stray cookie never refuses a request.** A cookie the backoffice did not
   write whose value does not percent-decode (`50%`, a legacy `escape()`'s
   `%E9`) is kept as written. It used to turn every route, the login,
   `/healthz` and a customer's order page included, into `400 URI malformed`.
-- **The dated tests carry their own clock.** `applyStripeEvent` takes an
-  optional clock (the webhook keeps the wall clock), and the tests that
-  asserted dates carry their own, so the four dates found to turn the gate
-  red (2026-11-09, 2027-01-01, about 2027-04-17 and 2027-10-16) no longer
-  do: shown under a Date shim at five dates from 2026-10-21 to 2028-01-01.
+- **The dated tests carry their own clock.** `applyStripeEvent`'s optional
+  clock (since #1967; the webhook keeps the wall clock) is passed by every
+  away test, and the other tests that asserted dates carry their own, so the
+  four dates found to turn the gate red (2026-11-09, 2027-01-01, about
+  2027-04-17 and 2027-10-16) no longer do: shown under a Date shim at five
+  dates from 2026-10-21 to 2028-01-01.
 - **The door never holds the house up.** Password and API-token verification
   run off the event loop (`crypto.scrypt`, one password at a time, two
   tokens), so a burst of logins or bearer calls no longer stalls the Stripe
