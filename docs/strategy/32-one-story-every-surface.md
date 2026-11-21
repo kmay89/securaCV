@@ -210,7 +210,8 @@ broken. Each decision above has a gate.
 
 ## What only the owner can decide
 
-Listed once, in the order they block something.
+Listed once, in the order they block something. Three items that stood here
+were not the owner's after all and are closed below.
 
 1. **Make the website repository public, or keep it private.** Public makes
    the Engine Room's promise true and removes the marks. Private is a
@@ -229,48 +230,67 @@ Listed once, in the order they block something.
    header, a search and a share card.
 7. **Store listings**: the App Store for the two Apple apps, HACS's default
    catalog for the integration.
-8. **The device's own words.** The boot banner and one console scene say
-   "tamper-proof"; the rule everywhere else is *tamper-evident*. The string
-   is compiled into six emulator bundles, so the fix is a firmware change
-   plus the dist rebuild, and it changes what a device prints.
-9. **Labels.** The forms and the sign-up links name issue labels
-   (`feedback`, `build-gallery`, `maker-corps`, `build-request`) that this
-   repository does not have yet; GitHub drops an unknown label silently.
-10. **A name and an address.** No page names a person, an entity's state or
-    a mailing address, and every "talk to us" is one Gmail address.
-11. **The social queue.** Several queued drafts use the retired claims
-    ("24-hour memory", clips that "delete themselves"). They are drafts, so
-    nothing was published; they should not be.
+8. **A name and an address.** No page names a person, an entity's state or
+   a mailing address, and every "talk to us" is one Gmail address.
+9. **The WAP on arduino-esp32 4.x.** The sketch does not compile on the new
+   core major (the first error is an mbedTLS header). The PR build now
+   floats on the 3.x line, so nothing is red; the port is a project with a
+   decision in front of it (`firmware/PLATFORMS.md`).
+10. **The Home Assistant app's base image.** Dependabot proposes Alpine 3.24
+    one base at a time, and the app's own test requires all four bases, the
+    stated Python and jq, and the CI pins to move together. That is one
+    reviewed change to what every install runs, not a merge button.
+
+## Closed since (2026-11-21)
+
+- **The device's own words.** The boot banner and the console greeting say
+  *tamper-evident*; a display no longer promises to "never phone home", the
+  WAP no longer says nobody can alter a record, and no setup page says
+  "nothing leaves your home" without a scope. `scripts/lint_tamper_word.py`
+  and `scripts/tests/test_device_copy_claims.py` hold both, across firmware
+  strings, portal pages, the Lab and the desktop app, and the six display
+  emulator bundles were rebuilt.
+- **Labels.** Nine labels the issue forms apply are declared in
+  `.github/labels.yml`. Three sign-up flows on the site relied on a label in
+  a URL, which GitHub applies only for someone allowed to label issues; each
+  has a form now. `scripts/tests/test_issue_labels.py` holds forms, labels
+  and the site's list to each other.
+- **The social queue.** The three drafts that carried retired claims were
+  rewritten to the ladder and the retention facts.
+- **The Lab's footers and its "released".** Seventeen pages end "runs in
+  your browser · nothing is uploaded"; "released" means a print-validated
+  case and published firmware, never "shipping".
+- **A flashing path with no detour.** The home page's "Flash it" and the
+  site's Lab page open the flasher.
+- **`launch_posts.md` and the READMEs** (in #1967).
+- **The page-level claims the audit listed** on the site (its PR #267), and
+  five stale statements in this repository's docs.
 
 ## Backlog, in order
 
 1. **One map for the six stages.** The site's journey page should render
    from the Lab's manifest instead of restating it.
-2. **Lab bench names.** The page titles now lead with the manifest's name
-   for each bench; seven benches still carry the old name in their own
-   headline and in links from other benches.
-3. **The Lab's footers.** Sixteen pages end "nothing here phones anywhere".
-   It is true of the page (its content policy allows only its own origin),
-   and it is the phrase the claims audit retired elsewhere because it reads
-   as a claim about the product. One wording for both sites.
-4. **The device status vocabulary.** The site has four words and a ladder;
-   the Lab says "released" for things the registry calls unfinished. One
-   vocabulary, carried.
-5. **Fold four pages.** The Story into the Showroom, the Maker Corps into
+2. **Lab bench names.** The page titles lead with the manifest's name for
+   each bench; seven benches still carry the old name in their own headline
+   and in links from other benches.
+3. **The device status vocabulary.** The site has four words and a ladder;
+   the Lab's catalogs say "released" and "in development". One vocabulary,
+   carried.
+4. **Fold four pages.** The Story into the Showroom, the Maker Corps into
    Build, Feedback into Contact, the Demo Board into News. Each is a page
    that exists because it was built, not because a reader needs two.
-6. **`launch_posts.md` and the READMEs.** The launch kit predates the claims
-   audit; the front README has no link to the site's install page.
-7. **A flashing path with no detour.** "Flash it" on three surfaces opens a
-   path picker rather than the flasher.
-8. **News with nothing in it.** The page promises everything announced, and
+5. **News with nothing in it.** The page promises everything announced, and
    nothing has been. Demote it from the footer until the first post.
-9. **The Home Assistant app's own store text.** Its documentation tab ends in
+6. **The Home Assistant app's own store text.** Its documentation tab ends in
    a link to the issue tracker and nothing else, and two option descriptions
    still say "add-on". It should link the site's Home Assistant page and the
-   Help Desk. Left for the next change that already rebuilds the app: any
-   edit under `privacy_witness_kernel/` republishes its image on merge, and
-   a wording fix is not a reason to ship one.
+   Help Desk. Left for the change that moves the base image (owner item 10):
+   any edit under `privacy_witness_kernel/` republishes its image on merge,
+   and a wording fix is not a reason to ship one.
+7. **iOS and tvOS strings.** Three screens say "nothing leaves your home" or
+   "this room" about a Bluetooth search or a LAN read. Each is true in its
+   scope and none was changed here, because nothing in this pass could
+   build those apps; they are not held by the device-copy test either.
 
 ## The test
 
