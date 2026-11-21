@@ -19,9 +19,16 @@ product contradicted its own docs/security/SECURITY_MODEL.md:
 
 This suite reads the places a person is told what the product does — firmware
 strings, portal pages, the Lab's pages, scripts, generators and generated
-data, and the desktop app's pages — and fails on any of the three, in code.
-A comment is not copy: comment lines are skipped, and the two files that
-state the rule in prose are listed with the reason.
+data, the desktop app's pages, and the iPhone, watch and Apple TV apps'
+screens — and fails on any of the three, in code. A comment is not copy:
+comment lines are skipped, and the two files that state the rule in prose are
+listed with the reason.
+
+The apps came last (2026-11): two iPhone screens said "nothing leaves your
+home" about a Bluetooth search, and the Wall's searching card said "nothing
+leaves this room" while its own settings screen explained, in a comment, why
+that sentence cannot be unconditional there (a hub address somewhere else is a
+supported input). Each was true of the search it described and none said so.
 
 What to write instead is what stays put, said with its scope: the record
 stays on the device; a change to any entry shows; this page runs in your
@@ -49,8 +56,12 @@ SOURCES = [
     ("canary-local/devices", "*.json", False),
     ("desktop/src", "*", True),
     ("desktop-lab/src", "*", True),
+    ("ios/Sources", "*.swift", True),
+    ("ios/Shared", "*.swift", True),
+    ("tvos/WitnessWall/Sources", "*.swift", True),
 ]
-EXTS = {".c", ".h", ".hpp", ".cpp", ".ino", ".html", ".js", ".mjs", ".py", ".json"}
+EXTS = {".c", ".h", ".hpp", ".cpp", ".ino", ".html", ".js", ".mjs", ".py", ".json",
+        ".swift"}
 SKIP_PARTS = {"tests_host", "tests", "test", "third_party", "vendor", "build",
               "dist", "node_modules", ".pio", "target"}
 
@@ -65,9 +76,10 @@ RULES = [
                 r"\bcan\s+(?:(?:quietly|silently)\s+)?"
                 r"(?:alter|change|edit|forge|rewrite)\b", re.I),
      "a signed, hash-chained log shows a change; it prevents none"),
-    (re.compile(r"\bnothing\s+leaves\s+your\s+home\b", re.I),
-     "unscoped: say what stays (the record, on the device) and name the one "
-     "call a device makes on its own"),
+    # "This room" and "the room" are the Apple TV's form of the same sentence.
+    (re.compile(r"\bnothing\s+leaves\s+(?:your\s+home|th(?:is|e)\s+room)\b", re.I),
+     "unscoped: say what stays (the record, on the device; a search, on your "
+     "network) and name the one call a device makes on its own"),
 ]
 
 # Files that state the rule in prose rather than make the claim.
@@ -88,6 +100,9 @@ MUST_FAIL = [
     "so no one can forge an entry",
     "give:'One dashboard and one timeline nobody — not even you — can quietly edit.'",
     '"The record it keeps now is one nobody — including you — can silently edit."',
+    'Text("This phone listens for it over Bluetooth — nothing leaves your home. iOS asks for Bluetooth next.")',
+    'Text("so does every Canary that publishes a fleet report, hub or not. Nothing leaves this room.")',
+    "no subscription, nothing leaves the room",
 ]
 MUST_PASS = [
     '"verify their chains on its own silicon, with no cloud in between.",',
@@ -100,6 +115,9 @@ MUST_PASS = [
     "Nothing leaves this page.",
     "give:'One dashboard, and one timeline where any edit shows — yours included.'",
     "Nobody answered: commit anyway, forgetting the session",
+    'Text("This phone listens for it over Bluetooth — a short-range search that uses no internet. iOS asks for Bluetooth next.")',
+    'Text("so does every Canary that publishes a fleet report, hub or not. The search stays on your network.")',
+    "Nothing leaves the network, and nothing is stored.",
 ]
 
 
@@ -153,7 +171,9 @@ class TheRules(unittest.TestCase):
         for s in ("// a mode that can't phone home can't be steered",
                   " * headers with a key nobody can change",
                   "# preserving the promise that nothing phones anywhere",
-                  "<!-- nothing leaves your home -->"):
+                  "<!-- nothing leaves your home -->",
+                  '                    // No unconditional "nothing leaves this room" here: a',
+                  '    /// contacted. This is the app\'s "nothing phones home" gate: every base URL'):
             self.assertIsNone(verdict(s), s)
 
 
@@ -175,6 +195,11 @@ class TheTree(unittest.TestCase):
             "canary-local/devices/wap.json",
             "canary-local/devices/hub_image.json",
             "desktop/src/index.html",
+            "ios/Sources/SecuraCV/Views/TodayView.swift",
+            "ios/Sources/SecuraCV/Views/CanarySetupView.swift",
+            "ios/Shared/MagicPairPlan.swift",
+            "tvos/WitnessWall/Sources/WitnessWall/WallView.swift",
+            "tvos/WitnessWall/Sources/WitnessWall/WallSettingsView.swift",
         ):
             self.assertIn(rel, seen, f"{rel} is no longer read — a device's words left the scan")
 
