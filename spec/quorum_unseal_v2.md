@@ -266,6 +266,12 @@ carry the owner's **declared** `context.operator`.)*
 
 - Baseline: trustee signing keys are **Argon2id-passphrase-wrapped at rest**
   (two-component consent; converges with ENTERPRISE_CUSTODY §5).
+  *(Shipped as a tool, not enforced: `break_glass trustee keygen` /
+  `trustee wrap` write a TKG1 file — the MKG1 keyguard layout under the AAD
+  domain `securacv-trustee-key-v1`, bound to the trustee id and public key —
+  and the passphrase comes from the terminal or `--passphrase-fd`, never argv
+  or the environment. A plaintext key still signs, with a warning. The policy
+  records nothing about wrapping, because the hub cannot check it.)*
 - Policy knobs: **hardware-held trustee keys** (FIDO2/PIV/OpenPGP,
   non-exportable, touch-gated), enforced per-trustee at authorize; and
   **enrollment attestation** recorded beside the trustee entry and surfaced
