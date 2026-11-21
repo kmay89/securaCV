@@ -243,13 +243,16 @@ def _battery_low_alerts(hass: HomeAssistant) -> bool:
     return Template(condition["value_template"], hass).async_render(variables=dict(context))
 
 
-def _battery_recovered_message(hass: HomeAssistant) -> str:
-    """Render the battery blueprint's recovered push message."""
+def _battery_recovered(hass: HomeAssistant) -> tuple[bool, str]:
+    """Render the battery blueprint's recovered branch the way the automation
+    does: whether its conditions pass (the branch runs), and its push message."""
     from homeassistant.helpers.template import Template
 
     recovered, context = _battery_branch(hass, "recovered")
+    templates = [c for c in recovered["conditions"] if c["condition"] == "template"]
+    runs = all(Template(c["value_template"], hass).async_render(variables=dict(context)) is True for c in templates)
     (push,) = [step for step in recovered["sequence"] if step["service"] == "{{ notify_target }}"]
-    return Template(push["data"]["message"], hass).async_render(variables=dict(context))
+    return runs, Template(push["data"]["message"], hass).async_render(variables=dict(context))
 
 
 @pytest.mark.parametrize(
@@ -259,7 +262,9 @@ def _battery_recovered_message(hass: HomeAssistant) -> str:
         ("critical", {"battery_present": True, "battery_percent": 8}, True),
         ("warning", {"battery_present": True, "battery_percent": 24}, True),
         # Critical on low memory with the battery fine, or on mains: not a battery alert.
+        # A Canary on mains shows battery_percent None since #1971.
         ("critical", {"battery_present": True, "battery_percent": 80}, False),
+        ("critical", {"battery_present": False, "battery_percent": None}, False),
         ("critical", {"battery_present": False, "battery_percent": 100}, False),
         # A battery that sent no number for its charge (HA60): battery_percent
         # None, which `| int(0)` reads as 0, so the template would have sent a
@@ -267,7 +272,7 @@ def _battery_recovered_message(hass: HomeAssistant) -> str:
         ("critical", {"battery_present": True, "battery_percent": None}, False),
         ("critical", {"battery_present": True}, False),
     ],
-    ids=["low", "warning", "memory", "mains", "no-charge", "no-attribute"],
+    ids=["low", "warning", "memory", "mains", "mains-before-1971", "no-charge", "no-attribute"],
 )
 async def test_the_battery_blueprint_alerts_only_on_a_charge_the_unit_sent(
     hass: HomeAssistant, state: str, attributes: dict[str, Any], alerts: bool
@@ -281,25 +286,32 @@ async def test_the_battery_blueprint_alerts_only_on_a_charge_the_unit_sent(
 
 
 @pytest.mark.parametrize(
-    "attributes,says",
+    "attributes,runs,says",
     [
-        ({"battery_present": True, "battery_percent": 37, "charge_state": "charging"}, "Battery back to 37% (charging)"),
-        ({"battery_present": False, "battery_percent": 100}, "Battery back to 100% (unknown)"),
+        ({"battery_present": True, "battery_percent": 37, "charge_state": "charging"}, True, "Battery back to 37% (charging)"),
+        # A Canary on mains: battery_percent is None since #1971, and a
+        # recovery from low memory is no battery's to report.
+        ({"battery_present": False, "battery_percent": None}, False, "Back to healthy, with no charge reading (unknown)"),
+        ({"battery_present": False, "battery_percent": 100}, False, "Battery back to 100% (unknown)"),
         # A battery that sent no number (HA60): `| int(0)` reads it as 0, so
         # the push said "Battery back to 0%", a charge nobody sent.
-        ({"battery_present": True, "battery_percent": None}, "Back to healthy, with no charge reading (unknown)"),
-        ({"battery_present": True}, "Back to healthy, with no charge reading (unknown)"),
+        ({"battery_present": True, "battery_percent": None}, False, "Back to healthy, with no charge reading (unknown)"),
+        ({"battery_present": True}, False, "Back to healthy, with no charge reading (unknown)"),
     ],
-    ids=["charge", "mains", "no-charge", "no-attribute"],
+    ids=["charge", "mains", "mains-before-1971", "no-charge", "no-attribute"],
 )
 async def test_the_battery_blueprint_recovered_push_names_only_a_charge_the_unit_sent(
-    hass: HomeAssistant, attributes: dict[str, Any], says: str
+    hass: HomeAssistant, attributes: dict[str, Any], runs: bool, says: str
 ) -> None:
-    """The recovered push (any warning or critical back to healthy) names the
-    charge the Health sensor shows, and none for a battery that sent no number
-    (battery_percent None, sweep HA60). Which recoveries notify is unchanged."""
+    """The recovered branch (any warning or critical back to healthy) runs
+    only for a Canary with a battery whose charge was read (#1971), and its
+    push names that charge. On mains, or for a battery that sent no number
+    (battery_percent None, sweep HA60), the branch does not run, and its
+    message would name no charge either (`| int(0)` would print 0%). A
+    battery Canary that recovers from low memory still gets the push (HA69)."""
     hass.states.async_set("sensor.canary_health", "healthy", attributes)
     await hass.async_block_till_done()
-    message = _battery_recovered_message(hass)
+    branch_runs, message = _battery_recovered(hass)
+    assert branch_runs is runs, attributes
     assert message.startswith(says + " at "), message
     assert "0%" not in message.replace("100%", ""), message
