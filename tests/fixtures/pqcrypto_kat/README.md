@@ -38,15 +38,21 @@ cargo test --features pqc-signatures,pqc-vault --lib write_pqcrypto_mlkem768_kat
 cargo test --features pqc-signatures,pqc-vault --test pqcrypto_kat_fixtures write_pqcrypto_hybrid_envelope -- --ignored
 ```
 
-- `write_pqcrypto_mldsa44_kat` (`src/crypto/signatures.rs`) calls
+- `write_pqcrypto_mldsa44_kat` (`src/crypto/signatures.rs`) called
   `PqKeypair::generate()` and `sign_with_domain()`.
 - `write_pqcrypto_mlkem768_kat` (`src/vault/crypto.rs`) opens one vault
   directory through `FilesystemVaultStore::new` in `pq` and then `hybrid`
   mode, seals an envelope in each through the store, and reads back the files
   the store wrote (`kem-mlkem768.key`, `master.key`, `<id>.vault`).
-- `write_pqcrypto_hybrid_envelope` (`tests/pqcrypto_kat_fixtures.rs`) opens a
-  kernel, seals four entries around a retention checkpoint and builds the
+- `write_pqcrypto_hybrid_envelope` (`tests/pqcrypto_kat_fixtures.rs`) opened a
+  kernel, sealed four entries around a retention checkpoint and built the
   envelope with `build_evidence_envelope_for_api`.
+
+The two ML-DSA tests were deleted in the commit that replaced `pqcrypto-mldsa`
+with `ml-dsa`: run again, they would write with the new implementation. They
+are in the commit that added this directory
+(`git log --diff-filter=A -- tests/fixtures/pqcrypto_kat/mldsa44_kat.json`).
+`write_pqcrypto_mlkem768_kat` stays until `pqcrypto-mlkem` is replaced.
 
 ## What reads them
 
@@ -54,4 +60,27 @@ cargo test --features pqc-signatures,pqc-vault --test pqcrypto_kat_fixtures writ
 |---|---|
 | `crypto::signatures::tests::pqcrypto_kat` (`src/crypto/signatures.rs`) | the stored keypair loads and re-encodes byte for byte; the stored signature verifies in strict mode; the stored key signs and those signatures verify; one flipped byte, another message, domain or key, or a wrong length fails |
 | `vault::crypto::tests::pqcrypto_kat` (`src/vault/crypto.rs`) | the key file loads through `FilesystemVaultStore::new` and is not rewritten; the stored ciphertext decapsulates to the stored shared secret, and the rejected one to the stored rejection secret; all three envelopes open, through decapsulation and not only the master-key wrap |
-| `tests/pqcrypto_kat_fixtures.rs` | the envelope verifies with `verify_envelope` in strict mode, and stops verifying when any one ML-DSA-44 signature in it is altered; a kernel whose database holds the stored keypair loads it, signs with it, and `log_verify --sig-mode strict` passes the log |
+| `tests/pqcrypto_kat_fixtures.rs` | the envelope verifies with `verify_envelope` in strict mode, and stops verifying when any one ML-DSA-44 signature in it is altered; a kernel whose database holds the stored keypair loads it, signs with it, and `log_verify --sig-mode strict` passes the log; a kernel whose stored private key has a coefficient out of range, or is cut short, returns an error from `Kernel::open` |
+
+## The other direction, checked once before `pqcrypto-mldsa` was removed
+
+The files show that the new implementation accepts what the old one wrote.
+The reverse cannot be a standing test, because the old implementation is no
+longer a dependency. It was run once, on 2026-11-21, with `pqcrypto-mldsa`
+0.1.2 added back as a dev-dependency beside the migrated kernel (`ml-dsa`
+0.1.2), on the same x86_64 AVX2 machine. Each case went through
+`PqKeypair`, `sign_with_domain` and `verify_with_domain` on the kernel's side
+and through `pqcrypto_mldsa::mldsa44` on the other, over
+`domain_separated_hash(domain, entry_hash)`. The first case alternates the
+sealed-log entry and checkpoint domains; the others use the sealed-log entry
+domain:
+
+| Case | Result |
+|---|---|
+| The kernel signs with the stored key; PQClean verifies with the stored public key, through its runtime dispatch (AVX2 here), its AVX2 verifier called directly and its portable `clean` verifier called directly | 300 of 300 signatures accepted by all three, and none accepted for another hash |
+| PQClean signs with the stored key; the kernel verifies in strict mode | 300 of 300 accepted |
+| The kernel generates a keypair; PQClean loads the stored encodings and signs with them, PQClean and the kernel (strict mode) verify that signature, and PQClean verifies what the kernel signs with the same key | 100 of 100 keypairs |
+| Two signatures over one hash with one key | differ, in both implementations: both sign in the hedged (randomized) form of FIPS 204 |
+
+So a log written after the change verifies with a verifier built before it,
+and a key generated after the change loads in a build from before it.

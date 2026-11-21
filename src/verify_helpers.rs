@@ -4,8 +4,6 @@ use rusqlite::Connection;
 
 use crate::crypto::signatures::PqPublicKey;
 use crate::device_public_key_from_db;
-#[cfg(feature = "pqc-signatures")]
-use pqcrypto_traits::sign::PublicKey as PqPublicKeyTrait;
 use rusqlite::OptionalExtension;
 
 pub fn load_verifying_key(

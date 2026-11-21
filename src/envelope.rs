@@ -1090,7 +1090,6 @@ where
 
 #[cfg(feature = "pqc-signatures")]
 fn parse_pq_key(bytes: Option<&[u8]>) -> Option<PqPublicKey> {
-    use pqcrypto_traits::sign::PublicKey as _;
     bytes.and_then(|b| PqPublicKey::from_bytes(b).ok())
 }
 

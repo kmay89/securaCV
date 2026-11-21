@@ -4,12 +4,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 #[cfg(feature = "pqc-signatures")]
-use pqcrypto_mldsa::mldsa44::{self, DetachedSignature, PublicKey, SecretKey};
-#[cfg(feature = "pqc-signatures")]
-use pqcrypto_traits::sign::{
-    DetachedSignature as PqDetachedSignature, PublicKey as PqPublicKeyTrait,
-    SecretKey as PqSecretKeyTrait,
+use ml_dsa::{
+    EncodedVerifyingKey, ExpandedSigningKey, ExpandedSigningKeyBytes, MlDsa44,
+    Signature as MlDsaSignature, VerifyingKey as MlDsaVerifyingKey,
 };
+#[cfg(feature = "pqc-signatures")]
+use rand::{rngs::SysRng, TryRng};
+#[cfg(feature = "pqc-signatures")]
+use zeroize::Zeroize;
 
 pub const ED25519_SCHEME_ID: &str = "ed25519";
 pub const PQ_SCHEME_MLDSA44: &str = "mldsa44";
@@ -144,32 +146,160 @@ impl SignatureSet {
     }
 }
 
+// Byte lengths of the ML-DSA-44 encodings (FIPS 204 Table 2).
 #[cfg(feature = "pqc-signatures")]
-#[derive(Clone, Debug)]
+const MLDSA44_PUBLIC_KEY_LEN: usize = 1312;
+#[cfg(feature = "pqc-signatures")]
+const MLDSA44_SECRET_KEY_LEN: usize = 2560;
+#[cfg(feature = "pqc-signatures")]
+const MLDSA44_SIGNATURE_LEN: usize = 2420;
+
+/// An ML-DSA-44 (FIPS 204) public key.
+#[cfg(feature = "pqc-signatures")]
+#[derive(Clone)]
+pub struct PqPublicKey(MlDsaVerifyingKey<MlDsa44>);
+
+#[cfg(feature = "pqc-signatures")]
+impl PqPublicKey {
+    /// Parses the 1312-byte FIPS 204 public-key encoding (`pkEncode`), the
+    /// form `device_metadata.pq_public_key` and an envelope's
+    /// `provenance.pq_public_key` hold. Every string of that length is a
+    /// public key (Algorithm 23, `pkDecode`, has no failure case), so the one
+    /// refusal is a wrong length.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        let encoded = EncodedVerifyingKey::<MlDsa44>::try_from(bytes).map_err(|_| {
+            anyhow!(
+                "expected {} bytes, got {}",
+                MLDSA44_PUBLIC_KEY_LEN,
+                bytes.len()
+            )
+        })?;
+        Ok(Self(MlDsaVerifyingKey::decode(&encoded)))
+    }
+}
+
+#[cfg(feature = "pqc-signatures")]
+impl std::fmt::Debug for PqPublicKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PqPublicKey(ML-DSA-44)")
+    }
+}
+
+/// An ML-DSA-44 (FIPS 204) signing key, in the expanded form it is stored in.
+/// A clone shares the one allocation, which is zeroized when its last holder
+/// drops it.
+#[cfg(feature = "pqc-signatures")]
+#[derive(Clone)]
+pub struct PqSecretKey(std::sync::Arc<ExpandedSigningKey<MlDsa44>>);
+
+#[cfg(feature = "pqc-signatures")]
+impl PqSecretKey {
+    /// Imports the 2560-byte FIPS 204 private-key encoding (`skEncode`), the
+    /// form `device_metadata.pq_secret_key` has always held.
+    ///
+    /// `ml-dsa` keeps this import for keys that were not stored as a seed and
+    /// marks it deprecated in favor of seeds; a stored key has no seed to
+    /// return to, so the kernel depends on it for as long as such keys exist.
+    fn from_stored_bytes(bytes: &[u8]) -> Result<Self> {
+        let mut encoded = ExpandedSigningKeyBytes::<MlDsa44>::try_from(bytes).map_err(|_| {
+            anyhow!(
+                "expected {} bytes, got {}",
+                MLDSA44_SECRET_KEY_LEN,
+                bytes.len()
+            )
+        })?;
+        if !mldsa44_secret_vectors_in_range(&encoded) {
+            encoded.zeroize();
+            return Err(anyhow!("a coefficient of s1 or s2 is out of range"));
+        }
+        #[allow(deprecated)]
+        let key = ExpandedSigningKey::<MlDsa44>::from_expanded(&encoded);
+        encoded.zeroize();
+        Ok(Self(std::sync::Arc::new(key)))
+    }
+}
+
+#[cfg(feature = "pqc-signatures")]
+impl std::fmt::Debug for PqSecretKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PqSecretKey(ML-DSA-44, redacted)")
+    }
+}
+
+/// Whether every coefficient of the secret vectors `s1` and `s2` in an
+/// ML-DSA-44 private-key encoding is one the encoding can hold.
+///
+/// The encoding (FIPS 204 Algorithm 24, `skEncode`) is
+/// `rho (32) || K (32) || tr (64) || s1 || s2 || t0`. `s1` and `s2` are four
+/// polynomials each, packed by Algorithm 17 (`BitPack`, with a = b = eta = 2)
+/// as `eta - c` in three bits per coefficient, least significant bits first:
+/// a field holds 0..=4 and eight fields fill three bytes. Algorithm 25
+/// (`skDecode`) notes that a malformed input decodes to coefficients outside
+/// `[-eta, eta]` and that it is to be run on trusted input only. `ml-dsa`'s
+/// decoder asserts the range instead of returning an error, so a corrupted
+/// `pq_secret_key` column would take the process down at open. This is that
+/// one range check, made first, so the corruption is an error to the caller.
+/// Key generation samples `s1` and `s2` in `[-eta, eta]`, so no key the
+/// kernel stored holds a field of 5, 6 or 7.
+#[cfg(feature = "pqc-signatures")]
+fn mldsa44_secret_vectors_in_range(encoded: &[u8]) -> bool {
+    const S1_START: usize = 32 + 32 + 64;
+    const S2_END: usize = S1_START + 2 * 4 * 96;
+    let Some(vectors) = encoded.get(S1_START..S2_END) else {
+        return false;
+    };
+    let (triples, rest) = vectors.as_chunks::<3>();
+    rest.is_empty()
+        && triples.iter().all(|&[low, mid, high]| {
+            let packed = u32::from(low) | (u32::from(mid) << 8) | (u32::from(high) << 16);
+            (0..8).all(|field| (packed >> (3 * field)) & 0b111 <= 4)
+        })
+}
+
+/// The device's ML-DSA-44 keypair, with the secret key's stored encoding.
+#[cfg(feature = "pqc-signatures")]
+#[derive(Clone)]
 pub struct PqKeypair {
-    pub public_key: PublicKey,
+    pub public_key: PqPublicKey,
     secret_key_bytes: zeroize::Zeroizing<Vec<u8>>,
-    pub secret_key: SecretKey,
+    pub secret_key: PqSecretKey,
 }
 
 #[cfg(feature = "pqc-signatures")]
 impl PqKeypair {
+    /// Generates a keypair (FIPS 204 Algorithm 1, `ML-DSA.KeyGen`): a fresh
+    /// 32-byte seed from the OS RNG, expanded by `ml-dsa`. The seed is not
+    /// kept. What is stored is the expanded private key, the same encoding
+    /// every earlier build stored and reads back.
     pub fn generate() -> Self {
-        let (public_key, secret_key) = mldsa44::keypair();
-        let secret_key_bytes = zeroize::Zeroizing::new(secret_key.as_bytes().to_vec());
+        let mut seed = ml_dsa::Seed::default();
+        SysRng
+            .try_fill_bytes(&mut seed)
+            .expect("OS RNG unavailable");
+        let key = ExpandedSigningKey::<MlDsa44>::from_seed(&seed);
+        seed.zeroize();
+        // `skEncode`. Deprecated upstream in favor of the seed, like the
+        // import in `PqSecretKey::from_stored_bytes`.
+        #[allow(deprecated)]
+        let mut encoded = key.to_expanded();
+        let secret_key_bytes = zeroize::Zeroizing::new(encoded.to_vec());
+        encoded.zeroize();
         Self {
-            public_key,
+            public_key: PqPublicKey(key.verifying_key()),
             secret_key_bytes,
-            secret_key,
+            secret_key: PqSecretKey(std::sync::Arc::new(key)),
         }
     }
 
+    /// Loads a stored keypair: the FIPS 204 public-key and private-key
+    /// encodings, as [`PqKeypair::public_key_bytes`] and
+    /// [`PqKeypair::secret_key_bytes`] return them.
     pub fn from_bytes(public_key: &[u8], secret_key: &[u8]) -> Result<Self> {
-        let public_key = PublicKey::from_bytes(public_key)
+        let public_key = PqPublicKey::from_bytes(public_key)
             .map_err(|e| anyhow!("invalid pq public key bytes: {}", e))?;
-        let sk = SecretKey::from_bytes(secret_key)
+        let sk = PqSecretKey::from_stored_bytes(secret_key)
             .map_err(|e| anyhow!("invalid pq secret key bytes: {}", e))?;
-        let secret_key_bytes = zeroize::Zeroizing::new(sk.as_bytes().to_vec());
+        let secret_key_bytes = zeroize::Zeroizing::new(secret_key.to_vec());
         Ok(Self {
             public_key,
             secret_key_bytes,
@@ -178,7 +308,7 @@ impl PqKeypair {
     }
 
     pub fn public_key_bytes(&self) -> Vec<u8> {
-        self.public_key.as_bytes().to_vec()
+        self.public_key.0.encode().to_vec()
     }
 
     pub fn secret_key_bytes(&self) -> Vec<u8> {
@@ -187,9 +317,13 @@ impl PqKeypair {
 }
 
 #[cfg(feature = "pqc-signatures")]
-pub type PqPublicKey = PublicKey;
-#[cfg(feature = "pqc-signatures")]
-pub type PqSecretKey = SecretKey;
+impl std::fmt::Debug for PqKeypair {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PqKeypair")
+            .field("public_key", &self.public_key)
+            .finish_non_exhaustive()
+    }
+}
 
 #[cfg(not(feature = "pqc-signatures"))]
 #[derive(Clone, Debug)]
@@ -450,10 +584,17 @@ fn sign_pq(signing_hash: &[u8; 32], keys: &SignatureKeys<'_>) -> Result<Option<P
     #[cfg(feature = "pqc-signatures")]
     {
         if let Some(secret_key) = keys.pq {
-            let signature = mldsa44::detached_sign(signing_hash, secret_key);
+            // FIPS 204 Algorithm 2 (`ML-DSA.Sign`) with an empty context
+            // string, in its default hedged form: 32 fresh bytes from the OS
+            // RNG go into each signature, so two signatures over one hash
+            // differ.
+            let signature = secret_key
+                .0
+                .sign_randomized(signing_hash, &[], &mut SysRng)
+                .map_err(|_| anyhow!("pq signing failed"))?;
             return Ok(Some(PqSignature {
                 scheme_id: PQ_SCHEME_MLDSA44.to_string(),
-                signature: signature.as_bytes().to_vec(),
+                signature: signature.encode().to_vec(),
             }));
         }
         Ok(None)
@@ -486,10 +627,7 @@ fn verify_pq_signature(
     #[cfg(feature = "pqc-signatures")]
     {
         let public_key = pq_public_key.ok_or_else(|| anyhow!("pq public key is required"))?;
-        let detached = DetachedSignature::from_bytes(&signature.signature)
-            .map_err(|e| anyhow!("invalid pq signature bytes: {}", e))?;
-        mldsa44::verify_detached_signature(&detached, signing_hash, public_key)
-            .map_err(|e| anyhow!("pq signature verification failed: {}", e))
+        mldsa44_verify(public_key, signing_hash, &signature.signature)
     }
     #[cfg(not(feature = "pqc-signatures"))]
     {
@@ -498,6 +636,32 @@ fn verify_pq_signature(
         Err(anyhow!(
             "pq signature verification not available (pqc-signatures feature disabled)"
         ))
+    }
+}
+
+/// FIPS 204 Algorithm 3 (`ML-DSA.Verify`) with an empty context string.
+///
+/// Decoding the signature (Algorithm 27, `sigDecode`) is where `ml-dsa`
+/// refuses a wrong length, a hint that is not in canonical form, and a
+/// response whose infinity norm is not below `gamma1 - beta` (Algorithm 8,
+/// line 13), so a signature that fails any of the three is refused before the
+/// challenge hash is compared.
+#[cfg(feature = "pqc-signatures")]
+fn mldsa44_verify(public_key: &PqPublicKey, message: &[u8], signature: &[u8]) -> Result<()> {
+    if signature.len() != MLDSA44_SIGNATURE_LEN {
+        return Err(anyhow!(
+            "invalid pq signature bytes: expected {} bytes, got {}",
+            MLDSA44_SIGNATURE_LEN,
+            signature.len()
+        ));
+    }
+    let decoded = MlDsaSignature::<MlDsa44>::try_from(signature).map_err(|_| {
+        anyhow!("invalid pq signature bytes: hint not canonical or response out of range")
+    })?;
+    if public_key.0.verify_with_context(message, &[], &decoded) {
+        Ok(())
+    } else {
+        Err(anyhow!("pq signature verification failed"))
     }
 }
 
@@ -669,8 +833,9 @@ mod tests {
     /// ML-DSA-44 keypair in the encodings `device_metadata` stores, and a
     /// signature over a sealed-log entry hash, all written by the kernel while
     /// it linked `pqcrypto-mldsa` 0.1.2 (the README there says how). These
-    /// tests hold whichever ML-DSA implementation this build links to that
-    /// material: a device keeps its stored key and every entry it has signed.
+    /// tests hold the implementation this build links to that material: a
+    /// device keeps its stored key and every entry it has signed. They passed
+    /// unchanged on `pqcrypto-mldsa` before `ml-dsa` replaced it.
     #[cfg(feature = "pqc-signatures")]
     mod pqcrypto_kat {
         use super::*;
@@ -742,39 +907,6 @@ mod tests {
                 secret_key: bytes("pq_secret_key"),
                 signature: bytes("pq_signature"),
             }
-        }
-
-        /// Writes the fixture with the ML-DSA-44 implementation this build
-        /// links. It is run once, by hand, while that implementation is
-        /// `pqcrypto-mldsa`, and never again:
-        ///   cargo test --features pqc-signatures --lib write_pqcrypto_mldsa44_kat -- --ignored
-        #[test]
-        #[ignore = "writes tests/fixtures/pqcrypto_kat/mldsa44_kat.json; see the README beside it"]
-        fn write_pqcrypto_mldsa44_kat() {
-            let ed25519 = SigningKey::from_bytes(&[42u8; 32]);
-            let entry_hash: [u8; 32] =
-                Sha256::digest(b"securacv pqcrypto kat: sealed log entry").into();
-            let keypair = PqKeypair::generate();
-            let keys = SignatureKeys::with_pq(&ed25519, Some(&keypair.secret_key));
-            let set = sign_with_domain(DOMAIN_SEALED_LOG_ENTRY, &keys, &entry_hash).unwrap();
-            let pq = set.pq_signature.as_ref().expect("a pq signature");
-            let doc = serde_json::json!({
-                "description": "ML-DSA-44 known-answer material: a keypair in the byte encodings \
-                    device_metadata.pq_public_key and .pq_secret_key hold, and the signature set \
-                    sign_with_domain() produced over entry_hash under domain. Never regenerate.",
-                "written_by": "witness-kernel linking pqcrypto-mldsa 0.1.2 (PQClean ML-DSA-44)",
-                "scheme_id": pq.scheme_id,
-                "domain": DOMAIN_SEALED_LOG_ENTRY,
-                "entry_hash": hex::encode(entry_hash),
-                "signing_hash": hex::encode(domain_separated_hash(DOMAIN_SEALED_LOG_ENTRY, &entry_hash)),
-                "ed25519_public_key": hex::encode(ed25519.verifying_key().to_bytes()),
-                "ed25519_signature": hex::encode(&set.ed25519_signature),
-                "pq_public_key": hex::encode(keypair.public_key_bytes()),
-                "pq_secret_key": hex::encode(keypair.secret_key_bytes()),
-                "pq_signature": hex::encode(&pq.signature),
-            });
-            let json = serde_json::to_string_pretty(&doc).unwrap();
-            std::fs::write(KAT_PATH, json + "\n").unwrap();
         }
 
         #[test]
@@ -960,6 +1092,349 @@ mod tests {
                 )
                 .expect("round trip");
             }
+        }
+    }
+
+    /// What FIPS 204 asks of a verifier and of a key import, and what
+    /// RUSTSEC-2026-0586 found missing from the implementation this module
+    /// used before `ml-dsa`. The checks are `ml-dsa`'s; these tests prove
+    /// they are made, at the functions the kernel calls.
+    #[cfg(feature = "pqc-signatures")]
+    mod mldsa44_checks {
+        use super::*;
+
+        /// gamma1 = 2^17 and beta = tau * eta = 39 * 2 for ML-DSA-44 (FIPS 204
+        /// Table 1). A signature is valid only if every coefficient of its
+        /// response z has absolute value below gamma1 - beta (Algorithm 8,
+        /// line 13).
+        const GAMMA1: i64 = 1 << 17;
+        const BOUND: i64 = GAMMA1 - 78;
+        /// The signature is `c~ (32) || z (4 * 576) || h (80 + 4)`.
+        const Z_START: usize = 32;
+        const HINT_START: usize = 32 + 4 * 576;
+
+        /// Sets the first coefficient of z. Algorithm 17 (`BitPack`, with
+        /// a = gamma1 - 1 and b = gamma1) stores `gamma1 - z` in 18 bits,
+        /// least significant bits first.
+        fn set_first_response_coefficient(signature: &mut [u8], z: i64) {
+            let field = u32::try_from(GAMMA1 - z).expect("encodable coefficient");
+            assert!(field < 1 << 18, "encodable coefficient");
+            signature[Z_START] = field as u8;
+            signature[Z_START + 1] = (field >> 8) as u8;
+            signature[Z_START + 2] = (signature[Z_START + 2] & 0xFC) | (field >> 16) as u8;
+        }
+
+        fn refusal(kat: &pqcrypto_kat::Kat, signature: Vec<u8>) -> String {
+            kat.verify(signature, SignatureMode::Strict)
+                .expect_err("an altered signature must not verify")
+                .to_string()
+        }
+
+        #[test]
+        fn a_response_at_or_past_the_bound_is_refused_when_the_signature_is_decoded() {
+            let kat = pqcrypto_kat::load();
+            // Every value here differs from the stored coefficient, so each
+            // signature is an altered one. Inside the bound it decodes and
+            // then fails on the challenge hash; at or past the bound it is
+            // refused before the public key is used at all.
+            for (z, inside_the_bound) in [
+                (BOUND - 1, true),
+                (BOUND, false),
+                (GAMMA1, false),
+                (-(BOUND - 1), true),
+                (-BOUND, false),
+                (-(GAMMA1 - 1), false),
+            ] {
+                let mut signature = kat.signature.clone();
+                set_first_response_coefficient(&mut signature, z);
+                assert_ne!(
+                    signature, kat.signature,
+                    "z = {z} is the stored coefficient"
+                );
+                let refusal = refusal(&kat, signature);
+                if inside_the_bound {
+                    assert_eq!(refusal, "pq signature verification failed", "z = {z}");
+                } else {
+                    assert!(
+                        refusal.starts_with("invalid pq signature bytes"),
+                        "z = {z} must be refused by the bound, got: {refusal}"
+                    );
+                }
+            }
+        }
+
+        /// Five test cases of Wycheproof's `mldsa_44_verify_test.json`
+        /// (`tests/fixtures/wycheproof/`). The four invalid ones were made
+        /// with the private key so that the challenge hash is correct and
+        /// only the bound on z refuses them: a verifier without that check
+        /// accepts them. The valid one makes the verifier call `UseHint` on
+        /// a coefficient whose low part is zero.
+        #[test]
+        fn wycheproof_infinity_norm_vectors_are_refused_and_the_use_hint_vector_verifies() {
+            const PATH: &str = "tests/fixtures/wycheproof/mldsa_44_verify_excerpt.json";
+            let text = std::fs::read_to_string(PATH).unwrap_or_else(|e| panic!("read {PATH}: {e}"));
+            let doc: serde_json::Value =
+                serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {PATH}: {e}"));
+            assert_eq!(doc["algorithm"], "ML-DSA-44");
+            let bytes = |value: &serde_json::Value| -> Vec<u8> {
+                hex::decode(value.as_str().expect("a hex string")).expect("hex")
+            };
+            let (mut refused, mut verified) = (Vec::new(), Vec::new());
+            for group in doc["testGroups"].as_array().expect("test groups") {
+                let public_key = PqPublicKey::from_bytes(&bytes(&group["publicKey"])).unwrap();
+                for test in group["tests"].as_array().expect("tests") {
+                    let id = test["tcId"].as_u64().expect("tcId");
+                    let comment = test["comment"].as_str().expect("comment");
+                    let outcome =
+                        mldsa44_verify(&public_key, &bytes(&test["msg"]), &bytes(&test["sig"]));
+                    match test["result"].as_str().expect("result") {
+                        "valid" => {
+                            outcome
+                                .unwrap_or_else(|e| panic!("tcId {id} ({comment}) is valid: {e}"));
+                            verified.push(id);
+                        }
+                        "invalid" => {
+                            let refusal = outcome
+                                .expect_err(&format!("tcId {id} ({comment}) is invalid"))
+                                .to_string();
+                            assert!(
+                                refusal.starts_with("invalid pq signature bytes"),
+                                "tcId {id} ({comment}) must be refused by the bound on z, \
+                                 got: {refusal}"
+                            );
+                            refused.push(id);
+                        }
+                        other => panic!("tcId {id}: unexpected result {other}"),
+                    }
+                }
+            }
+            assert_eq!(refused, [81, 82, 125, 126]);
+            assert_eq!(verified, [147]);
+        }
+
+        #[test]
+        fn a_hint_that_is_not_in_canonical_form_is_refused_when_the_signature_is_decoded() {
+            let kat = pqcrypto_kat::load();
+            // The hint (FIPS 204 Algorithm 20, `HintBitPack`) is 80 index
+            // bytes and four running totals, one per polynomial.
+            let totals = HINT_START + 80;
+            let total = usize::from(kat.signature[totals + 3]);
+            assert!(
+                (2..80).contains(&total),
+                "the stored signature has {total} hints; these cases need 2..80"
+            );
+
+            // A running total past the 80 index slots.
+            let mut signature = kat.signature.clone();
+            signature[totals + 3] = 81;
+            assert!(refusal(&kat, signature).starts_with("invalid pq signature bytes"));
+
+            // Running totals that decrease.
+            let mut signature = kat.signature.clone();
+            signature[totals] = signature[totals + 3];
+            signature[totals + 1] = 0;
+            assert!(refusal(&kat, signature).starts_with("invalid pq signature bytes"));
+
+            // An index byte after the last hint that is not zero.
+            let mut signature = kat.signature.clone();
+            signature[HINT_START + total] = 1;
+            assert!(refusal(&kat, signature).starts_with("invalid pq signature bytes"));
+
+            // Two indices of one polynomial out of order.
+            let mut signature = kat.signature.clone();
+            let mut start = 0usize;
+            let mut swapped = false;
+            for polynomial in 0..4 {
+                let end = usize::from(signature[totals + polynomial]);
+                if end - start >= 2 {
+                    signature.swap(HINT_START + start, HINT_START + start + 1);
+                    swapped = true;
+                    break;
+                }
+                start = end;
+            }
+            assert!(
+                swapped,
+                "no polynomial of the stored signature has two hints"
+            );
+            assert!(refusal(&kat, signature).starts_with("invalid pq signature bytes"));
+        }
+
+        /// Deterministic filler for the cases below: SHA-256 in counter mode.
+        fn filler(label: &str, len: usize) -> Vec<u8> {
+            let mut out = Vec::with_capacity(len + 32);
+            let mut counter = 0u32;
+            while out.len() < len {
+                let mut hasher = Sha256::new();
+                hasher.update(label.as_bytes());
+                hasher.update(counter.to_le_bytes());
+                out.extend_from_slice(&hasher.finalize());
+                counter += 1;
+            }
+            out.truncate(len);
+            out
+        }
+
+        /// Writes one three-bit field of the packed secret vectors s1 and s2.
+        fn set_secret_field(secret_key: &mut [u8], field: usize, value: u32) {
+            let start = 128 + (field / 8) * 3;
+            let shift = 3 * (field % 8);
+            let mut packed = u32::from(secret_key[start])
+                | (u32::from(secret_key[start + 1]) << 8)
+                | (u32::from(secret_key[start + 2]) << 16);
+            packed = (packed & !(0b111 << shift)) | (value << shift);
+            secret_key[start] = packed as u8;
+            secret_key[start + 1] = (packed >> 8) as u8;
+            secret_key[start + 2] = (packed >> 16) as u8;
+        }
+
+        /// s1 and s2 hold 2 * 4 * 256 coefficients.
+        const SECRET_FIELDS: usize = 2 * 4 * 256;
+
+        #[test]
+        fn secret_vector_range_check_accepts_the_five_encodable_values_and_no_other() {
+            let kat = pqcrypto_kat::load();
+            assert!(mldsa44_secret_vectors_in_range(&kat.secret_key));
+            for field in 0..SECRET_FIELDS {
+                for value in 0..8u32 {
+                    let mut secret_key = kat.secret_key.clone();
+                    set_secret_field(&mut secret_key, field, value);
+                    assert_eq!(
+                        mldsa44_secret_vectors_in_range(&secret_key),
+                        value <= 4,
+                        "field {field} = {value}"
+                    );
+                }
+            }
+            // Nothing outside s1 and s2 is this check's business.
+            let mut secret_key = kat.secret_key.clone();
+            secret_key[..128].fill(0xFF);
+            secret_key[896..].fill(0xFF);
+            assert!(mldsa44_secret_vectors_in_range(&secret_key));
+            assert!(!mldsa44_secret_vectors_in_range(&[0u8; 100]));
+        }
+
+        #[test]
+        fn a_stored_secret_key_with_an_out_of_range_coefficient_is_an_error_not_a_panic() {
+            let kat = pqcrypto_kat::load();
+            // The first and last field of each of the eight polynomials, and
+            // a stride across them, each set to the three values no
+            // coefficient encodes to.
+            let mut fields: Vec<usize> = (0..8).flat_map(|p| [p * 256, p * 256 + 255]).collect();
+            fields.extend((0..SECRET_FIELDS).step_by(149));
+            for field in fields {
+                for value in [5u32, 6, 7] {
+                    let mut secret_key = kat.secret_key.clone();
+                    set_secret_field(&mut secret_key, field, value);
+                    let refusal = PqKeypair::from_bytes(&kat.public_key, &secret_key)
+                        .expect_err("an out-of-range coefficient must be refused")
+                        .to_string();
+                    assert_eq!(
+                        refusal,
+                        "invalid pq secret key bytes: a coefficient of s1 or s2 is out of range",
+                        "field {field} = {value}"
+                    );
+                }
+            }
+            // Every other value of a field is one a key can hold: the import
+            // takes it.
+            for value in 0..=4u32 {
+                let mut secret_key = kat.secret_key.clone();
+                set_secret_field(&mut secret_key, 1000, value);
+                PqKeypair::from_bytes(&kat.public_key, &secret_key)
+                    .unwrap_or_else(|e| panic!("field 1000 = {value}: {e}"));
+            }
+        }
+
+        #[test]
+        fn arbitrary_bytes_as_a_stored_keypair_never_panic() {
+            let ed25519 = SigningKey::from_bytes(&[42u8; 32]);
+            let entry_hash = [3u8; 32];
+            let (mut loaded, mut refused) = (0, 0);
+            for case in 0..24u32 {
+                let public_key = filler(&format!("public {case}"), 1312);
+                let mut secret_key = filler(&format!("secret {case}"), 2560);
+                if case % 2 == 0 {
+                    // Half the cases keep s1 and s2 in range, so the import
+                    // goes through and signing runs on a key that is noise.
+                    for field in 0..SECRET_FIELDS {
+                        let value = u32::from(secret_key[128 + field % 768]) % 5;
+                        set_secret_field(&mut secret_key, field, value);
+                    }
+                }
+                match PqKeypair::from_bytes(&public_key, &secret_key) {
+                    Ok(keypair) => {
+                        loaded += 1;
+                        let keys = SignatureKeys::with_pq(&ed25519, Some(&keypair.secret_key));
+                        // A signature or an error, never a panic; and what a
+                        // noise key signs does not verify under a public key
+                        // it has nothing to do with.
+                        if let Ok(set) = sign_with_domain(DOMAIN_CHECKPOINT, &keys, &entry_hash) {
+                            assert!(verify_with_domain(
+                                DOMAIN_CHECKPOINT,
+                                &ed25519.verifying_key(),
+                                &entry_hash,
+                                &set,
+                                SignatureMode::Strict,
+                                Some(&keypair.public_key),
+                            )
+                            .is_err());
+                        }
+                    }
+                    Err(_) => refused += 1,
+                }
+            }
+            assert_eq!((loaded, refused), (12, 12));
+        }
+
+        #[test]
+        fn arbitrary_bytes_as_a_signature_or_public_key_never_panic() {
+            let kat = pqcrypto_kat::load();
+            let stored_key = PqPublicKey::from_bytes(&kat.public_key).unwrap();
+            let message = [5u8; 32];
+            for case in 0..64u32 {
+                let signature = filler(&format!("signature {case}"), 2420);
+                assert!(mldsa44_verify(&stored_key, &message, &signature).is_err());
+                // Any 1312 bytes are a public key; none of these is the one
+                // that signed the stored signature.
+                let other_key =
+                    PqPublicKey::from_bytes(&filler(&format!("key {case}"), 1312)).unwrap();
+                assert!(mldsa44_verify(&other_key, &message, &kat.signature).is_err());
+                assert!(mldsa44_verify(&other_key, &message, &signature).is_err());
+            }
+            for len in [0usize, 1, 31, 2419, 2421, 4840] {
+                assert!(mldsa44_verify(&stored_key, &message, &filler("length", len)).is_err());
+            }
+        }
+
+        #[test]
+        fn encoding_lengths_are_the_implementation_s() {
+            assert_eq!(
+                EncodedVerifyingKey::<MlDsa44>::default().len(),
+                MLDSA44_PUBLIC_KEY_LEN
+            );
+            assert_eq!(
+                ExpandedSigningKeyBytes::<MlDsa44>::default().len(),
+                MLDSA44_SECRET_KEY_LEN
+            );
+            assert_eq!(
+                ml_dsa::EncodedSignature::<MlDsa44>::default().len(),
+                MLDSA44_SIGNATURE_LEN
+            );
+        }
+
+        #[test]
+        fn debug_output_carries_no_key_material() {
+            let kat = pqcrypto_kat::load();
+            let keypair = PqKeypair::from_bytes(&kat.public_key, &kat.secret_key).unwrap();
+            assert_eq!(
+                format!("{keypair:?}"),
+                "PqKeypair { public_key: PqPublicKey(ML-DSA-44), .. }"
+            );
+            assert_eq!(
+                format!("{:?}", keypair.secret_key),
+                "PqSecretKey(ML-DSA-44, redacted)"
+            );
         }
     }
 

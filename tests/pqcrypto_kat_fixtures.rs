@@ -2,7 +2,8 @@
 //! `tests/fixtures/pqcrypto_kat/`, written while it linked `pqcrypto-mldsa`
 //! 0.1.2 (the README there says how): a device keeps the ML-DSA-44 key its
 //! database holds, and a log it signed with that key keeps verifying in
-//! strict mode, whichever ML-DSA implementation this build links.
+//! strict mode. These tests passed unchanged on `pqcrypto-mldsa` before
+//! `ml-dsa` replaced it.
 //!
 //! The byte-level checks on the key and signature encodings are unit tests in
 //! `src/crypto/signatures.rs` (`pqcrypto_kat`); the vault's are in
@@ -15,8 +16,8 @@ use std::time::Duration;
 
 use witness_kernel::crypto::signatures::{PqSignature, SignatureMode, SignatureSet};
 use witness_kernel::{
-    envelope, verify_envelope, CandidateEvent, EventType, EvidenceEnvelope, ExportOptions,
-    InferenceBackend, Kernel, KernelConfig, ModuleDescriptor, TimeBucket, ZonePolicy,
+    envelope, verify_envelope, CandidateEvent, EventType, EvidenceEnvelope, InferenceBackend,
+    Kernel, KernelConfig, ModuleDescriptor, TimeBucket, ZonePolicy,
 };
 
 const ENVELOPE_PATH: &str = "tests/fixtures/pqcrypto_kat/hybrid_envelope.json";
@@ -105,44 +106,6 @@ fn signature_sets(envelope: &mut EvidenceEnvelope) -> Vec<(&'static str, &mut Si
         &mut envelope.export_receipt_entry.signatures,
     ));
     sets
-}
-
-/// Writes the fixture with the ML-DSA-44 implementation this build links. It
-/// is run once, by hand, while that implementation is `pqcrypto-mldsa`, and
-/// never again:
-///   cargo test --features pqc-signatures --test pqcrypto_kat_fixtures -- --ignored
-#[test]
-#[ignore = "writes tests/fixtures/pqcrypto_kat/hybrid_envelope.json; see the README beside it"]
-fn write_pqcrypto_hybrid_envelope() {
-    let cfg = config(":memory:");
-    let mut kernel = Kernel::open(&cfg).expect("open kernel");
-    // Two entries that retention prunes under a signed checkpoint, then two
-    // that stay: the envelope carries a checkpoint, a sealed chain that
-    // starts at it, and the receipt of its own export.
-    seal_event(&mut kernel, &cfg, "zone:a", 600);
-    seal_event(&mut kernel, &cfg, "zone:b", 1200);
-    kernel
-        .enforce_retention_with_checkpoint(Duration::from_secs(0))
-        .expect("checkpoint");
-    seal_event(&mut kernel, &cfg, "zone:a", 1800);
-    seal_event(&mut kernel, &cfg, "zone:b", 2400);
-    let envelope = kernel
-        .build_evidence_envelope_for_api(
-            cfg.ruleset_hash,
-            ExportOptions {
-                jitter_s: 0,
-                ..ExportOptions::default()
-            },
-            &cfg.ruleset_id,
-            &cfg.kernel_version,
-        )
-        .expect("build envelope");
-    assert!(envelope.provenance.pq_public_key.is_some());
-    assert!(envelope.ledgers.checkpoints.latest.is_some());
-    // One line: four ML-DSA-44 signatures as JSON byte arrays would be ten
-    // thousand lines pretty-printed.
-    let json = serde_json::to_string(&envelope).expect("serialize");
-    std::fs::write(ENVELOPE_PATH, json + "\n").expect("write fixture");
 }
 
 #[test]
@@ -335,4 +298,48 @@ fn kernel_loads_a_stored_pqcrypto_key_and_its_log_verifies_strict() {
         !output.status.success(),
         "strict verification passed under a different post-quantum public key"
     );
+}
+
+/// A `pq_secret_key` column that is not a private key any key generation
+/// wrote is an error from `Kernel::open`, with nothing signed and no panic.
+#[test]
+fn kernel_refuses_a_corrupt_stored_pq_secret_key_without_panicking() {
+    let public_key = kat_hex("pq_public_key");
+    let stored = kat_hex("pq_secret_key");
+
+    // The first three-bit coefficient of s1 set to 7, which encodes no
+    // coefficient; and a column cut short.
+    let mut out_of_range = stored.clone();
+    out_of_range[128] |= 0b111;
+    let truncated = stored[..2559].to_vec();
+
+    for (secret_key, expected) in [
+        (
+            out_of_range,
+            "invalid pq secret key bytes: a coefficient of s1 or s2 is out of range",
+        ),
+        (
+            truncated,
+            "invalid pq secret key bytes: expected 2560 bytes, got 2559",
+        ),
+    ] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db_path = dir.path().join("witness.db");
+        let cfg = config(db_path.to_str().expect("utf8 path"));
+        {
+            let kernel = Kernel::open(&cfg).expect("open kernel");
+            kernel
+                .conn
+                .execute(
+                    "UPDATE device_metadata SET pq_public_key = ?1, pq_secret_key = ?2 \
+                     WHERE id = 1",
+                    rusqlite::params![public_key, secret_key],
+                )
+                .expect("store the corrupt keypair");
+        }
+        match Kernel::open(&cfg) {
+            Ok(_) => panic!("the kernel opened with a corrupt post-quantum key"),
+            Err(e) => assert_eq!(e.to_string(), expected),
+        }
+    }
 }
