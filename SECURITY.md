@@ -427,6 +427,53 @@ upstream fix lets the ignore go.
   the crates were removed and is recorded in the fixture README; it is not a
   standing test, because the old implementation is no longer a dependency.
 
+### Group 8 — the desktop apps' lockfiles: `tokio` and `event-listener` (RUSTSEC-2026-0386, -0221) FIXED by bumps; `glib` (RUSTSEC-2024-0429) NOT REACHABLE, no fix on its line
+
+- **What the audit said.** `cargo audit` files all three under *unsound*, a
+  warning: it prints them and exits 0, so `audit.yml` stayed green over them.
+  They were found on 2026-11-21 by reading each lockfile's audit, not its
+  exit code. Nothing beyond the advisories' titles is described here.
+  - RUSTSEC-2026-0386, `tokio` 1.53.1: "`AsyncFd::new` and related
+    constructors violate I/O safety"; patched in 1.53.3. In the Flasher's
+    lockfile (`desktop/src-tauri`) and the flash engine's
+    (`desktop/flash-engine`).
+  - RUSTSEC-2026-0221, `event-listener` 5.4.1: "allows `!Send` tags to cross
+    thread boundaries via `StackSlot`"; patched in 5.4.2. In the Flasher's
+    lockfile and the Lab app's (`desktop-lab/src-tauri`).
+  - RUSTSEC-2024-0429, `glib` 0.18.5: "Unsoundness in `Iterator` and
+    `DoubleEndedIterator` impls for `glib::VariantStrIter`"; patched in
+    0.20.0. In both apps' lockfiles.
+  - Two yanked versions: `chacha20` 0.10.1 in all three lockfiles and
+    `async-executor` 1.14.0 in both apps'.
+- **Fixed by bumps:** `tokio` 1.54.1, `event-listener` 5.4.2, `chacha20`
+  0.10.2 and `async-executor` 1.14.1. Only those package entries changed
+  (version and checksum, and `event-listener` no longer lists
+  `concurrent-queue`); no manifest changed, and each lockfile passes
+  `cargo metadata --locked`. Whether either unsound API was on a path the
+  apps ran was not analyzed: the fixed releases were one lockfile bump away.
+- **`glib`: no fix on the line the apps can use.** `glib` 0.18.5 is required
+  by `gtk` 0.18.2, the GTK 3 bindings, and `gtk` 0.18 is what `tauri` 2.12.5,
+  `tao` 0.37.1, `wry` 0.57.0, `webkit2gtk` 2.0.2 and `muda` 0.20.0 build
+  their Linux windows on. The fix is in `glib` 0.20, which no release of
+  those bindings takes. It is compiled into the Linux builds only: the macOS
+  and Windows apps have no GTK.
+- **Reachable? No.** The advisory names one iterator type, which
+  `Variant::array_iter_str` returns. Of the 605 registry packages in the
+  Flasher's graph and the 552 in the Lab app's, the only one whose source
+  names `VariantStrIter` or `array_iter_str` is `glib` itself (2026-11-21:
+  `grep -rlE 'VariantStrIter|array_iter_str'` over every package directory
+  `cargo metadata --locked` resolves for each app), and neither app's own
+  source uses `glib`.
+- **No ignore entry.** [`.cargo/audit.toml`](.cargo/audit.toml)'s list is for
+  an advisory that fails the gate, and this one warns. Dependabot's security
+  update for it fails on every run (the newest `glib` it can resolve is
+  0.18.5) and will until the alert is dismissed with this reasoning, which
+  takes a repository admin (backlog A135). The bump comes with the release of
+  Tauri that leaves GTK 3 on Linux.
+- **Still printed.** The same audits list unmaintained crates in the
+  transitive long tail. [`deny.toml`](deny.toml) states the policy for those:
+  an error when the workspace depends on one directly, a warning otherwise.
+
 ## Non-goals
 
 The following are explicitly out of scope:

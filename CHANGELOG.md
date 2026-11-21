@@ -182,6 +182,21 @@
   "your home". The edits are string literals and were not compiled here; the
   iOS and tvOS workflows build them.
 
+### The desktop apps' lockfiles take four fixed releases, and the one advisory with no fix has a written answer
+
+- **Bumped** in `desktop/src-tauri`, `desktop-lab/src-tauri` and
+  `desktop/flash-engine`: `tokio` 1.53.1 → 1.54.1 (RUSTSEC-2026-0386,
+  unsound), `event-listener` 5.4.1 → 5.4.2 (RUSTSEC-2026-0221, unsound), and
+  two yanked versions, `chacha20` 0.10.1 → 0.10.2 and `async-executor`
+  1.14.0 → 1.14.1. `cargo audit` prints an unsound or yanked crate as a
+  warning and exits 0, so the gate had stayed green over all four. Only
+  those package entries changed; no manifest did.
+- **`glib` 0.18.5 (RUSTSEC-2024-0429, unsound) stays**, because the GTK 3
+  bindings Tauri builds its Linux windows on never take the fixed 0.20.
+  `SECURITY.md` Group 8 records why no code in either app reaches the
+  affected type, and backlog A135 the step that is a repository admin's:
+  dismissing the Dependabot alert whose update fails on every run.
+
 ### Compliance maps say which mechanism stands behind which clause, and never more
 
 - **`docs/compliance/`** (roadmap item 7, CP1): eleven closed clause → mechanism → status maps (21 CFR Part 11, EU GMP Annex 11, ALCOA+, HIPAA 164.312, US evidence rules, eIDAS qualified electronic ledgers, the C2PA conformance program, BS 10008 by topic, the FIPS split-knowledge vocabulary, and the capture-provenance and enterprise-assurance trackers), each row with one status from the new `compliance_map_status` block of `spec/witness_dictionary.json`; the README's pinned posture paragraph (maps, never determinations); the verification methodology; the BS 10008 operator pack and its template; the capture-provenance note; and the design notes for the SIEM projection, validation sheets and CAWG co-signing. Every regime clause is marked unverified: no regime source could be fetched.
