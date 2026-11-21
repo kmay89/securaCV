@@ -51,7 +51,8 @@ sys.modules["check_word_ink"] = cw  # dataclasses resolve their module by name
 spec.loader.exec_module(cw)
 
 # The case's values at the shipped defaults, as the probe echoes them
-# (OpenSCAD 2021.01, canary_s3_lcd7.scad at 5d658112).
+# (OpenSCAD 2021.01, canary_s3_lcd7.scad as at b3cb9bda, the same blob and
+# libraries the values were probed on).
 SHIPPED = {
     "vword_x": 42.9, "vword_half": 21.952, "edge_text_size": 7.0,
     "usb_dx": 0.0, "usb_open_w": 13.6, "grom_lip": 2.0, "vent_gap": 8.0,
