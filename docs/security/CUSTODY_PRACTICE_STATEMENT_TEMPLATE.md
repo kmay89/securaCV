@@ -235,7 +235,7 @@ meanings are restated because a CPS is read by people outside the project:
 | 8.4 | Topics | `break_glass receipts --public-key-file` VALID and `policy history --public-key-file` `History chain VALID`, both under the pinned key (a run without one is labeled `self-consistent; identity unverified` and does not count); every anchor checked with `--ca` and none `UNVERIFIED`; `verify --policy` SATISFIED; high-water-mark checked; `log_verify` verdict `valid` under the out-of-band key; drill and recorded-rehearsal evidence on file; exceptions register reviewed; retention table met; CPS-versus-practice deltas listed. |
 | 8.5 | Action on deficiency | `{{audit.deficiency}}` |
 | 8.6 | Communication of results | `{{audit.results_to}}` |
-| 8.7 | External regimes | Mapping is "designed to be compatible with" only: 21 CFR Part 11 / ALCOA+, BS 10008, FIPS 140-3 split-knowledge vocabulary, FRE 902(13)/(14), eIDAS — see `PROVENANCE_INTEROP.md`. Never "certified", "compliant", or "admissible". |
+| 8.7 | External regimes | Mapping is "designed to be compatible with" only: 21 CFR Part 11 / ALCOA+, BS 10008, FIPS 140-3 split-knowledge vocabulary, FRE 902(13)/(14), eIDAS — see `PROVENANCE_INTEROP.md`. Never "certified", "compliant", or "admissible". Tables: [`docs/compliance/`](../compliance/README.md). |
 
 ## 9. Other business and legal matters
 

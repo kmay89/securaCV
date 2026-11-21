@@ -21,6 +21,7 @@ paths:
   - "firmware/projects/canary-wap/arduino/canary_wap/companion_pwa.h"
   - "spec/witness_dictionary.json"
   - "spec/device_details_vocabulary.json"
+  - "docs/compliance/maps/*.json"
   - "AGENTS.md"
   - ".github/release-targets.yml"
 ---

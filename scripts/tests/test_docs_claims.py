@@ -3298,6 +3298,28 @@ RETIRED_IN = (
      "entity the id the key names when it first registers it, and adds `_2` "
      "when another entity already holds that id, under its own amendment "
      "date (2026-11-04, HA51)"),
+    # Item 7 CP1: four PROVENANCE_INTEROP conclusions that read as findings
+    # of standing under a regime. docs/compliance/ maps each regime clause by
+    # clause instead, and the determination stays with the regulator, the
+    # assessor or the court (scripts/lint_compliance_map.py).
+    ("docs/security/PROVENANCE_INTEROP.md",
+     "the technical substrate already meets or exceeds the core of every "
+     "regime surveyed",
+     "the substrate maps onto the core of every regime surveyed, clause by "
+     "clause in docs/compliance/; whether a deployment is acceptable is the "
+     "regulator's, assessor's or court's determination"),
+    ("docs/security/PROVENANCE_INTEROP.md",
+     "What we satisfy:",
+     "what the 902(13)/(14) certification must describe, as a list of what "
+     "SecuraCV can point to"),
+    ("docs/security/PROVENANCE_INTEROP.md",
+     "more strongly than typical validated pharma systems",
+     "the hash chain is designed to support the Part 11 audit-trail clause; "
+     "docs/compliance/part11.md row 11.10(e)-trail names the tests and code"),
+    ("docs/security/PROVENANCE_INTEROP.md",
+     "is a literal description of the sealed chain",
+     "164.312(c)(2) maps to the sealed chain's integrity check; "
+     "docs/compliance/hipaa_164_312.md"),
 )
 
 # Strings that must never trip the gate: the true prose that replaced the
@@ -5589,6 +5611,22 @@ MUST_PASS_IN = [
      "already holds that id *(Amended 2026-11-04, HA51)*; an entity it "
      "registered before keeps its id"),
 
+    # Item 7 CP1's replacements in PROVENANCE_INTEROP.md.
+    ("docs/security/PROVENANCE_INTEROP.md",
+     "**the technical substrate maps onto the core of every regime surveyed "
+     "(tables in [`docs/compliance/`](../compliance/README.md)), and what's "
+     "missing is almost entirely packaging, context, and format adoption — not "
+     "cryptography; whether a deployment is acceptable under a regime is "
+     "decided by its regulator, assessor or court.**"),
+    ("docs/security/PROVENANCE_INTEROP.md", "**What we can point to:** whole-envelope SHA-256 digests"),
+    ("docs/security/PROVENANCE_INTEROP.md",
+     "where changes never obscure prior entries — the hash chain is designed to "
+     "support this: a change cannot obscure a prior entry without failing "
+     "verification ([`docs/compliance/part11.md`](../compliance/part11.md), "
+     "11.10(e))."),
+    ("docs/security/PROVENANCE_INTEROP.md",
+     "manner\") maps to the sealed chain's integrity check "
+     "([`docs/compliance/hipaa_164_312.md`](../compliance/hipaa_164_312.md))."),
 ]
 # And the retired sentences as they stood in the source, wrapped and marked
 # up — the ban losing its teeth is the other failure mode.
@@ -8075,6 +8113,18 @@ MUST_FAIL_IN = [
      "host-tested. Home Assistant 2025.10 and later applies the key when it first "
      "registers an entity; an entity it registered before keeps its id, and an "
      "older release names the entity from the device and entity names."),
+    # Item 7 CP1's retired forms, as they stood in PROVENANCE_INTEROP.md.
+    ("docs/security/PROVENANCE_INTEROP.md",
+     "The result, stated honestly: **the technical substrate already meets or\n"
+     "exceeds the core of every regime surveyed, and what's missing is almost\n"
+     "entirely packaging, context, and format adoption — not cryptography.**"),
+    ("docs/security/PROVENANCE_INTEROP.md",
+     "**What we satisfy:** whole-envelope SHA-256 digests, per-event hashes, signed"),
+    ("docs/security/PROVENANCE_INTEROP.md",
+     "trails\" where changes never obscure prior entries — the hash chain satisfies\n"
+     "this **by construction**, more strongly than typical validated pharma systems."),
+    ("docs/security/PROVENANCE_INTEROP.md",
+     "manner\") is a literal description of the sealed chain."),
 ]
 
 

@@ -1,0 +1,284 @@
+{
+  "schema": "securacv-compliance-map:v1",
+  "regime": {
+    "id": "eu_gmp_annex11",
+    "title": "EU GMP Annex 11 — computerized systems (EudraLex Volume 4)",
+    "kind": "regulation",
+    "determination_by": "the manufacturer, and the GMP inspectorate",
+    "source": {
+      "citation": "EudraLex Volume 4, Annex 11",
+      "access": "blocked",
+      "note": "health.ec.europa.eu was unreachable when this map was written; section numbers follow common citation and are unverified; requirement text is our paraphrase"
+    }
+  },
+  "last_reviewed": "2026-11",
+  "preamble": [
+    "Section numbering follows common citation and is unverified. The draft revision of Annex 11 is not mapped."
+  ],
+  "rows": [
+    {
+      "id": "annex11-§4-validation",
+      "clause": "§4",
+      "clause_verified": false,
+      "requirement": "Computerized systems are validated, and the validation is documented.",
+      "mechanism": "The organization validates; SecuraCV supplies the methodology and its test suites.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/compliance/VERIFICATION_METHODOLOGY.md"
+        }
+      ],
+      "operator_action": "Validate the deployment and keep the record."
+    },
+    {
+      "id": "annex11-§7.1-integrity",
+      "clause": "§7.1",
+      "clause_verified": false,
+      "requirement": "Data are protected against damage, and their accessibility, readability and accuracy are checked.",
+      "mechanism": "Hash-chained, device-signed ledgers, checked by three implementations (as Part 11 row 11.10(a)-integrity).",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/lib.rs",
+          "test": "verify_sealed_log_accepts_good_chain_and_rejects_tampering"
+        },
+        {
+          "kind": "test",
+          "path": "src/verify_runner.rs",
+          "test": "full_verify_flags_tampered_payload_without_err"
+        },
+        {
+          "kind": "test",
+          "path": "viewer/verify_core.test.js",
+          "test": "export-bundle verification parity"
+        },
+        {
+          "kind": "test",
+          "path": "custom_components/securacv/tests/test_kernel_verify.py",
+          "test": "test_a_tampered_payload_is_an_entry_hash_mismatch_at_its_index"
+        },
+        {
+          "kind": "test",
+          "path": "custom_components/securacv/tests/test_kernel_verify.py",
+          "test": "test_the_primitives_match_verify_core_js"
+        },
+        {
+          "kind": "code",
+          "path": "src/log/mod.rs",
+          "symbol": "pub fn hash_entry"
+        },
+        {
+          "kind": "code",
+          "path": "custom_components/securacv/kernel_verify.py",
+          "symbol": "def hash_entry"
+        }
+      ]
+    },
+    {
+      "id": "annex11-§7.2-backup",
+      "clause": "§7.2",
+      "clause_verified": false,
+      "requirement": "Regular backups are made and their restoration is tested.",
+      "mechanism": "Scheduled exports and the database backup are the deployment's.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/scheduled_exports.md",
+          "anchor": "systemd-timer-recommended"
+        }
+      ],
+      "operator_action": "Back up the database and the high-water mark, and test a restore."
+    },
+    {
+      "id": "annex11-§8-printouts",
+      "clause": "§8",
+      "clause_verified": false,
+      "requirement": "Clear printed copies of electronically stored data can be obtained.",
+      "mechanism": "render_human and the court kit's rendered custody record.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/break_glass/core.rs",
+          "test": "render_human_is_deterministic_and_carries_the_triad"
+        },
+        {
+          "kind": "test",
+          "path": "tests/court_export.rs",
+          "test": "assembles_kit_and_manifest_hashes_are_correct"
+        },
+        {
+          "kind": "code",
+          "path": "src/break_glass/core.rs",
+          "symbol": "pub fn render_human("
+        }
+      ]
+    },
+    {
+      "id": "annex11-§9-trail-reason",
+      "clause": "§9",
+      "clause_verified": false,
+      "requirement": "Changes and deletions of GMP-relevant data are recorded with their reason.",
+      "mechanism": "The closed reason_code is bound into the break-glass request hash.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/break_glass/core.rs",
+          "test": "reason_code_vocabulary_is_closed"
+        },
+        {
+          "kind": "test",
+          "path": "src/break_glass/core.rs",
+          "test": "receipt_context_binding_round_trip_and_tamper"
+        },
+        {
+          "kind": "code",
+          "path": "src/break_glass/core.rs",
+          "symbol": "pub const REASON_CODES"
+        }
+      ],
+      "operator_action": "Record the reason for each retention deletion in the change record.",
+      "limits": "Covers disclosure requests only, and only when the request carries operator context: a format-v1 request file, or authorize without --requested-by/--reason, is accepted with a NOTICE and records no reason. Events are never edited; retention deletes event records up to a checkpoint and records no reason."
+    },
+    {
+      "id": "annex11-§9-policy-reason",
+      "clause": "§9",
+      "clause_verified": false,
+      "requirement": "Changes and deletions of GMP-relevant data are recorded with their reason.",
+      "mechanism": "Policy-change records carry no reason field.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/security/CEREMONY_RUNBOOK.md",
+          "anchor": "c2--roster-threshold-or-crypto-mode-change"
+        }
+      ],
+      "operator_action": "Record the reason for each policy change in the change ticket."
+    },
+    {
+      "id": "annex11-§11-review",
+      "clause": "§11",
+      "clause_verified": false,
+      "requirement": "Computerized systems are periodically evaluated.",
+      "mechanism": "A reviewer-signed review attestation through a tree size.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "spec/quorum_unseal_v2.md",
+          "anchor": "4-layer-3--anchoring-and-witnessing-the-spine"
+        }
+      ],
+      "depends_on": [
+        "item3:H"
+      ]
+    },
+    {
+      "id": "annex11-§12.1-12.2-access",
+      "clause": "§12.1–12.2",
+      "clause_verified": false,
+      "requirement": "Physical and logical controls restrict access to authorized persons.",
+      "mechanism": "Host and database access are the deployment's; there is no role model in the software.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/security/CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md",
+          "anchor": "5-facility-management-and-operational-controls"
+        },
+        {
+          "kind": "tracker",
+          "path": "docs/security/ENTERPRISE_CUSTODY.md",
+          "anchor": "6-regulated-market-assurance-tier"
+        }
+      ],
+      "operator_action": "Apply physical and logical access controls to the host and the database key."
+    },
+    {
+      "id": "annex11-§12.3-authorizations",
+      "clause": "§12.3",
+      "clause_verified": false,
+      "requirement": "Creating, changing and withdrawing access authorizations is recorded.",
+      "mechanism": "Roster and threshold changes are receipted.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/break_glass/cli.rs",
+          "test": "policy_set_mutation_requires_and_accepts_current_quorum_approvals"
+        },
+        {
+          "kind": "code",
+          "path": "src/break_glass/core.rs",
+          "symbol": "pub fn count_valid_distinct_policy_change_approvals("
+        }
+      ]
+    },
+    {
+      "id": "annex11-§12.4-operator-identity",
+      "clause": "§12.4",
+      "clause_verified": false,
+      "requirement": "Data entry and change records the identity of the operator, with date and time.",
+      "mechanism": "The named requester is bound into the request hash; the self-export operator is declared.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/break_glass/core.rs",
+          "test": "receipt_context_binding_round_trip_and_tamper"
+        },
+        {
+          "kind": "code",
+          "path": "src/break_glass/core.rs",
+          "symbol": "pub struct OperatorContext"
+        }
+      ],
+      "limits": "Times are 10-minute buckets; API exports name a credential class. A format-v1 request file, or authorize without --requested-by/--reason, is accepted with a NOTICE, and that receipt names no requester."
+    },
+    {
+      "id": "annex11-§14-e-signature",
+      "clause": "§14",
+      "clause_verified": false,
+      "requirement": "Electronic signatures are permanently linked to their records and carry their time and date.",
+      "mechanism": "Per-domain signatures over entry and request hashes (as Part 11 row 11.70).",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/break_glass/core.rs",
+          "test": "cross_domain_signature_rejected_as_approval"
+        },
+        {
+          "kind": "test",
+          "path": "src/break_glass/core.rs",
+          "test": "receipt_context_binding_round_trip_and_tamper"
+        },
+        {
+          "kind": "code",
+          "path": "src/crypto/signatures.rs",
+          "symbol": "pub fn domain_separated_hash("
+        }
+      ]
+    },
+    {
+      "id": "annex11-§17-archiving",
+      "clause": "§17",
+      "clause_verified": false,
+      "requirement": "Archived data are checked for accessibility, readability and integrity.",
+      "mechanism": "Retention and export are documented; the archive is the deployment's.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/evidence_lifecycle.md"
+        }
+      ],
+      "operator_action": "Archive and test retrieval."
+    }
+  ]
+}
