@@ -7,7 +7,7 @@ guide is [`README.md`](README.md) (80 KB: open a section, not the file).
 ## Tests
 
 - One suite: `node --test canary-local/tests/<name>.test.js` from the repo
-  root. There are 62; `canary-local.yml`'s "page logic tests" job runs them
+  root. There are 67; `canary-local.yml`'s "page logic tests" job runs them
   all, and `scripts/check_path_filter_reads.py` fails it when a test reads a
   file outside the workflow's `paths:` filter. Add the path to **both** the
   `push` and `pull_request` lists.
