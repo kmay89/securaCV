@@ -747,12 +747,11 @@ impl KemKeypair {
     /// Both FIPS 203 input checks are `ml-kem`'s, made here on import and so
     /// before any encapsulation or decapsulation:
     ///
-    /// - section 7.2, the encapsulation key check: the length, and the
-    ///   modulus check (every 12-bit coefficient is below q), on `public` and
-    ///   on the copy inside `secret`;
-    /// - section 7.3, the decapsulation key check: the length, and the hash
-    ///   check (the stored `H(ek)` is the hash of the encapsulation key
-    ///   stored beside it).
+    /// - section 7.2, the encapsulation key check, on `public`: the length,
+    ///   and the modulus check (every 12-bit coefficient is below q);
+    /// - section 7.3, the decapsulation key check, on `secret`: the length,
+    ///   and the hash check (the `H(ek)` it stores is the hash of the
+    ///   encapsulation key it stores beside it).
     ///
     /// `ml-kem` keeps the decapsulation-key import for keys that were not
     /// stored as a seed and marks it deprecated in favor of seeds; a stored
@@ -1560,9 +1559,8 @@ mod tests {
                 &kat.public_key[..],
                 "the decapsulation key embeds the encapsulation key"
             );
-            // A bit of t-hat, a bit of rho, and a coefficient past q: the
-            // stored hash no longer matches in the first two, and the third
-            // fails the modulus check on the embedded copy as well.
+            // A bit of t-hat, a bit of rho, and a coefficient past q: in each
+            // the stored hash is no longer the hash of the embedded key.
             let mut altered_t_hat = kat.secret_key.clone();
             altered_t_hat[EK_IN_DK + 700] ^= 0x01;
             let mut altered_rho = kat.secret_key.clone();
@@ -1700,8 +1698,8 @@ mod tests {
             let keypair = kat.keypair();
             for case in 0..32u32 {
                 // 1184 arbitrary bytes hold a coefficient at or past q with
-                // near certainty, and 2400 arbitrary bytes do not hash to
-                // themselves: both are refused.
+                // near certainty, and 2400 arbitrary bytes do not carry the
+                // hash of the key they embed: both are refused.
                 let public = filler(&format!("public {case}"), 1184);
                 let secret = filler(&format!("secret {case}"), 2400);
                 assert_eq!(refusal(&public, &kat.secret_key), "invalid KEM public key");
