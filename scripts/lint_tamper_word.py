@@ -70,7 +70,6 @@ ALLOW_FILES = {
     "docs/security/CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md",
     "docs/strategy/15-maker-marketing-kit.md",
     "docs/strategy/27-liability-minimization-posture.md",
-    "docs/strategy/32-one-story-every-surface.md",
     "docs/research/enterprise_surveillance_landscape.md",
     # Audits and reviews that quote the claim they found.
     "docs/legal-audit-2026-07.md",
