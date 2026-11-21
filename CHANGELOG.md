@@ -1,6 +1,12 @@
 # Changelog
 
 ## [Unreleased]
+### Compliance maps say which mechanism stands behind which clause, and never more
+
+- **`docs/compliance/`** (roadmap item 7, CP1): eleven closed clause → mechanism → status maps (21 CFR Part 11, EU GMP Annex 11, ALCOA+, HIPAA 164.312, US evidence rules, eIDAS qualified electronic ledgers, the C2PA conformance program, BS 10008 by topic, the FIPS split-knowledge vocabulary, and the capture-provenance and enterprise-assurance trackers), each row with one status from the new `compliance_map_status` block of `spec/witness_dictionary.json`; the README's pinned posture paragraph (maps, never determinations); the verification methodology; the BS 10008 operator pack and its template; the capture-provenance note; and the design notes for the SIEM projection, validation sheets and CAWG co-signing. Every regime clause is marked unverified: no regime source could be fetched.
+- **`scripts/lint_compliance_map.py`** (in `lint.yml`) holds every map to the disk — a `structural` row names a test function and a code symbol that exist, so renaming either turns the build red until the row changes — and refuses claim words in scope; **`scripts/gen_compliance_tables.py --check`** keeps the human tables generated from the maps.
+- Four sentences of `docs/security/PROVENANCE_INTEROP.md` that read as findings of standing under a regime are rewritten and retired under `RETIRED_IN` in `scripts/tests/test_docs_claims.py`.
+
 ### The post-quantum features leave the unmaintained PQClean bindings: `ml-dsa` signs, `ml-kem` seals, and `cargo audit` passes again
 
 - **Why.** Two advisories of 2026-11-20 name the crates behind the optional
@@ -60,12 +66,6 @@
   `cargo audit` reports no vulnerability, no unsound and no yanked entry;
   three unmaintained warnings remain (`chrono` and `proc-macro-error` under
   `c2pa`, and `rustls-pemfile`), none with a fixed release.
-
-### Compliance maps say which mechanism stands behind which clause, and never more
-
-- **`docs/compliance/`** (roadmap item 7, CP1): eleven closed clause → mechanism → status maps (21 CFR Part 11, EU GMP Annex 11, ALCOA+, HIPAA 164.312, US evidence rules, eIDAS qualified electronic ledgers, the C2PA conformance program, BS 10008 by topic, the FIPS split-knowledge vocabulary, and the capture-provenance and enterprise-assurance trackers), each row with one status from the new `compliance_map_status` block of `spec/witness_dictionary.json`; the README's pinned posture paragraph (maps, never determinations); the verification methodology; the BS 10008 operator pack and its template; the capture-provenance note; and the design notes for the SIEM projection, validation sheets and CAWG co-signing. Every regime clause is marked unverified: no regime source could be fetched.
-- **`scripts/lint_compliance_map.py`** (in `lint.yml`) holds every map to the disk — a `structural` row names a test function and a code symbol that exist, so renaming either turns the build red until the row changes — and refuses claim words in scope; **`scripts/gen_compliance_tables.py --check`** keeps the human tables generated from the maps.
-- Four sentences of `docs/security/PROVENANCE_INTEROP.md` that read as findings of standing under a regime are rewritten and retired under `RETIRED_IN` in `scripts/tests/test_docs_claims.py`.
 
 ### An unreadable break-glass policy lands witnessd in safe mode instead of exiting, and a stale approval no longer poisons a receipt
 
