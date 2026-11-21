@@ -3310,9 +3310,9 @@ so — see D2 below.)
     /checkup moves with the next carry (`scripts/carry_to_site.py`).
   From code and the website's files. Found by the device-details survey.
 
-- [ ] **F479 [code+decision] canary-wap: the `/admin` page ships 67,638 B of
-  gzip, 2,102 B past the 64 KB the house rule names, and no gate measures
-  it.** `web_assets_gz.h`: "CANARY_UI_HTML: 299020 B raw -> 67638 B gzip".
+- [ ] **F479 [code+decision] canary-wap: the `/admin` page ships 67,914 B of
+  gzip, 2,378 B past the 64 KB the house rule names, and no gate measures
+  it.** `web_assets_gz.h`: "CANARY_UI_HTML: 300005 B raw -> 67914 B gzip".
   `firmware/LESSONS_LEARNED.md` ("Keep web_ui.h under 64KB", "Script checks
   file size") and `.github/PULL_REQUEST_TEMPLATE.md` state the rule for the
   raw file, which is compiled out: `regression_check.sh`'s "Build: web_ui.h
@@ -3321,9 +3321,9 @@ so — see D2 below.)
   in #1919 and grew in #1920, #1951 and the 2.4.20 train (#1972). The
   device-details design holds 65,536 B of gzip as a hard ceiling (its §14),
   and its PR 6 (#1971) did not build the `/admin` budget gate it planned.
-  Decide whether the ceiling stands (the page then loses 2,103 B or more) or
+  Decide whether the ceiling stands (the page then loses 2,379 B or more) or
   moves; then `--check` prints each asset's size and fails past it, and the
-  two documents say what is checked. Measured at `62bc0bc7`. Found by the
+  two documents say what is checked. Measured at `b090cbf8`. Found by the
   device-details design (`docs/design/device_details.md` §5.3).
 
 - [ ] **F480 [code] `improv_ble.cpp`'s reset guard takes IDF 5.1.0 as the
