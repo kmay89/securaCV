@@ -751,6 +751,23 @@ fn empty_approvals_commitment() -> [u8; 32] {
     approvals_commitment(&[])
 }
 
+/// The approvals a receipt records: exactly those over its own request hash, in presentation order.
+/// An approval over another hash (a stale file, a pre-M client's legacy hash) never counted and
+/// is not evidence about this request.
+///
+/// Nothing is deduplicated here: two approvals from one trustee over this hash are both recorded,
+/// and the distinct-trustee count stays where it has always been (`authorize`, the gate and the
+/// verifier). `authorize` commits this set (`approvals_commitment`) and
+/// `Kernel::append_break_glass_receipt` stores it, so the stored `approvals_json` and the signed
+/// commitment always describe the same list.
+pub fn recorded_approvals(request_hash: &[u8; 32], approvals: &[Approval]) -> Vec<Approval> {
+    approvals
+        .iter()
+        .filter(|approval| &approval.request_hash == request_hash)
+        .cloned()
+        .collect()
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum BreakGlassOutcome {
     Granted,
@@ -1345,15 +1362,21 @@ impl BreakGlass {
         now_bucket: TimeBucket,
     ) -> (Result<BreakGlassToken>, BreakGlassReceipt) {
         // A denial before any approval is examined: no trustee is "used", but the
-        // receipt still commits to what was presented.
+        // receipt still commits to what was presented over this request's hash
+        // (`recorded_approvals`) — an approval over another hash is no evidence
+        // about this request and is neither committed nor stored.
         let denied = |reason: String| {
+            let request_hash = request.request_hash();
             let receipt = BreakGlassReceipt {
                 vault_envelope_id: request.vault_envelope_id.clone(),
-                request_hash: request.request_hash(),
+                request_hash,
                 ruleset_hash: request.ruleset_hash,
                 time_bucket: now_bucket,
                 trustees_used: vec![],
-                approvals_commitment: approvals_commitment(approvals),
+                approvals_commitment: approvals_commitment(&recorded_approvals(
+                    &request_hash,
+                    approvals,
+                )),
                 policy_commitment: policy.commitment(),
                 outcome: BreakGlassOutcome::Denied {
                     reason: reason.clone(),
@@ -1438,7 +1461,12 @@ impl BreakGlass {
             }
         };
 
-        let approvals_commitment = approvals_commitment(approvals);
+        // The receipt commits to the approvals it records: those over this
+        // request's hash, the same set `Kernel::append_break_glass_receipt`
+        // stores. A stale approval over another hash was skipped above and is
+        // no evidence about this request.
+        let approvals_commitment =
+            approvals_commitment(&recorded_approvals(&request_hash, approvals));
         let receipt = BreakGlassReceipt {
             vault_envelope_id: request.vault_envelope_id.clone(),
             request_hash,

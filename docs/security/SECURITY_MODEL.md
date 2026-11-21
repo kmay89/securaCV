@@ -1057,10 +1057,7 @@ Evidence exported from this device can be verified by **anyone**,
 Open the included `verification.html` file in any web browser.
 It runs entirely offline — no internet connection required.
 
-### Option 2: Online Verifier
-Visit verify.securacv.com and upload the export bundle.
-
-### Option 3: Manual Verification
+### Option 2: Manual Verification
 Using any Ed25519 implementation:
 1. The device's public key is in `device_identity.json`
 2. Each record's Ed25519 signature can be checked independently

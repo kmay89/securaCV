@@ -47,7 +47,7 @@ Camera (RTSP / V4L2 / ESP32 / Frigate-MQTT)
 
 - **Kernel / Rust developer**: `spec/invariants.md` → `spec/event_contract.md` →
   `kernel/architecture.md` → `src/lib.rs` → `src/bin/witnessd.rs`. Run `cargo run --bin demo`
-  then `cargo run --bin log_verify -- --db demo_witness.db` to see the witness + tamper proof.
+  then `cargo run --bin log_verify -- --db demo_witness.db` to see the witness and the tamper check.
 - **Firmware developer**: `firmware/README.md` → `firmware/projects/canary-vision/` (Vision)
   or `firmware/projects/canary-wap/` (WAP). Shared code in `firmware/common/`.
 - **Home Assistant user**: root `README.md` install → `docs/homeassistant_setup.md` →

@@ -142,6 +142,30 @@ A `tamper_detected` route on the host's `mqtt_sensor` adapter (see
 device witnessed happening to itself), not a `FailureType` — the device is
 still functioning when it reports it.
 
+### Break-glass policy unreadable → safe mode
+
+A stored break-glass quorum policy that this build cannot parse or validate (a
+corrupt row, or a field a newer release wrote that this build refuses) does
+**not** stop the kernel from opening. `Kernel::open` records the load error and
+leaves the policy unset, and every break-glass action on that database
+refuses. Authorize, unseal, `policy set`, `policy propose` and the trustee
+enrollment that completes a setup roster refuse with the recorded error
+(`Kernel::break_glass_policy_checked`). The console answers
+`500 policy_load_failed` and logs nothing per request; the error is logged when
+the kernel opens. A token redemption (unseal or quorum export) that reaches the
+gate is refused there, because the gate's own policy read fails. The policy is
+never treated as absent, so a `policy set` cannot bootstrap over it without the
+stored quorum's consent; that path refuses too. `break_glass doctor` reports
+`policy: UNREADABLE — …` and exits 1; a database with no policy table yet (an
+empty pre-created file) is reported with the read's own error instead.
+
+Verification is unchanged and refuses the database: the verifier's own policy
+read fails, so the report is `verification failed`, and witnessd's boot check
+puts it in **safe mode**: it serves the read and verify API and appends nothing.
+Before this, the same error failed `Kernel::open` and witnessd exited before any
+safe-mode logic ran. Recovery is the operator's: run `log_verify`, then restore
+the policy row from a trusted copy or upgrade to the release that wrote it.
+
 ### Known gap (tracked follow-up)
 
 Firmware bulk health counters (battery, heap, subsystem flags in

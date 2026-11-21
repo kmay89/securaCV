@@ -1,0 +1,211 @@
+{
+  "schema": "securacv-compliance-map:v1",
+  "regime": {
+    "id": "eidas_qualified_ledger",
+    "title": "eIDAS (Regulation (EU) No 910/2014 as amended by 2024/1183): qualified electronic ledgers and qualified electronic time stamps",
+    "kind": "regulation",
+    "determination_by": "a supervisory body, and the courts",
+    "source": {
+      "citation": "Regulation (EU) No 910/2014 as amended by Regulation (EU) 2024/1183",
+      "access": "blocked",
+      "note": "eur-lex.europa.eu and etsi.org were unreachable when this map was written; article content follows docs/security/PROVENANCE_INTEROP.md §1.1 and is unverified; no sub-paragraph letters are used; requirement text is our paraphrase"
+    }
+  },
+  "last_reviewed": "2026-11",
+  "rows": [
+    {
+      "id": "45k-non-discrimination",
+      "clause": "Art. 45k",
+      "clause_verified": false,
+      "requirement": "An electronic ledger is not denied legal effect solely for being electronic or for not being a qualified electronic ledger.",
+      "mechanism": "None; this is a legal effect, not a mechanism.",
+      "status": "not-applicable",
+      "evidence": [],
+      "reason": "A legal effect a court applies to any ledger; it requires no mechanism and SecuraCV claims none."
+    },
+    {
+      "id": "45k-presumption",
+      "clause": "Art. 45k",
+      "clause_verified": false,
+      "requirement": "Records in a qualified electronic ledger are presumed to be uniquely and accurately ordered and intact.",
+      "mechanism": "SecuraCV is not a qualified electronic ledger.",
+      "status": "not-pursued",
+      "evidence": [
+        {
+          "kind": "decision",
+          "path": "docs/security/PROVENANCE_INTEROP.md",
+          "anchor": "4-invariant-tensions-and-their-resolutions"
+        }
+      ],
+      "reason": "The presumption attaches only to qualified electronic ledgers; SecuraCV is not one and seeks no qualification."
+    },
+    {
+      "id": "45l-qualification",
+      "clause": "Art. 45l",
+      "clause_verified": false,
+      "requirement": "A qualified electronic ledger is created by one or more qualified trust service providers.",
+      "mechanism": "No qualified trust service provider operates a SecuraCV ledger.",
+      "status": "not-pursued",
+      "evidence": [
+        {
+          "kind": "decision",
+          "path": "docs/security/PROVENANCE_INTEROP.md",
+          "anchor": "4-invariant-tensions-and-their-resolutions"
+        }
+      ],
+      "reason": "Qualification needs a supervised qualified trust service provider and a conformity assessment — a centralized regime absorbed only as a projection (tension 8)."
+    },
+    {
+      "id": "45l-ordering",
+      "clause": "Art. 45l (ordering)",
+      "clause_verified": false,
+      "requirement": "Records are in unique, accurate chronological order.",
+      "mechanism": "Each entry hashes its predecessor; the chain fails verification when reordered.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/lib.rs",
+          "test": "verify_sealed_log_accepts_good_chain_and_rejects_tampering"
+        },
+        {
+          "kind": "code",
+          "path": "src/log/mod.rs",
+          "symbol": "pub fn hash_entry"
+        }
+      ],
+      "limits": "Chronology at 10-minute granularity."
+    },
+    {
+      "id": "45l-integrity",
+      "clause": "Art. 45l (integrity)",
+      "clause_verified": false,
+      "requirement": "The integrity of records is protected and any change is detectable.",
+      "mechanism": "An external signed high-water mark fails closed on tail truncation, rollback or wipe.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/verify_runner.rs",
+          "test": "full_verify_fails_closed_on_tail_truncation"
+        },
+        {
+          "kind": "code",
+          "path": "src/verify_runner.rs",
+          "symbol": "pub fn run_full_verify_with_high_water_mark("
+        }
+      ],
+      "operator_action": "Set SECURACV_HWM_PATH on external media; without a configured high-water mark, tail truncation, rollback and wipe are not detected."
+    },
+    {
+      "id": "45l-origin",
+      "clause": "Art. 45l (origin)",
+      "clause_verified": false,
+      "requirement": "The origin of records is identifiable.",
+      "mechanism": "Every row is device-signed.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/lib.rs",
+          "test": "verify_sealed_log_accepts_good_chain_and_rejects_tampering"
+        },
+        {
+          "kind": "code",
+          "path": "src/crypto/signatures.rs",
+          "symbol": "pub fn sign_with_domain("
+        }
+      ]
+    },
+    {
+      "id": "45l-tree",
+      "clause": "Art. 45l (ordering)",
+      "clause_verified": false,
+      "requirement": "Records are in unique, accurate chronological order.",
+      "mechanism": "A Merkle tree and a signed checkpoint over every ledger.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "spec/quorum_unseal_v2.md",
+          "anchor": "4-layer-3--anchoring-and-witnessing-the-spine"
+        }
+      ],
+      "depends_on": [
+        "item3:F"
+      ]
+    },
+    {
+      "id": "45l-witness",
+      "clause": "Art. 45l (integrity)",
+      "clause_verified": false,
+      "requirement": "The integrity of records is protected and any change is detectable.",
+      "mechanism": "Fleet witnessing of signed checkpoints.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "spec/quorum_unseal_v2.md",
+          "anchor": "4-layer-3--anchoring-and-witnessing-the-spine"
+        }
+      ],
+      "depends_on": [
+        "item3:I"
+      ]
+    },
+    {
+      "id": "etsi-ledger",
+      "clause": "ETSI standards for qualified electronic ledgers",
+      "clause_verified": false,
+      "requirement": "Standards for qualified electronic ledgers set technical requirements.",
+      "mechanism": "None tracked.",
+      "status": "not-pursued",
+      "evidence": [
+        {
+          "kind": "decision",
+          "path": "docs/security/PROVENANCE_INTEROP.md",
+          "anchor": "4-invariant-tensions-and-their-resolutions"
+        }
+      ],
+      "reason": "No ETSI document for qualified electronic ledgers was identified or read; none is tracked against."
+    },
+    {
+      "id": "time-stamp-declared",
+      "clause": "Arts. 41–42",
+      "clause_verified": false,
+      "requirement": "A qualified electronic time stamp carries a presumption of accurate date and time and of integrity.",
+      "mechanism": "A TSA's qualification is the operator's declaration in the anchor policy (src/anchor_policy.rs:10-11).",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/timestamping.md",
+          "anchor": "two-tsas-and-the-anchor-policy"
+        }
+      ],
+      "operator_action": "Point one of the two TSAs at a qualified TSA the operator checked on the trusted list, and record why."
+    },
+    {
+      "id": "two-tsa-distinct",
+      "clause": "Arts. 41–42 (context)",
+      "clause_verified": false,
+      "requirement": "Time-stamp evidence does not rest on one authority.",
+      "mechanism": "Under an anchor policy, log_anchor verify --policy reports a head covered only when distinct policy entries cover every required role and at least min_distinct_tsas of them countersigned it (default 2).",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/anchor_policy.rs",
+          "test": "evaluate_fewer_than_min_distinct"
+        },
+        {
+          "kind": "code",
+          "path": "src/anchor_policy.rs",
+          "symbol": "pub min_distinct_tsas"
+        }
+      ],
+      "operator_action": "Write an anchor policy that keeps min_distinct_tsas at 2 or more with both roles required, and run log_anchor verify --policy on a cadence.",
+      "limits": "The control runs only under an operator-written anchor policy: without one, log_anchor verify reports how many distinct TSAs countersigned each head but requires none, and a policy may lower the minimum to 1."
+    }
+  ]
+}

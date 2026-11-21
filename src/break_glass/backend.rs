@@ -54,7 +54,7 @@ impl KernelVaultOps {
 
 impl BreakGlassOps for KernelVaultOps {
     fn policy(&self) -> Result<Option<QuorumPolicy>> {
-        Ok(self.kernel.break_glass_policy().cloned())
+        Ok(self.kernel.break_glass_policy_checked()?.cloned())
     }
 
     /// The console's one-time setup. The in-memory policy and a database
@@ -68,7 +68,7 @@ impl BreakGlassOps for KernelVaultOps {
     /// configured". Only a genuine bootstrap is `Stored`, with the CLI's
     /// `bootstrap` history row.
     fn bootstrap_policy(&mut self, policy: &QuorumPolicy) -> Result<PolicyBootstrap> {
-        if self.kernel.break_glass_policy().is_some()
+        if self.kernel.break_glass_policy_checked()?.is_some()
             || crate::verify::load_break_glass_policy(&self.kernel.conn)?.is_some()
         {
             return Ok(PolicyBootstrap::AlreadyConfigured);
@@ -88,7 +88,7 @@ impl BreakGlassOps for KernelVaultOps {
             )),
             // The gate refreshed the in-memory policy from the database: if
             // one is there now, it was committed after the early check.
-            Err(_) if self.kernel.break_glass_policy().is_some() => {
+            Err(_) if matches!(self.kernel.break_glass_policy_checked(), Ok(Some(_))) => {
                 Ok(PolicyBootstrap::AlreadyConfigured)
             }
             Err(err) => Err(err),
@@ -109,7 +109,7 @@ impl BreakGlassOps for KernelVaultOps {
         // Clone the policy so the kernel is free to be borrowed mutably below.
         let policy = self
             .kernel
-            .break_glass_policy()
+            .break_glass_policy_checked()?
             .cloned()
             .ok_or_else(|| anyhow!("break-glass quorum policy is not configured"))?;
 

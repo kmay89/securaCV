@@ -332,13 +332,13 @@ def main():
                 {
                     "id": "lab",
                     "title": "1 · Start in the Lab",
-                    "intro": "Your browser does the flashing over WebSerial — macOS, Windows, and Linux are the same three clicks.",
+                    "intro": "Your browser does the flashing over WebSerial — macOS, Windows, and Linux are the same two clicks.",
                     "steps": [
                         {
                             "title": "Meet the family, pick your bird",
                             "variants": {"all": {"links": [
                                 {"label": "Find your Canary (4 questions)", "href": "choose.html"},
-                                {"label": "Meet the Canaries (live firmware)", "href": "index.html"},
+                                {"label": "Meet the Canaries (live firmware)", "href": "fleet.html"},
                                 {"label": "The Board Room (wiring)", "href": "boards.html"},
                             ]}},
                         },
@@ -347,7 +347,7 @@ def main():
                             "doc": "docs/getting_started_canary.md",
                             "variants": {"all": {"bullets": [
                                 "The Workshop specs your exact build (parts, pins, enclosure).",
-                                "Kits and BOMs: see Build It in the Lab — plans are free forever.",
+                                "Parts lists: see Build in the Lab. The plans are free.",
                             ], "links": [{"label": "The Workshop", "href": "workshop.html"}]}},
                         },
                     ],

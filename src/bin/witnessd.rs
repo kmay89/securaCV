@@ -276,8 +276,10 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Safe mode returned above, so the policy loaded; the checked read still
+    // refuses rather than seal under a default crypto mode if it did not.
     let crypto_mode = kernel
-        .break_glass_policy()
+        .break_glass_policy_checked()?
         .map(|policy| policy.vault.crypto_mode)
         .unwrap_or_default();
     let mut vault = {

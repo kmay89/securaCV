@@ -1,0 +1,25 @@
+name: "Maker Corps: I'm in"
+description: "Raise your hand to build Canaries for people near you. securacv.com/maker fills this in for you."
+title: "Maker Corps: I'm in"
+labels:
+  - "maker-corps"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for raising your hand. 💛
+
+        This opens a normal GitHub issue, in the open: there is no roster
+        service and no backend behind it. Share a **region, never an
+        address**, and nothing you would not put on a public page.
+
+        The corps is at the hand-raising stage. Nobody is paired by software
+        yet; a maintainer reads each of these and connects people by hand.
+  - type: textarea
+    id: details
+    attributes:
+      label: About you
+      description: Your region, what you can do (print, solder, flash, support), and whether you would build for someone else. If you came from the site, this is already filled in.
+      placeholder: "Region: Pacific Northwest\nSkills: printing, soldering\nBuild for others: yes, a few a month"
+    validations:
+      required: true

@@ -1,0 +1,147 @@
+{
+  "schema": "securacv-compliance-map:v1",
+  "regime": {
+    "id": "hipaa_164_312",
+    "title": "HIPAA Security Rule, 45 CFR 164.312 — technical safeguards (US HHS)",
+    "kind": "regulation",
+    "determination_by": "the covered entity or business associate, and HHS",
+    "source": {
+      "citation": "45 CFR 164.312",
+      "access": "blocked",
+      "note": "ecfr.gov, govinfo.gov and law.cornell.edu were unreachable when this map was written; clause numbers follow common citation and are unverified; requirement text is our paraphrase"
+    }
+  },
+  "last_reviewed": "2026-11",
+  "rows": [
+    {
+      "id": "164.312(b)",
+      "clause": "164.312(b)",
+      "clause_verified": false,
+      "requirement": "Mechanisms record and examine activity in systems that hold or use ePHI.",
+      "mechanism": "Append-only, hash-chained, device-signed receipt ledgers record every custody act.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/lib.rs",
+          "test": "authenticated_history_rejects_forged_era_and_tampered_approvals"
+        },
+        {
+          "kind": "code",
+          "path": "src/lib.rs",
+          "symbol": "pub fn append_export_receipt("
+        }
+      ]
+    },
+    {
+      "id": "164.312(b)-siem",
+      "clause": "164.312(b)",
+      "clause_verified": false,
+      "requirement": "Mechanisms record and examine activity in systems that hold or use ePHI.",
+      "mechanism": "A read-only FHIR R4-shaped AuditEvent projection of the receipts, for a SIEM.",
+      "status": "designed",
+      "evidence": [
+        {
+          "kind": "design",
+          "path": "docs/compliance/SIEM_PROJECTION.md"
+        }
+      ],
+      "depends_on": [
+        "item7:CP2"
+      ]
+    },
+    {
+      "id": "164.312(c)(1)",
+      "clause": "164.312(c)(1)",
+      "clause_verified": false,
+      "requirement": "Policies and procedures protect ePHI from improper alteration or destruction.",
+      "mechanism": "Hash-chained, device-signed ledgers, checked by three implementations (as Part 11 row 11.10(a)-integrity).",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/lib.rs",
+          "test": "verify_sealed_log_accepts_good_chain_and_rejects_tampering"
+        },
+        {
+          "kind": "test",
+          "path": "src/verify_runner.rs",
+          "test": "full_verify_flags_tampered_payload_without_err"
+        },
+        {
+          "kind": "test",
+          "path": "viewer/verify_core.test.js",
+          "test": "export-bundle verification parity"
+        },
+        {
+          "kind": "test",
+          "path": "custom_components/securacv/tests/test_kernel_verify.py",
+          "test": "test_a_tampered_payload_is_an_entry_hash_mismatch_at_its_index"
+        },
+        {
+          "kind": "test",
+          "path": "custom_components/securacv/tests/test_kernel_verify.py",
+          "test": "test_the_primitives_match_verify_core_js"
+        },
+        {
+          "kind": "code",
+          "path": "src/log/mod.rs",
+          "symbol": "pub fn hash_entry"
+        },
+        {
+          "kind": "code",
+          "path": "custom_components/securacv/kernel_verify.py",
+          "symbol": "def hash_entry"
+        }
+      ],
+      "limits": "The policies and procedures are the covered entity's; this row maps the integrity mechanism they rely on. The ledgers detect improper alteration or destruction; they do not prevent it."
+    },
+    {
+      "id": "164.312(c)(2)",
+      "clause": "164.312(c)(2)",
+      "clause_verified": false,
+      "requirement": "Electronic mechanisms corroborate that ePHI has not been altered or destroyed without authorization.",
+      "mechanism": "The sealed chain's integrity check, under a pinned device key.",
+      "status": "structural",
+      "evidence": [
+        {
+          "kind": "test",
+          "path": "src/lib.rs",
+          "test": "verify_sealed_log_accepts_good_chain_and_rejects_tampering"
+        },
+        {
+          "kind": "test",
+          "path": "src/verify_runner.rs",
+          "test": "full_verify_flags_tampered_payload_without_err"
+        },
+        {
+          "kind": "code",
+          "path": "src/log/mod.rs",
+          "symbol": "pub fn hash_entry"
+        },
+        {
+          "kind": "code",
+          "path": "custom_components/securacv/kernel_verify.py",
+          "symbol": "def hash_entry"
+        }
+      ],
+      "limits": "Whether a deployment's records are ePHI is the covered entity's determination; SecuraCV records no ePHI by design."
+    },
+    {
+      "id": "164.312(d)",
+      "clause": "164.312(d)",
+      "clause_verified": false,
+      "requirement": "A person or entity seeking access is authenticated as the one claimed.",
+      "mechanism": "Trustee keys and the device seed authenticate custody acts; who holds them is the deployment's.",
+      "status": "procedural",
+      "evidence": [
+        {
+          "kind": "procedure",
+          "path": "docs/security/CUSTODY_PRACTICE_STATEMENT_TEMPLATE.md",
+          "anchor": "3-identification-and-authentication"
+        }
+      ],
+      "operator_action": "Authenticate the people who hold seeds and trustee keys."
+    }
+  ]
+}
