@@ -319,41 +319,6 @@ so — see D2 below.)
   `check_fleet_beacon_sync.sh` and `check_display_arduino_sync.sh`). From code
   and the host suite. Found by F316 (#1961).
 
-- [ ] **F484 [code+decision] canary (PIO): a mesh fingerprint or opera id that
-  does not hash is used as all zeros.** `mesh_crypto::sha256_domain()` answers
-  whether it hashed, and `compute_fingerprint()` and `compute_opera_id()` zero
-  their output when it did not, but keep their `void` API, so their ten
-  callers take 8 or 16 zero bytes for the value: in `mesh_session.cpp`,
-  `dispatch_action()` twice (the paired member's fingerprint for the bound
-  callback, a failed partner's for the failed one), `end_pair_contact()`
-  (binds the partner's radio address by it), `handle_pair_frame()` (the
-  deny-list check of a pairing frame's partner), `start_pairing_initiator()`
-  (the opera id the COMPLETE copies carry), `set_opera_secret()` twice (this
-  opera's id and this device's sender fingerprint), `register_trusted_peer()`
-  (the deny-list check and the table key) and `can_hold_partner()` (the
-  pairing's PartnerGate); in `mesh_state.cpp`, `remove_trusted_peer()` (the
-  address entry it drops). Make both `[[nodiscard]] bool` and decide what each
-  caller refuses; the canary-wap made the same move in #1961, and its open
-  calls on what a refusal leaves (F456-F458) are the ones to mirror. The
-  inputs (a 27- or 20-byte domain and a 32-byte key or secret) run in the
-  ESP32's block mode, which has no failing path. From code. Found by F364
-  (#W26PR).
-
-- [ ] **F485 [code] canary-wap Chirp: `POST /api/chirp/send` narrows
-  `template_id` and `detail` into a byte unchecked.** `handle_chirp_send()`
-  (`chirp_api.h`) reads `uint8_t template_id_raw = input["template_id"];` and
-  `uint8_t detail_raw = input["detail"] | 0;`. Under ArduinoJson 7.4.1 (the
-  emulator's pinned copy, in a scratch harness) a template of 256, 272 or -240
-  reads as 0, TPL 0x00 "police activity in area", a valid template, so the
-  send goes out with a template the request did not name, and 16.9 or `"16"`
-  read as 16; a detail of 300 reads as 44 and -1 as 255, and nothing checks
-  the slot before it is signed. Refuse each as `ttl_from_request()`
-  (`mesh_network.h`) refuses a TTL: present, `is<int32_t>()` and in range, or
-  `invalid_template` / `invalid_detail`, with host rows in
-  `test_chirp_commands_wap.cpp` and a pin beside
-  `check_wap_loop_commands.py`'s CV7. From code and a scratch harness. Found
-  by F412 (#W26PR).
-
 - [ ] **F481 [code] canary-wap: the Wi-Fi sensing probe broadcasts a counter
   that dates the boot, and nothing reads it.** While sensing runs,
   `probe_pump()` (`csi_integration.cpp`) sends `csi_probe_pkt_t` as an
@@ -398,6 +363,41 @@ so — see D2 below.)
   paragraph still lists "type, flags, battery, health, chain height and the
   two fingerprint bytes" only. What remains: say the same there. From code.
   Found by the device-details design (`docs/design/device_details.md` §7.2).
+
+- [ ] **F484 [code+decision] canary (PIO): a mesh fingerprint or opera id that
+  does not hash is used as all zeros.** `mesh_crypto::sha256_domain()` answers
+  whether it hashed, and `compute_fingerprint()` and `compute_opera_id()` zero
+  their output when it did not, but keep their `void` API, so their ten
+  callers take 8 or 16 zero bytes for the value: in `mesh_session.cpp`,
+  `dispatch_action()` twice (the paired member's fingerprint for the bound
+  callback, a failed partner's for the failed one), `end_pair_contact()`
+  (binds the partner's radio address by it), `handle_pair_frame()` (the
+  deny-list check of a pairing frame's partner), `start_pairing_initiator()`
+  (the opera id the COMPLETE copies carry), `set_opera_secret()` twice (this
+  opera's id and this device's sender fingerprint), `register_trusted_peer()`
+  (the deny-list check and the table key) and `can_hold_partner()` (the
+  pairing's PartnerGate); in `mesh_state.cpp`, `remove_trusted_peer()` (the
+  address entry it drops). Make both `[[nodiscard]] bool` and decide what each
+  caller refuses; the canary-wap made the same move in #1961, and its open
+  calls on what a refusal leaves (F456-F458) are the ones to mirror. The
+  inputs (a 27- or 20-byte domain and a 32-byte key or secret) run in the
+  ESP32's block mode, which has no failing path. From code. Found by F364
+  (#W26PR).
+
+- [ ] **F485 [code] canary-wap Chirp: `POST /api/chirp/send` narrows
+  `template_id` and `detail` into a byte unchecked.** `handle_chirp_send()`
+  (`chirp_api.h`) reads `uint8_t template_id_raw = input["template_id"];` and
+  `uint8_t detail_raw = input["detail"] | 0;`. Under ArduinoJson 7.4.1 (the
+  emulator's pinned copy, in a scratch harness) a template of 256, 272 or -240
+  reads as 0, TPL 0x00 "police activity in area", a valid template, so the
+  send goes out with a template the request did not name, and 16.9 or `"16"`
+  read as 16; a detail of 300 reads as 44 and -1 as 255, and nothing checks
+  the slot before it is signed. Refuse each as `ttl_from_request()`
+  (`mesh_network.h`) refuses a TTL: present, `is<int32_t>()` and in range, or
+  `invalid_template` / `invalid_detail`, with host rows in
+  `test_chirp_commands_wap.cpp` and a pin beside
+  `check_wap_loop_commands.py`'s CV7. From code and a scratch harness. Found
+  by F412 (#W26PR).
 
 ### Network surface & provisioning
 
@@ -3313,7 +3313,7 @@ so — see D2 below.)
   and its PR 6 (#1971) did not build the `/admin` budget gate it planned.
   Decide whether the ceiling stands (the page then loses 2,379 B or more) or
   moves; then `--check` prints each asset's size and fails past it, and the
-  two documents say what is checked. Measured at `b090cbf8`. Found by the
+  two documents say what is checked. Measured at `b3cb9bda`. Found by the
   device-details design (`docs/design/device_details.md` §5.3).
 
 - [ ] **F480 [code] `improv_ble.cpp`'s reset guard takes IDF 5.1.0 as the

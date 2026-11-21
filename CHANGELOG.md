@@ -102,8 +102,9 @@
 - **Backlog:** F469, F470, F471, F472, F474, F475, F370, F413, F373, A127,
   A100, D23 and CI28 are closed. F30, F364, F412, F447, F459, F473, F372,
   C10, C12, C21, C25, C33 and C37 now say what remains, most of it a
-  maintainer's call, and F251 and F476 say their dashboard move restates the
-  parity plan. New from the wave: F484-F490, F492, F493, A136-A138, C39,
+  maintainer's call, F251 and F476 say their dashboard move restates the
+  parity plan, and F479's figures move to the 67,914 B of gzip this tree
+  serves. New from the wave: F484-F490, F492, F493, A136-A138, C39,
   D28 and CI31-CI33, among them the canary tree's fingerprint and opera id
   that are used as zeros when they do not hash (F484), the Chirp send's
   other narrowed fields (F485) and the compares left as `memcmp()` (F486).
