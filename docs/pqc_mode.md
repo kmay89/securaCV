@@ -80,9 +80,16 @@ When enabled, vault envelopes can use hybrid encryption:
 
 - **Classical**: ChaCha20Poly1305 with master-key-wrapped DEK
 - **PQ**: KEM-encapsulated DEK (ML-KEM-768)
-- **Hybrid**: Both classical wrap and KEM ciphertext; decryption tries KEM
-  first, falls back to classical if AEAD verification fails (handles legacy
-  Kyber768 envelopes transparently)
+- **Hybrid** (labeled `hybrid-ml-kem-768`): the DEK is derived from the ML-KEM
+  shared secret and a classical secret wrapped under the master key, so an
+  envelope opens with both or not at all. There is no fallback to either half.
+
+Envelopes written before that shape are labeled `ml-kem-768` and carry a
+classical wrap of the DEK itself, so either secret alone opens one: an OR, no
+stronger than its weaker half. They still decrypt and are never written again.
+Where the KEM ciphertext in one is legacy Kyber768, decapsulation yields a
+wrong secret without an error (ML-KEM rejects implicitly), the payload fails
+its authentication check, and the envelope opens through the classical wrap.
 
 ## Builds through 0.9.3
 

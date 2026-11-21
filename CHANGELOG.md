@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### The post-quantum features leave the unmaintained PQClean bindings: `ml-dsa` signs, `ml-kem` seals, and `cargo audit` is clean again
+### The post-quantum features leave the unmaintained PQClean bindings: `ml-dsa` signs, `ml-kem` seals, and `cargo audit` passes again
 
 - **Why.** Two advisories of 2026-11-20 name the crates behind the optional
   `pqc-signatures` and `pqc-vault` features, with no fixed release, and the
