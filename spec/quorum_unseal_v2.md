@@ -85,8 +85,9 @@ KEK ──unwraps──► per-envelope DEK ──decrypts──► envelope pay
   hardware token).
 - Reconstruction happens **only in memory inside the unseal gate**, after
   quorum authorization, and is zeroized immediately after DEK unwrap — the
-  KSK storage-master-key model; FIPS 140-3 Level 3–4 "split knowledge" in
-  that vocabulary.
+  KSK storage-master-key model; "split knowledge" in the FIPS 140-3 /
+  ISO/IEC 19790 sense of the term (no FIPS level or module validation is
+  claimed; `docs/compliance/fips_140_3_vocabulary.md`).
 
 ### 2.2 Post-quantum layer
 
@@ -360,7 +361,8 @@ carry the owner's **declared** `context.operator`.)*
    everything before it makes it meaningful.
 6. C2PA profile (§5).
 7. Enterprise-tier projections (FHIR AuditEvent, CAWG, conformance-program
-   and qualified-ledger tracking).
+   and qualified-ledger tracking). *(In part: compliance and tracking maps,
+   `docs/compliance/`.)*
 
 ## 7. Explicit rejections
 

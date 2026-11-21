@@ -23,8 +23,8 @@ WHAT IS ALLOWED
 ---------------
 Only the files on ALLOW_FILES, for one of three reasons: the file STATES the
 rule (which takes writing the word once, usually after "never"); it is an
-audit or review that QUOTES the claim it found; or it is a test that asserts
-the word's absence. Hard-wrapped prose puts "never" on one line and the word
+audit or review that QUOTES the claim it found; or it is a test or another
+lint that asserts the word's absence. Hard-wrapped prose puts "never" on one line and the word
 on the next, so a per-line "is it negated?" check would be a guess — the list
 is by file, with the reason beside each entry. If this lint just went red on
 your new file, the fix is to write "tamper-evident", not to grow the list.
@@ -79,6 +79,9 @@ ALLOW_FILES = {
     "scripts/tests/test_docs_claims.py",   # quotes the legal audit's sentence
     # A guard test asserting the word's absence in the witness statement.
     "custom_components/securacv/tests/test_witness_statement.py",
+    # Another lint that bans the word: it is in that lint's claim-word
+    # pattern and in its own must-fail self-test.
+    "scripts/lint_compliance_map.py",
 }
 
 # The guard on the guard.

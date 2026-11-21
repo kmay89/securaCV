@@ -304,9 +304,9 @@ audit-centralization).
 | HSM / secure-element key custody | Missing on host | §1 item 2 |
 | PKI / mutual-TLS device identity | Missing | CA + certificate lifecycle + revocation; SPIFFE/x.509 |
 | RBAC + least privilege | Missing | Role model (operator / auditor / admin) atop the quorum |
-| Audit export to SIEM (CEF/syslog/OTLP) | Absent by design | Opt-in, tier-only export that does not violate non-queryability |
+| Audit export to SIEM (CEF/syslog/OTLP) | Absent by design | Opt-in, tier-only export that does not violate non-queryability; design: the read-only FHIR R4 AuditEvent projection, [`docs/compliance/SIEM_PROJECTION.md`](../compliance/SIEM_PROJECTION.md) |
 | Tamper detection + response (host) | Firmware only | Host-side key zeroization on tamper |
-| Formal compliance mapping | None | SSP + SOC-2 / ISO 27001 / NIST 800-53 / CC / CJIS mapping |
+| Formal compliance mapping | In part | Part 11, Annex 11, ALCOA+, HIPAA 164.312, US evidence, eIDAS ledgers, C2PA program, BS 10008 and FIPS-vocabulary maps in [`docs/compliance/`](../compliance/README.md); SSP, SOC 2, ISO 27001, NIST 800-53, CC and CJIS remain unmapped |
 
 ---
 

@@ -206,6 +206,12 @@ jobs:
         run: python3 tools/test_away_access_check.py
       - name: Docs index — no stragglers, no dead links
         run: python3 scripts/lint_docs_index.py
+      - name: Compliance maps — closed schema, evidence on disk, named tests exist, no claim words
+        # docs/compliance/README.md is the posture. A row may be `structural` only while the test and the
+        # code symbol it names exist; a renamed test fails here until the row changes in the same PR.
+        run: python3 scripts/lint_compliance_map.py
+      - name: Compliance tables are generated from the maps
+        run: python3 scripts/gen_compliance_tables.py --check
       - name: Glossary status column matches the evidence ledger
         # The glossary's device-line Status column is a human-readable copy
         # of verdicts figures.json DERIVES from evidence on disk — the one

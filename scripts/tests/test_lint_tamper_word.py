@@ -173,12 +173,18 @@ class Allowlist(unittest.TestCase):
             self.assertRegex(path.read_text(encoding="utf-8"), L.BANNED,
                              f"{rel} no longer holds the word — drop it from ALLOW_FILES")
 
-    def test_only_docs_and_tests_are_exempt(self):
+    def test_only_docs_tests_and_the_other_claim_lint_are_exempt(self):
+        # scripts/lint_compliance_map.py bans the same word in the compliance
+        # suite: it is in that lint's pattern and its must-fail self-test.
+        other_lints = {"scripts/lint_compliance_map.py"}
         for rel in L.ALLOW_FILES:
             self.assertTrue(
-                rel.startswith("docs/") or "/tests/" in rel,
+                rel.startswith("docs/") or "/tests/" in rel or rel in other_lints,
                 f"{rel}: only a doc that states the rule or quotes a finding, "
-                "or a test asserting the word's absence, may be exempt")
+                "or a test or lint asserting the word's absence, may be exempt")
+        for rel in other_lints:
+            text = (REPO / rel).read_text(encoding="utf-8")
+            self.assertIn("MUST_FAIL", text, f"{rel} no longer self-tests the word")
 
     def test_a_stale_entry_fails_the_full_run(self):
         with mock.patch.object(L, "ALLOW_FILES", set(L.ALLOW_FILES) | {"docs/README.md"}):
