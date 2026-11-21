@@ -39,6 +39,9 @@ env_logger = "0.11"
 rumqttc = { package = "rumqttc-next", version = "0.33", features = ["use-rustls"] }
 hex = "0.4"
 ed25519-dalek = { version = "3.0", features = ["pkcs8", "pem"] }
+# Already compiled into every build through ed25519-dalek 3.0 (Cargo.lock, the same 5.0.0, and a subset of the
+# features it already enables); named directly for Scalar / RistrettoPoint in src/vault/custody (spec §2). Adds no package.
+curve25519-dalek = { version = "5.0.0", default-features = false, features = ["alloc", "precomputed-tables", "zeroize"] }
 # C2PA Content Credentials export (feature `c2pa-export`): the official CAI
 # SDK, built without OpenSSL (rust_native_crypto) and without any HTTP
 # backend — signing and verification are fully offline (Principle 2).

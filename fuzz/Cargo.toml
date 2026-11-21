@@ -96,8 +96,29 @@ doc = false
 bench = false
 
 [[bin]]
+name = "custody_share_decode"
+path = "fuzz_targets/custody_share_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "webhook_request"
 path = "fuzz_targets/webhook_request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "custody_container_decode"
+path = "fuzz_targets/custody_container_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "custody_recipient_decode"
+path = "fuzz_targets/custody_recipient_decode.rs"
 test = false
 doc = false
 bench = false

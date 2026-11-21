@@ -442,6 +442,18 @@ Two different things; never conflate them.
   attestations (**GAP**) and the only rehearsal that exercises trustee
   custody.
 
+- **C4c — Custody rehearsal.** Each holder, on their own machine, makes a
+  recipient key bound to their trustee key (`break_glass custody recipient
+  keygen --holder <id> --role trustee --signing-key <id>.tkey --output-key
+  <id>.reckey --output-public <id>.recipient`) and reads its fingerprint
+  aloud; the operator deals a throwaway split to those public files
+  (`break_glass custody rehearse --threshold N --recipient <files…>
+  --output-dir <dir>`); each holder checks theirs (`break_glass share verify
+  --share <file> --recipient-key <id>.reckey --split-record <split8>.split.json`)
+  and wraps it at rest (`break_glass share protect`). The tools are **CODE**;
+  their use is **PROC**. A rehearsal share protects nothing, touches no vault
+  and leaves no receipt; no command issues real shares yet.
+
 Cadence (**PROC**): C4a on every build change; C4b quarterly and after every
 C2. The Lab's Operator's Bench is training material with recorded output; it
 is never evidence.
@@ -782,6 +794,7 @@ rotate per bucket automatically.
 | Trustee key wrapping | **PROC** + **CODE** tool → §3.7 | `trustee keygen` / `trustee wrap` (TKG1, passphrase from the terminal or `--passphrase-fd`); a plaintext key still signs, with a warning; declared per trustee in the record (the policy cannot check it) |
 | Hardware trustee keys, enrollment attestation | **GAP** → §3.7 | read-back of the fingerprint |
 | Recovery quorum | **GAP** → §2.3 | none — loss of quorum has no in-band recovery |
+| Share check on the holder's own machine | **CODE** (tool) / **PROC** (use) | break_glass share verify; no command issues real shares yet |
 | Proactive resharing, liveness attestations | **GAP** → §2.4 | recorded rehearsals (C4b) |
 | Anchors cross-bound into full verify (`log_verify`) | **CODE** (structural) / **GAP** (countersignature) → §4 | every anchor row's shape, imprint and declared-ledger membership are part of the ledger verdict (`anchor_regression`); the TSA countersignature stays with `log_anchor verify --ca` |
 | Clock provenance sealed per anchor | **CODE** | `witnessd` seals the device-clock-vs-`genTime` record of every anchor row; `log_anchor verify` (`clock:` lines, `max_clock_offset_s` under `--policy`), `log_verify` (`=== Clock Provenance ===`), `court_export` (`clock_provenance/`, "Time source") |
