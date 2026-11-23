@@ -181,7 +181,7 @@
   },
   "meta": {
     "design": "docs/design/raspberry_pi_hub_flashing.md",
-    "upstream_fetched_at": "2026-11-21",
+    "upstream_fetched_at": "2026-11-23",
     "sources": [
       "canary-local/devices/homeassistant.json",
       "desktop/hub-core/src/hub_disk.rs",
