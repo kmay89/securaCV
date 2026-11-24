@@ -278,6 +278,19 @@ bool s_cal_persisted = true;     // false = floor kept for tonight only
 struct WxDraft { uint8_t w[6]; };
 WxDraft s_wx_draft = {};
 lv_obj_t* s_wx_cap = nullptr;
+// Set only while settings_ui_tick rebuilds the open page for a turn the
+// panel did not make (F370): the wheels stay where the thumb left them,
+// where every other build of the page opens at the stored cell.
+bool s_wx_keep_draft = false;
+#endif
+
+#ifdef CD_FLAVOR_DASH
+// The turn the open panel was last laid out at (lvgl_port_rotation(), as
+// layout_host() measured it). The phone's /api/set turns the glass from off
+// it: main.cpp's render hands the stored rotation to the port under an open
+// panel, and settings_ui_tick lays the panel out again when the turn worn
+// is no longer this one (F370).
+uint8_t s_laid_rot = 0;
 #endif
 
 void build(Page pg);
@@ -359,9 +372,14 @@ void restyle_open_surface() {
 }
 
 // Size the host to the (possibly re-oriented) canvas. Called on open and
-// after a live rotation, when the whole frame changes shape under the panel.
+// after a live rotation, when the whole frame changes shape under the panel:
+// the on-glass Orientation tap, the reset path, and (the dash) a turn from
+// off the glass, which settings_ui_tick catches.
 void layout_host() {
   compute_metrics();
+#ifdef CD_FLAVOR_DASH
+  s_laid_rot = lvgl_port_rotation();
+#endif
   if (M.sheet) {
     lv_obj_set_size(s_host, M.w, M.h);
     lv_obj_align(s_host, LV_ALIGN_CENTER, 0, 0);
@@ -1287,12 +1305,15 @@ void build_wx_loc() {
   page_begin("Location", "Weather");
   const Settings& gs = settings();
   // The draft opens at the stored cell (0.0 N, 0.0 E on a fresh glass).
-  s_wx_draft = WxDraft{};
-  if (gs.wx_loc_set) {
-    wx_tenths_to_wheel(gs.wx_lat10, WX_LAT_MAX_DEG,
-                       &s_wx_draft.w[0], &s_wx_draft.w[1], &s_wx_draft.w[2]);
-    wx_tenths_to_wheel(gs.wx_lon10, WX_LON_MAX_DEG,
-                       &s_wx_draft.w[3], &s_wx_draft.w[4], &s_wx_draft.w[5]);
+  // A rebuild for a turn keeps the draft the wheels already hold (F370).
+  if (!s_wx_keep_draft) {
+    s_wx_draft = WxDraft{};
+    if (gs.wx_loc_set) {
+      wx_tenths_to_wheel(gs.wx_lat10, WX_LAT_MAX_DEG,
+                         &s_wx_draft.w[0], &s_wx_draft.w[1], &s_wx_draft.w[2]);
+      wx_tenths_to_wheel(gs.wx_lon10, WX_LON_MAX_DEG,
+                         &s_wx_draft.w[3], &s_wx_draft.w[4], &s_wx_draft.w[5]);
+    }
   }
   spacer(M.compact ? 4 : 10);
   // Both axes on one line where the canvas allows it (the 620 px landscape
@@ -2166,9 +2187,11 @@ void dispatch(int raw) {
 #ifdef CD_FLAVOR_DASH
         // ...and in orientation: the defaults hold landscape, so a panel
         // opened on a turned glass must turn back NOW and re-measure its
-        // canvas, or the root rebuilds into the old 480x800 frame and the
-        // render tick's rotation tracker (which never relayouts an open
-        // panel) leaves it there until the next navigation (Codex P2).
+        // canvas, or the root below builds into the old 480x800 frame
+        // (Codex P2). settings_ui_tick would lay it out again on its next
+        // pass (F370), but only after a frame of the root in the wrong
+        // shape; turning here builds it in the right one, and leaves that
+        // tracker nothing to catch.
         lvgl_port_set_rotation(settings().rotation);
         layout_host();
 #else
@@ -2348,6 +2371,32 @@ void settings_ui_tick(uint32_t now_ms, bool urgent) {
     char c[8];
     fmt_clock(c, sizeof(c));
     lv_label_set_text(s_cal_clock, c);
+  }
+#endif
+#ifdef CD_FLAVOR_DASH
+  // A turn the panel did not make (F370): the phone's /api/set stores the
+  // rotation, and main.cpp's render hands it to the port under the open
+  // panel, which was laid out for the frame it had (the on-glass
+  // Orientation tap and the reset path re-measure as they turn, so this
+  // sees nothing to do after them). Lay the panel out for the frame the
+  // glass now wears and rebuild the open page in it, back at the same
+  // scroll offset, as the live pages' rebuild below does, and never under a
+  // finger (a rebuild would pull the list out from under a scroll): the
+  // turn waits for the lift.
+  if (!s_down && lvgl_port_rotation() != s_laid_rot) {
+    const int y = s_list ? lv_obj_get_scroll_y(s_list) : 0;
+    layout_host();
+#ifdef CD_SET_WX
+    s_wx_keep_draft = true;
+#endif
+    build(s_page);
+#ifdef CD_SET_WX
+    s_wx_keep_draft = false;
+#endif
+    if (s_list) {
+      lv_obj_update_layout(s_list);
+      lv_obj_scroll_to_y(s_list, y, LV_ANIM_OFF);
+    }
   }
 #endif
   // The firmware page mirrors a live state machine (checking → downloading →

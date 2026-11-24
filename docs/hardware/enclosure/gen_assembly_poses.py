@@ -90,6 +90,16 @@ BOARDS = {
 # for its USB slot and end-stop), not from a constant here: one value, so a
 # corrected offset moves the case and the Lab's pose together.
 
+# The Vision's OV5647 back face as the Lab draws it. The camera builder
+# (canary-local/assets/assembly.js camera()) is a stand-in whose body is 2.0
+# thick, its face on the front's post ends (base_d - cam_post_eff, where the
+# case hangs the carrier) and its back face 2.0 under them. The camera, its
+# flex and its four screws read this one expression, so they move together.
+# The real carrier is pcb_t (1.0) thick: on the bench a head bears 1.0 under
+# the post ends and its thread runs 3.0 into the 3.7 pilot (cam_scr_len's own
+# derivation); on the page it bears on the stand-in and runs 2.0 in.
+VISION_CAM_BACK = "base_d - cam_post_eff - 2"
+
 
 DEVICES = {
     # ---- WAP, battery_weather (the build the Assemble tab shows) ----------
@@ -149,22 +159,32 @@ DEVICES = {
                      ("R", [180, 0, -90])],
             # the OV5647 board screws to the front's posts: its face sits
             # cam_post_eff under the front plate, lens on the aperture
-            "cam": [("T", "[lens_x, lens_y, base_d - cam_post_eff - 2]"), ("R", [180, 0, 0])],
+            "cam": [("T", f"[lens_x, lens_y, {VISION_CAM_BACK}]"), ("R", [180, 0, 0])],
             # the flex runs from the module's top edge to the camera's bottom edge
             "flex": [("T", "[vm_cx, vm_cy + vm_l/2 - 3, floor_t + vm_standoff + pcb_t]")],
             "front": [("T", "[0, 0, base_d + lid_t]"), ("R", [180, 0, 0])],
         },
-        # the plate screws (canary_core_lib pl_*), as on the Sense: from the
-        # plate's back face, the head recessed pl_r, its bearing face pl_hp above
-        "screws": {"xy": "post_xy()",
-                   "z": "-mount_extra + pl_r + pl_hp(screw_size, screw_head)",
-                   "rot": [180, 0, 0],
-                   "len": "pl_L"},
+        "screws": {
+            # the plate screws (canary_core_lib pl_*), as on the Sense: from the
+            # plate's back face, the head recessed pl_r, its bearing face pl_hp above
+            "screws": {"xy": "post_xy()",
+                       "z": "-mount_extra + pl_r + pl_hp(screw_size, screw_head)",
+                       "rot": [180, 0, 0],
+                       "len": "pl_L"},
+            # the camera's own four, the HARDWARE echo's "OV5647 to the front
+            # posts": on the carrier's hole grid, cam_post_xy(), which shell_asm()
+            # draws in the assembled frame (front() is it moved down base_d, and
+            # the seated front undoes the STL's print turn, so no axis flips),
+            # the head's bearing face on the camera's back face, turned over so
+            # the shank drives up into the posts
+            "cam_screws": {"xy": "cam_post_xy()", "z": VISION_CAM_BACK, "rot": [180, 0, 0],
+                           "len": "cam_scr_len"},
+        },
         "params": {
             "board": {"w": "vm_w", "h": "vm_l", "t": "pcb_t"},
             "xiao": {"w": "xiao_l", "h": "xiao_w"},
             "flex": {"to": "[lens_x - vm_cx, (cam_cy - cam_h/2 + 3) - (vm_cy + vm_l/2 - 3), "
-                           "(base_d - cam_post_eff - 2) - (floor_t + vm_standoff + pcb_t)]"},
+                           f"({VISION_CAM_BACK}) - (floor_t + vm_standoff + pcb_t)]"},
         },
     },
     # ---- Sense (the committed STLs) ----------------------------------------

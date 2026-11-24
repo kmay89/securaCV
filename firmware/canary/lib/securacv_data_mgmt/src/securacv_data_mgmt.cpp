@@ -17,6 +17,7 @@
 #include "log_level.h"
 #include "securacv_witness.h"
 #include "securacv_crypto.h"
+#include "core/ct_compare.h"   // the backup HMAC is compared in constant time (firmware/common)
 
 #if FEATURE_SD_STORAGE
 #include "securacv_storage.h"
@@ -386,7 +387,12 @@ bool datamgmt_restore_chain(void) {
                "Chain restore: HMAC compute failed", nullptr);
     return false;
   }
-  if (memcmp(buf + BACKUP_PAYLOAD, calc_hmac, 32) != 0) {
+  /* In constant time (core/ct_compare.h): the tag is keyed by the device
+   * private key, and memcmp() would refuse a forged backup sooner the fewer
+   * of its leading HMAC bytes were right. */
+  static_assert(BACKUP_PAYLOAD + sizeof(calc_hmac) == BACKUP_SIZE,
+                "the backup's HMAC field is the 32 bytes after its payload");
+  if (!ct_compare::equal(buf + BACKUP_PAYLOAD, calc_hmac, sizeof(calc_hmac))) {
     log_health(LOG_LEVEL_ERROR, LOG_CAT_STORAGE,
                "Chain restore: HMAC mismatch (tampered?)", nullptr);
     return false;

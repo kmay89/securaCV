@@ -427,6 +427,7 @@ A bare name in an arduino-cli release row's `libraries:` list (`Crypto`, not `Cr
   about another component (the bridge, the kernel) is read from that
   component's code, not from the test's docstring. AGENTS.md rule 4 covers
   comments and changelog text, not only page copy.
+
 ## 2026-11-11 (b) — The C6 nightstand had 2,832 B of slot left and no gate said so: the size check spoke only past the boundary, and the PR checks measured with their own copies (found by the 2.4.16 release audit; sweep F367)
 
 - **Symptom:** none on a device yet. The 2.4.16 release audit measured the

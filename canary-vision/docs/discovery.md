@@ -154,21 +154,21 @@ The SPA parses the receipt, validates the URL is a private-network address, and 
 
 ## SPA Storage
 
-Discovered devices are stored in `localStorage` under the key `canary_devices` as a JSON array. Each entry contains:
+Paired devices are stored in `localStorage` under the key `canary_devices` as a JSON array, rebuilt on every save from an allowlist of fields. Each entry contains:
 
 ```json
 {
   "id": "canary-a3f7",
   "name": "Front Porch",
   "base_url": "http://canary-a3f7.local",
-  "token": "cv_a3f7_8b2e4f1a9c3d7e0b5f2a8c4d6e1b3a7f",
+  "room": "Porch",
   "device_type": "canary-wap",
   "last_info": { "..." },
   "added_at": "2026-02-18T15:30:00.000Z"
 }
 ```
 
-Tokens never leave the browser. They are sent only to the corresponding device's private-network address via the `X-Canary-Token` header.
+A device's token is not in that list: it is held in `sessionStorage` under `canary_token:<id>` (`canary_token:canary-a3f7`), cleared when the tab closes or the session expires, and put back on the device entry when the list is read ([security.md](security.md#spa-compliance)). Tokens never leave the browser. They are sent only to the corresponding device's private-network address via the `X-Canary-Token` header.
 
 ## CORS Implications
 

@@ -328,7 +328,13 @@ CV7. What the routes put under each key (`chirp_api.h` is not host-compiled:
      `message` from `send_refusal_error()` and `send_refusal_message()`
      (host-tested), the cooldown's two fields only for a cooldown, its time
      left rounded up by `seconds_left()` (F178: a cooldown's last second read
-     0 s), as the status route's is.
+     0 s), as the status route's is. It reads `ttl_minutes` exactly as
+     `CHIRP_SEND_TTL` says, once, before its submit: through
+     `ttl_from_request()` (host-tested) from ArduinoJson's `isNull()`,
+     `is<int32_t>()` and `as<int32_t>()`, answering a refusal as
+     `invalid_ttl` from `send_refusal_error()`/`send_refusal_message()` and
+     submitting nothing (F412: `input["ttl_minutes"] | 15` into a `uint8_t`
+     signed 300 as 44 and -1 as 255).
 CV8. The send cooldown is a timer, not a state (F178): in
      `chirp_channel.cpp`, `CHIRP_COOLDOWN` is named only by `shown_state()`
      (what an active channel reads as while the timer runs) and
@@ -2369,6 +2375,20 @@ CHIRP_SEND_ANSWER = (
     "charbuffer[384];"
 )
 
+# How POST /api/chirp/send reads ttl_minutes (F412): absent or null is 15,
+# anything but an integer 5..60 refused by name before the uint8_t the frame
+# carries, and nothing submitted.
+CHIRP_SEND_TTL = (
+    'JsonVariantConstttl_in=input["ttl_minutes"];uint8_tttl=0;'
+    "if(!chirp_channel::ttl_from_request(!ttl_in.isNull(),ttl_in.is<int32_t>(),"
+    "ttl_in.as<int32_t>(),&ttl)){"
+    'JsonDocumentdoc;doc["success"]=false;'
+    'doc["error"]=chirp_channel::send_refusal_error(chirp_channel::SEND_REFUSED_TTL);'
+    'doc["message"]=chirp_channel::send_refusal_message(chirp_channel::SEND_REFUSED_TTL);'
+    "charbuffer[256];serializeJson(doc,buffer);"
+    'httpd_resp_set_type(req,"application/json");returnhttpd_resp_sendstr(req,buffer);}'
+)
+
 
 @functools.lru_cache(maxsize=1024)
 def chirp_live_read_findings(name: str, code: str) -> tuple[str, ...]:
@@ -2716,6 +2736,15 @@ def check_chirp_route_answers(api_src: str, errors: list[str]) -> None:
                           "send_refusal_error()/send_refusal_message() (a clock not set is "
                           "clock_unsynced, not a cooldown with 0 seconds left), the cooldown's fields "
                           "only for a cooldown (F146)")
+        ttl_at = body.find(CHIRP_SEND_TTL)
+        submit_at = body.find("chirp_channel::submit(")
+        if body.count(CHIRP_SEND_TTL) != 1 or submit_at < 0 or ttl_at > submit_at or \
+                body.count('input["ttl_minutes"]') != 1 or body.count("ttl=") != 1:
+            errors.append(f"{CHIRP_API}: handle_chirp_send() must read ttl_minutes as CHIRP_SEND_TTL "
+                          "says, once, before its submit — ttl_from_request() of isNull(), "
+                          "is<int32_t>() and as<int32_t>(), a refusal answered as invalid_ttl with "
+                          "nothing submitted, and no other write of `ttl` (F412: `| 15` into a "
+                          "uint8_t signed 300 as 44)")
 
 
 # ── MQTT network timeout (F112) ──────────────────────────────────────────
@@ -5393,6 +5422,30 @@ MUTATIONS: list[tuple[str, Mutation]] = [
      on_other(CHIRP_API, api_handler("handle_chirp_send"),
               r"doc\[\"message\"\]\s*=\s*chirp_channel::send_refusal_message\(r\.refusal\);",
               'doc["message"] = "Please wait before sending another chirp";')),
+    # Rule CV7: the send route's ttl_minutes (F412).
+    ("the send route reads ttl_minutes with a default into its byte again (F412)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"),
+              r"JsonVariantConst\s+ttl_in\s*=\s*input\[\"ttl_minutes\"\];\s*uint8_t\s+ttl\s*=\s*0;\s*"
+              r"if\s*\(!chirp_channel::ttl_from_request\([^;]*\)\)\s*\{.*?return\s+httpd_resp_sendstr\(req,\s*buffer\);\s*\}",
+              'uint8_t ttl = input["ttl_minutes"] | 15;')),
+    ("the send route takes a float or a string as an integer TTL (F412)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"), r"ttl_in\.is<int32_t>\(\)", "true")),
+    ("the send route narrows the TTL before it is judged (F412)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"), r"ttl_in\.as<int32_t>\(\)",
+              "(int32_t)ttl_in.as<uint8_t>()")),
+    ("the send route answers a refused TTL as a cooldown (F412)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"),
+              r"send_refusal_error\(chirp_channel::SEND_REFUSED_TTL\)",
+              "send_refusal_error(chirp_channel::SEND_REFUSED_COOLDOWN)")),
+    ("the send route submits a TTL it refused (F412)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"),
+              r"(doc\[\"message\"\]\s*=\s*chirp_channel::send_refusal_message\(chirp_channel::SEND_REFUSED_TTL\);"
+              r"\s*char\s+buffer\[256\];\s*serializeJson\(doc,\s*buffer\);\s*"
+              r"httpd_resp_set_type\(req,\s*\"application/json\"\);\s*)return\s+httpd_resp_sendstr\(req,\s*buffer\);",
+              r"\1httpd_resp_sendstr(req, buffer);")),
+    ("the send route writes its TTL a second time (F412)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"), r"(\n[ \t]*cmd\.ttl_minutes\s*=\s*ttl;)",
+              r"\n  ttl = 15;\1")),
     ("the status route names its reason inline, without the clock (h03)",
      on_other(CHIRP_API, api_handler("handle_chirp_status"),
               r"const\s+char\s*\*\s*why\s*=\s*chirp_channel::cannot_send_reason\(v\);\s*"

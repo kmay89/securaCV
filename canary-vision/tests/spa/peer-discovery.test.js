@@ -146,10 +146,11 @@ function cspRefuses(url) {
 }
 
 // `peers` is what GET /api/v1/peers answers; a URL matching `unreachable`
-// rejects like a device that is not there; every other route stays in
-// flight, so a step that asks shows up in `fetches` and nothing settles it.
-// `local` seeds localStorage.
-function loadApp({ prefillHost, devices, peers, unreachable, local } = {}) {
+// rejects like a device that is not there, and one matching `silent` with
+// an error that carries no message; every other route stays in flight, so
+// a step that asks shows up in `fetches` and nothing settles it. `local`
+// seeds localStorage.
+function loadApp({ prefillHost, devices, peers, unreachable, silent, local } = {}) {
   const body = new FakeNode('body');
   const appRoot = body.appendChild(new FakeNode('div'));
   const noop = () => {};
@@ -190,6 +191,7 @@ function loadApp({ prefillHost, devices, peers, unreachable, local } = {}) {
       if (cspRefuses(String(url)) || (unreachable && unreachable.test(String(url)))) {
         return Promise.reject(new TypeError('Failed to fetch'));
       }
+      if (silent && silent.test(String(url))) return Promise.reject(new Error(''));
       if (/\/api\/v1\/peers$/.test(String(url))) {
         return Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve({ peers: peers || [] }) });
       }
@@ -481,6 +483,145 @@ describe('a device stored under a refused IP', () => {
     const alert = h.appRoot.all().find((n) => n.attrs.id === 'device-alert');
     assert.equal(alert.textContent, 'Device offline.Retry');
     assert.ok(alert.button('Retry'));
+  });
+
+  // Its sub-views (config, logs, witness) have no address field and no
+  // Remove button, so they point at the device page instead of saying
+  // "Enter its .local name" (LOCAL_NAME_HINT) or "Remove it below" (sweep
+  // F475). Each row clears the page and reads every alert-error it shows.
+  const SUBVIEW = /^Saved under an IP address this app cannot reach: it reaches another Canary only by its \.local name\. Remove it on its device page and add it again by its \.local name, or open this app from that Canary's own address\.$/;
+  const WRONG_SCREEN = /Enter its \.local name|Remove it below|Webhook test failed/;
+
+  function errorsIn(h, id) {
+    const area = h.appRoot.all().find((n) => n.attrs.id === id);
+    assert.ok(area, 'no #' + id);
+    return area.byClass('alert-error').map((n) => n.textContent);
+  }
+  function assertSavedUnder(texts, where) {
+    assert.equal(texts.length, 1, where + ': ' + JSON.stringify(texts));
+    assert.match(texts[0], SUBVIEW, where);
+    assert.doesNotMatch(texts[0], LOCAL_NAME, where);
+    assert.doesNotMatch(texts[0], WRONG_SCREEN, where);
+  }
+
+  for (const [view, open, id] of [
+    ...['network', 'privacy', 'detection', 'integrations'].map((section) =>
+      ['config (' + section + ')', (app) => app.renderConfigView('canary-9999', section), 'config-form']),
+    ['logs', (app) => app.renderLogsView('canary-9999'), 'log-list'],
+    ['witness', (app) => app.renderWitnessView('canary-9999'), 'witness-records'],
+  ]) {
+    it(`its ${view} view says to remove it on its device page, asking nothing`, async () => {
+      const h = loadApp({ devices: [ATTIC], local: HINT_DISMISSED });
+      open(h.app);
+      await settleAll();
+      assertSavedUnder(errorsIn(h, id), view);
+      assert.equal(h.appRoot.button('Remove Device'), undefined, view + ' grew a Remove button: say "below" again');
+      assert.deepEqual(h.fetches, [], view + ' asked a device CSP refuses');
+    });
+  }
+
+  it('its witness actions (Verify, both exports, the timeline) say the same, asking nothing', async () => {
+    const h = loadApp({ devices: [ATTIC], local: HINT_DISMISSED });
+    h.app.renderWitnessView('canary-9999');
+    await settleAll();
+    for (const [label, id] of [
+      ['Verify Chain Integrity', 'witness-alert'],
+      ['Export Chain (JSON)', 'witness-alert'],
+      ['Export Evidence Envelope', 'witness-alert'],
+      ['View Verified Timeline', 'witness-timeline'],
+    ]) {
+      const button = h.appRoot.button(label);
+      assert.ok(button, 'no ' + label + ' button');
+      button.click();
+      await settleAll();
+      assertSavedUnder(errorsIn(h, id), label);
+    }
+    assert.deepEqual(h.fetches, [], 'a witness action asked a device CSP refuses');
+  });
+
+  // Its config form never loads (the request for it is refused first), so
+  // these two buttons are drawn here from the same form a reachable device
+  // gets: should they ever show, they read the same text.
+  it('its Save Changes and Test Webhook say the same, asking nothing', async () => {
+    const h = loadApp({ devices: [ATTIC], local: HINT_DISMISSED });
+    h.app.renderConfigView('canary-9999', 'integrations');
+    await settleAll();
+    const form = h.appRoot.all().find((n) => n.attrs.id === 'config-form');
+    h.app.renderConfigForm(form, h.app.CanaryStorage.getDevice('canary-9999'), 'integrations',
+      { webhook_enabled: true, webhook_url: 'http://ha.local/hook' });
+    for (const label of ['Save Changes', 'Test Webhook']) {
+      h.appRoot.button(label).click();
+      await settleAll();
+      assertSavedUnder(errorsIn(h, 'config-alert'), label);
+    }
+    assert.deepEqual(h.fetches, [], 'a config action asked a device CSP refuses');
+  });
+
+  it('a device that does not answer still shows its own error in each sub-view', async () => {
+    const OWN = 'Failed to fetch'; // the stub's TypeError, what the browser gives
+    const views = [
+      [(app) => app.renderConfigView('canary-b1c2', 'network'), 'config-form'],
+      [(app) => app.renderLogsView('canary-b1c2'), 'log-list'],
+      [(app) => app.renderWitnessView('canary-b1c2'), 'witness-records'],
+    ];
+    for (const [open, id] of views) {
+      const h = loadApp({ devices: [CELLAR], unreachable: UNREACHABLE, local: HINT_DISMISSED });
+      open(h.app);
+      await settleAll();
+      assert.deepEqual(errorsIn(h, id), [OWN], id);
+    }
+    const h = loadApp({ devices: [CELLAR], unreachable: UNREACHABLE, local: HINT_DISMISSED });
+    h.app.renderWitnessView('canary-b1c2');
+    await settleAll();
+    for (const [label, id] of [['Verify Chain Integrity', 'witness-alert'],
+      ['Export Evidence Envelope', 'witness-alert'], ['View Verified Timeline', 'witness-timeline']]) {
+      h.appRoot.button(label).click();
+      await settleAll();
+      assert.deepEqual(errorsIn(h, id), [OWN], label);
+    }
+    h.app.renderConfigView('canary-b1c2', 'integrations');
+    await settleAll();
+    const form = h.appRoot.all().find((n) => n.attrs.id === 'config-form');
+    h.app.renderConfigForm(form, h.app.CanaryStorage.getDevice('canary-b1c2'), 'integrations',
+      { webhook_enabled: true, webhook_url: 'http://ha.local/hook' });
+    h.appRoot.button('Test Webhook').click();
+    await settleAll();
+    assert.deepEqual(errorsIn(h, 'config-alert'), ['Webhook test failed: ' + OWN]);
+    assert.ok(h.fetches.length > 0 && h.fetches.every((f) => UNREACHABLE.test(f.url)),
+      JSON.stringify(h.fetches));
+  });
+
+  // Two witness actions have a text of their own for an error that says
+  // nothing, and storedDeviceErrorText() is handed each (before F475 they
+  // read `err.message || ...` in place). Every error CanaryAPI.request()
+  // makes carries a message; a fetch that rejects with an empty one is what
+  // reaches these.
+  it("an error that says nothing still reads each witness action's own fallback", async () => {
+    const h = loadApp({ devices: [CELLAR], silent: UNREACHABLE, local: HINT_DISMISSED });
+    h.app.renderWitnessView('canary-b1c2');
+    await settleAll();
+    for (const [label, id, text] of [
+      ['Export Evidence Envelope', 'witness-alert', 'Envelope export failed'],
+      ['View Verified Timeline', 'witness-timeline', 'Failed to load verified timeline'],
+    ]) {
+      h.appRoot.button(label).click();
+      await settleAll();
+      assert.deepEqual(errorsIn(h, id), [text], label);
+    }
+    assert.ok(h.fetches.length > 0 && h.fetches.every((f) => UNREACHABLE.test(f.url)),
+      JSON.stringify(h.fetches));
+  });
+
+  it('storedDeviceErrorText: the saved-under text for a refused address, else the error, its prefix and fallback', () => {
+    const h = loadApp();
+    const refused = Object.assign(new Error('Enter its .local name'), { code: 'needs_local_name' });
+    assert.match(h.app.storedDeviceErrorText(refused, 'fallback', 'Webhook test failed: '), SUBVIEW);
+    assert.equal(h.app.storedDeviceErrorText(new Error('Rate limited'), 'fallback'), 'Rate limited');
+    assert.equal(h.app.storedDeviceErrorText(new Error('HTTP 500'), '', 'Webhook test failed: '),
+      'Webhook test failed: HTTP 500');
+    assert.equal(h.app.storedDeviceErrorText(new Error(''), 'Envelope export failed'), 'Envelope export failed');
+    assert.equal(h.app.storedDeviceErrorText(undefined, 'Failed to load verified timeline'),
+      'Failed to load verified timeline');
   });
 
   it('the Events summary names it apart from a device that did not answer', async () => {

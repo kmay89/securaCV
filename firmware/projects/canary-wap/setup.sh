@@ -366,6 +366,24 @@ setup_arduino() {
         print_warn "key_draw_check not found at ${identity_src} — sketch will not compile until firmware/common/identity/ is restored"
     fi
 
+    # The constant-time byte compare (ct_compare::equal(): the backup HMAC,
+    # pairing CONFIRM and household RPA checks) is a single canonical,
+    # header-only source shared with the PIO canary tree. Stage a
+    # byte-identical copy next to the sketch; check_csi_sync.sh guards the
+    # two against drift.
+    local core_src="${FIRMWARE_ROOT}/common/core"
+    if [ -f "${core_src}/ct_compare.h" ]; then
+        cp "${core_src}/ct_compare.h" "${arduino_dir}/" 2>/dev/null || true
+        if [ -f "${arduino_dir}/ct_compare.h" ]; then
+            print_success "Copied ct_compare header"
+        else
+            print_error "Failed to stage ct_compare header to ${arduino_dir}"
+            return 1
+        fi
+    else
+        print_warn "ct_compare not found at ${core_src} — sketch will not compile until firmware/common/core/ is restored"
+    fi
+
     # NvsManager's session depth (the per-task count under the cross-task
     # lock nvs_store.h holds from begin() to end(); repo sweep F53) is a
     # single canonical, header-only source shared with the PIO canary tree.

@@ -1679,7 +1679,8 @@ static Result run_command(const Command& cmd) {
       break;
     case CHIRP_CMD_SEND:
       // Why it was refused is the check that refused it, read once in the
-      // send: the channel off, the presence requirement, the cooldown (the
+      // send: a TTL outside 5-60 first (sweep F412), then the channel off,
+      // the presence requirement, the cooldown (the
       // timer, not the state, sweep F178, with its time left), a wall clock
       // not set yet (answered as a cooldown with 0 s left until sweep F146),
       // or night. Named after the send from fresh reads, a gate that opened
@@ -1917,9 +1918,18 @@ const char* get_validation_status(const RecentView* chirp) {
 // a cooldown with 0 s left). Neither is written for a send that went out,
 // an unknown template (the handler refuses one first) or a frame that could
 // not be signed.
+//
+// A TTL outside spec §3.3's 5-60 minutes is refused first, before anything
+// here reads or writes the channel: no gate is asked, no tier expires, no
+// cooldown starts and nothing is signed or sent, so the next send in range
+// goes out at once (sweep F412). It signed whatever byte it was handed.
 static bool send_chirp(ChirpTemplate template_id, ChirpUrgency urgency,
                        ChirpDetailSlot detail, uint8_t ttl_minutes,
                        SendRefusal* why, uint32_t* cooldown_left) {
+  if (!witness_ttl_in_range(ttl_minutes)) {
+    if (why != nullptr) *why = SEND_REFUSED_TTL;
+    return false;
+  }
   // A send drained in the pass that ends 24 quiet hours, before update()'s
   // own expire_stale_tiers(), counts from the first tier (sweep F193).
   expire_stale_tiers(millis());

@@ -33,6 +33,10 @@ on:
       - 'firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp'
       - 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino'
       - 'firmware/projects/canary-wap/arduino/canary_wap/mqtt_identity.h'
+      # csi_mqtt.cpp reads POST /api/mqtt/config's keys through json_member.h
+      # (sweep F469), so the WAP MQTT harness test_wap_mqtt_contract.py
+      # compiles it too and holds this list to it.
+      - 'firmware/projects/canary-wap/arduino/canary_wap/json_member.h'
       # test_chirp_active.py holds the Chirp Active sensor's word table to
       # the words chirp_channel::state_name() returns, the body to
       # publish_chirp_state() (csi_mqtt.cpp) and the argument to its one
@@ -157,6 +161,10 @@ on:
       - 'firmware/projects/canary-wap/arduino/canary_wap/csi_mqtt.cpp'
       - 'firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino'
       - 'firmware/projects/canary-wap/arduino/canary_wap/mqtt_identity.h'
+      # csi_mqtt.cpp reads POST /api/mqtt/config's keys through json_member.h
+      # (sweep F469), so the WAP MQTT harness test_wap_mqtt_contract.py
+      # compiles it too and holds this list to it.
+      - 'firmware/projects/canary-wap/arduino/canary_wap/json_member.h'
       # test_chirp_active.py holds the Chirp Active sensor's word table to
       # the words chirp_channel::state_name() returns, the body to
       # publish_chirp_state() (csi_mqtt.cpp) and the argument to its one

@@ -23,6 +23,10 @@
  *      vectors hold through x25519_derive / the keypair generator, two
  *      generated keypairs agree, and Ed25519-generated keys do NOT — the
  *      exact bug pairing shipped with, which the old host shim hid.
+ *  11. A hash that fails is refused (sweep F364): sha256_domain() answers
+ *      false with 32 zero bytes when mesh_crypto::test::fail_sha256_domain()
+ *      fails it, ed25519_sign/verify and the host AEAD shim refuse, and
+ *      compute_fingerprint/compute_opera_id leave zeros.
  *
  * Build:
  *   g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
@@ -66,9 +70,33 @@ void print_hex(const char* label, const uint8_t* p, size_t n) {
   std::printf("\n");
 }
 
+/* sha256_domain() answers whether it hashed (sweep F364); a known-answer
+ * check needs it to have, under NDEBUG too. */
+void hash_ok(const char* domain, const uint8_t* data, size_t n, uint8_t out[32]) {
+  if (!mesh_crypto::sha256_domain(domain, data, n, out)) {
+    std::fprintf(stderr, "FATAL: sha256_domain(\"%s\") answered false\n", domain);
+    std::abort();
+  }
+}
+
+bool all_zero(const uint8_t* p, size_t n) {
+  for (size_t i = 0; i < n; ++i) {
+    if (p[i] != 0) return false;
+  }
+  return true;
+}
+
+/* Hard check, evaluated under NDEBUG too (the calls below have effects). */
+void must(bool ok, const char* what) {
+  if (!ok) {
+    std::fprintf(stderr, "FATAL: %s\n", what);
+    std::abort();
+  }
+}
+
 void test_sha256_empty_vector() {
   uint8_t out[mesh_crypto::SHA256_OUT_LEN];
-  mesh_crypto::sha256_domain("", nullptr, 0, out);
+  hash_ok("", nullptr, 0, out);
   if (std::memcmp(out, SHA256_EMPTY, sizeof(out)) != 0) {
     print_hex("got", out, 32);
     print_hex("expected", SHA256_EMPTY, 32);
@@ -81,7 +109,7 @@ void test_sha256_abc_vector() {
   /* sha256_domain("abc", null, 0) ≡ SHA-256("abc") because the domain
    * is prepended to the data. */
   uint8_t out[32];
-  mesh_crypto::sha256_domain("abc", nullptr, 0, out);
+  hash_ok("abc", nullptr, 0, out);
   if (std::memcmp(out, SHA256_ABC, sizeof(out)) != 0) {
     print_hex("got", out, 32);
     print_hex("expected", SHA256_ABC, 32);
@@ -95,9 +123,9 @@ void test_domain_data_concat_equivalence() {
   uint8_t out1[32], out2[32], out3[32];
   const uint8_t bc[] = "bc";
   const uint8_t abc[] = "abc";
-  mesh_crypto::sha256_domain("a", bc, 2, out1);
-  mesh_crypto::sha256_domain("", abc, 3, out2);
-  mesh_crypto::sha256_domain("abc", nullptr, 0, out3);
+  hash_ok("a", bc, 2, out1);
+  hash_ok("", abc, 3, out2);
+  hash_ok("abc", nullptr, 0, out3);
   assert(std::memcmp(out1, SHA256_ABC, 32) == 0);
   assert(std::memcmp(out2, SHA256_ABC, 32) == 0);
   assert(std::memcmp(out3, SHA256_ABC, 32) == 0);
@@ -115,8 +143,8 @@ void test_fingerprint_deterministic() {
 
   /* Sanity: cross-check against sha256_domain truncation. */
   uint8_t expected_hash[32];
-  mesh_crypto::sha256_domain(mesh_crypto::DOMAIN_FINGERPRINT, pub,
-                             mesh_crypto::PUBKEY_LEN, expected_hash);
+  hash_ok(mesh_crypto::DOMAIN_FINGERPRINT, pub,
+          mesh_crypto::PUBKEY_LEN, expected_hash);
   assert(std::memcmp(fp1, expected_hash, mesh_crypto::FINGERPRINT_LEN) == 0);
   std::printf("PASS test_fingerprint_deterministic\n");
 }
@@ -131,8 +159,8 @@ void test_opera_id_deterministic() {
   assert(std::memcmp(id1, id2, mesh_crypto::OPERA_ID_LEN) == 0);
 
   uint8_t expected_hash[32];
-  mesh_crypto::sha256_domain(mesh_crypto::DOMAIN_OPERA_ID, secret,
-                             mesh_crypto::OPERA_SECRET_LEN, expected_hash);
+  hash_ok(mesh_crypto::DOMAIN_OPERA_ID, secret,
+          mesh_crypto::OPERA_SECRET_LEN, expected_hash);
   assert(std::memcmp(id1, expected_hash, mesh_crypto::OPERA_ID_LEN) == 0);
   std::printf("PASS test_opera_id_deterministic\n");
 }
@@ -529,6 +557,126 @@ void test_x25519_generate_keypair_host_contract() {
 
 }  /* namespace */
 
+/* Sweep F364: a hash that fails is refused. The host SHA-256 has no
+ * failing step, so mesh_crypto::test::fail_sha256_domain() arms one (it
+ * writes 0xA5 over the output first, as a half-run engine step might): the
+ * answer is false and the output 32 zero bytes, and what stands on it
+ * refuses. The device branches run through the same tail; canary-wap's
+ * tests_host/test_mesh_crypto_lines.cpp builds them (IDF 4 and IDF 5) over a
+ * failing mbedTLS stand-in. */
+void test_sha256_domain_refuses_a_failed_hash() {
+  namespace t = mesh_crypto::test;
+  uint8_t out[32];
+  std::memset(out, 0x5C, sizeof(out));
+  t::fail_sha256_domain("abc", 1);
+  must(!mesh_crypto::sha256_domain("abc", nullptr, 0, out), "a failed hash answers false");
+  must(all_zero(out, sizeof(out)), "and leaves 32 zero bytes, not what the step left");
+  must(t::sha256_domain_failures() == 1, "the knob fired once");
+  /* Once: the next hash under that domain runs. */
+  must(mesh_crypto::sha256_domain("abc", nullptr, 0, out), "the next hash runs");
+  must(std::memcmp(out, SHA256_ABC, 32) == 0, "and is SHA-256(\"abc\")");
+  /* Another domain is not armed. */
+  t::fail_sha256_domain("securacv:other", 1);
+  must(mesh_crypto::sha256_domain("abc", nullptr, 0, out) && t::sha256_domain_failures() == 0,
+       "a hash under another domain runs");
+  /* Any domain, twice. */
+  t::fail_sha256_domain(nullptr, 2);
+  const uint8_t bc[] = "bc";
+  must(!mesh_crypto::sha256_domain("a", bc, 2, out) && all_zero(out, 32), "any domain fails (1)");
+  must(!mesh_crypto::sha256_domain("", bc, 2, out) && all_zero(out, 32), "any domain fails (2)");
+  must(mesh_crypto::sha256_domain("", bc, 2, out), "then the count is spent");
+  t::fail_sha256_domain(nullptr, 0);
+  /* No output: false. */
+  must(!mesh_crypto::sha256_domain("abc", nullptr, 0, nullptr), "a null output is refused");
+  std::printf("PASS test_sha256_domain_refuses_a_failed_hash\n");
+}
+
+void test_identity_derivation_is_zeros_on_a_failed_hash() {
+  /* compute_fingerprint() and compute_opera_id() keep their void API (what
+   * their callers refuse is a follow-up, mesh_crypto.h); a failed hash
+   * leaves them all zeros, not what the step left. */
+  namespace t = mesh_crypto::test;
+  uint8_t pub[mesh_crypto::PUBKEY_LEN];
+  for (size_t i = 0; i < sizeof(pub); ++i) pub[i] = (uint8_t)(3 * i + 1);
+  uint8_t fp[mesh_crypto::FINGERPRINT_LEN];
+  std::memset(fp, 0x5C, sizeof(fp));
+  t::fail_sha256_domain(mesh_crypto::DOMAIN_FINGERPRINT, 1);
+  mesh_crypto::compute_fingerprint(pub, fp);
+  must(t::sha256_domain_failures() == 1 && all_zero(fp, sizeof(fp)), "the fingerprint is zeros");
+  uint8_t id[mesh_crypto::OPERA_ID_LEN];
+  std::memset(id, 0x5C, sizeof(id));
+  t::fail_sha256_domain(mesh_crypto::DOMAIN_OPERA_ID, 1);
+  mesh_crypto::compute_opera_id(pub, id);
+  must(t::sha256_domain_failures() == 1 && all_zero(id, sizeof(id)), "the opera id is zeros");
+  t::fail_sha256_domain(nullptr, 0);
+  std::printf("PASS test_identity_derivation_is_zeros_on_a_failed_hash\n");
+}
+
+void test_ed25519_refuses_a_message_that_does_not_hash() {
+  /* Before, sign() signed and verify() checked whatever a failed message
+   * hash left. Now neither goes on: sign answers false with the signature
+   * zeroed, verify answers false even for a signature that is good. */
+  namespace t = mesh_crypto::test;
+  uint8_t pub[mesh_crypto::PUBKEY_LEN], priv[mesh_crypto::PRIVKEY_LEN];
+  must(mesh_crypto::ed25519_generate_keypair(pub, priv), "keypair");
+  const uint8_t msg[] = "opera heartbeat";
+  uint8_t sig[mesh_crypto::SIGNATURE_LEN];
+  std::memset(sig, 0x5C, sizeof(sig));
+  t::fail_sha256_domain(mesh_crypto::DOMAIN_MESSAGE, 1);
+  must(!mesh_crypto::ed25519_sign(priv, pub, msg, sizeof(msg), sig), "sign refuses");
+  must(t::sha256_domain_failures() == 1 && all_zero(sig, sizeof(sig)), "and leaves no signature");
+  must(mesh_crypto::ed25519_sign(priv, pub, msg, sizeof(msg), sig), "the next sign runs");
+  must(mesh_crypto::ed25519_verify(pub, msg, sizeof(msg), sig), "and verifies");
+  t::fail_sha256_domain(mesh_crypto::DOMAIN_MESSAGE, 1);
+  must(!mesh_crypto::ed25519_verify(pub, msg, sizeof(msg), sig), "verify refuses a message it cannot hash");
+  must(t::sha256_domain_failures() == 1, "the knob fired");
+  /* The host shim's own hashes (its empty domain) refuse the same way. */
+  t::fail_sha256_domain("", 1);
+  std::memset(sig, 0x5C, sizeof(sig));
+  must(!mesh_crypto::ed25519_sign(priv, pub, msg, sizeof(msg), sig) && all_zero(sig, sizeof(sig)),
+       "the shim's signature hash refuses");
+  t::fail_sha256_domain("securacv:host-shim:pub", 1);
+  must(!mesh_crypto::ed25519_generate_keypair(pub, priv) && all_zero(priv, sizeof(priv)),
+       "the shim's keypair refuses, the private key wiped");
+  t::fail_sha256_domain(nullptr, 0);
+  std::printf("PASS test_ed25519_refuses_a_message_that_does_not_hash\n");
+}
+
+void test_aead_shim_refuses_a_hash_that_fails() {
+  /* The host AEAD shim is built on sha256_domain("") too: a failed hash
+   * seals nothing and opens nothing. */
+  namespace t = mesh_crypto::test;
+  uint8_t key[mesh_crypto::AEAD_KEY_LEN], nonce[mesh_crypto::AEAD_NONCE_LEN];
+  for (size_t i = 0; i < sizeof(key); ++i) key[i] = (uint8_t)(0x10 + i);
+  for (size_t i = 0; i < sizeof(nonce); ++i) nonce[i] = (uint8_t)(0x80 + i);
+  const uint8_t pt[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+  uint8_t ct[8], tag[mesh_crypto::AEAD_TAG_LEN], back[8];
+  /* A keystream hash fails: no ciphertext, no tag. */
+  std::memset(ct, 0x5C, sizeof(ct));
+  std::memset(tag, 0x5C, sizeof(tag));
+  t::fail_sha256_domain("", 1);
+  must(!mesh_crypto::aead_encrypt(key, nonce, nullptr, 0, pt, sizeof(pt), ct, tag), "encrypt refuses");
+  must(all_zero(ct, sizeof(ct)) && all_zero(tag, sizeof(tag)), "and leaves neither ciphertext nor tag");
+  /* An AAD-only seal has no keystream: its tag's hash fails. */
+  const uint8_t aad[4] = {9, 9, 9, 9};
+  std::memset(tag, 0x5C, sizeof(tag));
+  t::fail_sha256_domain("", 1);
+  must(!mesh_crypto::aead_encrypt(key, nonce, aad, sizeof(aad), nullptr, 0, nullptr, tag), "the tag refuses");
+  must(all_zero(tag, sizeof(tag)), "and is zeros");
+  /* A good seal does not open while the tag's hash fails. */
+  t::fail_sha256_domain(nullptr, 0);
+  must(mesh_crypto::aead_encrypt(key, nonce, nullptr, 0, pt, sizeof(pt), ct, tag), "seal");
+  std::memset(back, 0x5C, sizeof(back));
+  t::fail_sha256_domain("", 1);
+  must(!mesh_crypto::aead_decrypt(key, nonce, nullptr, 0, ct, sizeof(ct), tag, back), "decrypt refuses");
+  must(all_zero(back, sizeof(back)), "and releases no plaintext");
+  t::fail_sha256_domain(nullptr, 0);
+  must(mesh_crypto::aead_decrypt(key, nonce, nullptr, 0, ct, sizeof(ct), tag, back) &&
+           std::memcmp(back, pt, sizeof(pt)) == 0,
+       "then it opens");
+  std::printf("PASS test_aead_shim_refuses_a_hash_that_fails\n");
+}
+
 int main() {
   std::srand(0xC51);  /* deterministic — see ed25519_generate_keypair host shim */
   test_sha256_empty_vector();
@@ -555,6 +703,10 @@ int main() {
   test_aead_rejects_wrong_key();
   test_aead_rejects_tampered_nonce();
   test_aead_aad_only_no_plaintext();
+  test_sha256_domain_refuses_a_failed_hash();
+  test_identity_derivation_is_zeros_on_a_failed_hash();
+  test_ed25519_refuses_a_message_that_does_not_hash();
+  test_aead_shim_refuses_a_hash_that_fails();
   std::printf("\nALL MESH_CRYPTO TESTS PASSED\n");
   return 0;
 }

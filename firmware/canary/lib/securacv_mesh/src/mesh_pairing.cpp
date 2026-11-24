@@ -17,13 +17,20 @@
 
 namespace mesh_pairing {
 
-uint32_t compute_confirmation_code(const uint8_t session_key[SESSION_KEY_LEN]) {
-  if (session_key == nullptr) return 0;
+bool compute_confirmation_code(const uint8_t session_key[SESSION_KEY_LEN],
+                               uint32_t*     code_out) {
+  if (code_out == nullptr) return false;
+  *code_out = 0;
+  if (session_key == nullptr) return false;
 
+  /* A hash that failed gives no code (sweep F364): its zeroed digest would
+   * read as 000000 for every session key. */
   uint8_t code_hash[mesh_crypto::SHA256_OUT_LEN];
-  mesh_crypto::sha256_domain(DOMAIN_PAIR_CONFIRM,
-                             session_key, SESSION_KEY_LEN,
-                             code_hash);
+  if (!mesh_crypto::sha256_domain(DOMAIN_PAIR_CONFIRM,
+                                  session_key, SESSION_KEY_LEN,
+                                  code_hash)) {
+    return false;
+  }
 
   /* canary-wap mesh_network.cpp:800:
    *   code = ((h[0] << 16) | (h[1] << 8) | h[2]) % 1000000
@@ -32,7 +39,8 @@ uint32_t compute_confirmation_code(const uint8_t session_key[SESSION_KEY_LEN]) {
   const uint32_t top24 = ((uint32_t)code_hash[0] << 16) |
                          ((uint32_t)code_hash[1] << 8)  |
                          ((uint32_t)code_hash[2]);
-  return top24 % CONFIRMATION_CODE_MODULUS;
+  *code_out = top24 % CONFIRMATION_CODE_MODULUS;
+  return true;
 }
 
 bool compute_confirmation_hash(Role          sender,
@@ -63,12 +71,14 @@ bool compute_confirmation_hash(Role          sender,
   buf[SESSION_KEY_LEN + 2] = (uint8_t)((code >> 16) & 0xFF);
   buf[SESSION_KEY_LEN + 3] = (uint8_t)((code >> 24) & 0xFF);
 
-  mesh_crypto::sha256_domain(domain, buf, sizeof(buf), out);
+  /* False with `out` zeroed when the hash fails (sweep F364): every caller
+   * fails the pairing then, so no all-zero CONFIRM is sent or expected. */
+  const bool hashed = mesh_crypto::sha256_domain(domain, buf, sizeof(buf), out);
   /* The copy of the session key, wiped (secure_zero, below, is file-local
    * to the state machine; the same volatile store). */
   volatile uint8_t* wipe = buf;
   for (size_t i = 0; i < sizeof(buf); ++i) wipe[i] = 0;
-  return true;
+  return hashed;
 }
 
 const char* mesh_state_name(bool   enabled,
@@ -196,13 +206,14 @@ inline bool generate_ephemeral(PairingContext& ctx) {
 
 /* Derive session_key + confirmation_code once we know both ephemeral
  * pubs. Both sides do this with their own (priv, peer_pub) and arrive
- * at the same session_key. */
+ * at the same session_key. False when the code's hash fails (sweep
+ * F364), as for a refused X25519: the caller fails the pairing (CRYPTO,
+ * which wipes the session key) before any ACCEPT or code goes out. */
 inline bool derive_session_state(PairingContext& ctx) {
   if (!mesh_crypto::x25519_derive(ctx.ephem_privkey, ctx.peer_ephem_pubkey, ctx.session_key)) {
     return false;
   }
-  ctx.confirmation_code = compute_confirmation_code(ctx.session_key);
-  return true;
+  return compute_confirmation_code(ctx.session_key, &ctx.confirmation_code);
 }
 
 inline void copy_name(char* dst, size_t dst_cap, const char* src) {
@@ -557,11 +568,18 @@ Action either_handle_confirm(PairingContext& ctx,
 
   /* The partner's role's hash (F94): this side's own CONFIRM, reflected
    * from the partner's address, does not match, and ends the pairing like
-   * any wrong hash from there. */
+   * any wrong hash from there. An expected hash that did not hash ends it
+   * too, as CRYPTO (sweep F364): on the IDF 5 line it was compared as 32
+   * zero bytes, which a partner whose own hash failed sent, and the pairing
+   * completed with neither CONFIRM checked. A side with no role (no reachable state has
+   * none) has no partner role to check for, and refuses every CONFIRM as
+   * BAD_CONFIRM, as before. */
+  const Role partner = partner_role(ctx.role);
   uint8_t expected[mesh_crypto::SHA256_OUT_LEN];
-  if (!compute_confirmation_hash(partner_role(ctx.role), ctx.session_key,
-                                 ctx.confirmation_code, expected) ||
-      !mesh_crypto::ct_equal(cf->confirmation_hash, expected, mesh_crypto::SHA256_OUT_LEN)) {
+  if (!compute_confirmation_hash(partner, ctx.session_key, ctx.confirmation_code, expected)) {
+    return fail(ctx, partner == ROLE_NONE ? FailReason::BAD_CONFIRM : FailReason::CRYPTO);
+  }
+  if (!mesh_crypto::ct_equal(cf->confirmation_hash, expected, mesh_crypto::SHA256_OUT_LEN)) {
     return fail(ctx, FailReason::BAD_CONFIRM);
   }
 

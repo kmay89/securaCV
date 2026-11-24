@@ -292,8 +292,9 @@
   includes the header instead of reading files. A scratch differential
   against the old sender and receivers found no difference (83,200 builder
   inputs: every type byte crossed with edge values of each field), so
-  nothing on the air changed. One receiver keeps its wider rule on purpose,
-  its offsets `static_assert`ed to the header (backlog F459).
+  nothing on the air changed. One receiver kept a wider rule of its own
+  until F459 (the canary-wap nearby scan), its offsets `static_assert`ed to
+  the header.
 - **Rule:** give a wire format one header before its third reader, and
   when you move a layout into it, move every cross-tree test that pinned
   the old spelling in the same change: the iPhone belt that read
@@ -671,7 +672,14 @@
   >= 0x03000000` (the plain names) `#else` (the `_ret` names) `#endif`, with
   `mbedtls/version.h` included (2.28's `sha256.h` does not define the number).
 - **Regression check:** `regression_check.sh` greps for `_ret(` and fails every
-  hit outside the `#else` branch of that exact guard
+  hit outside the `#else` branch of that exact guard. Its first catch (F364,
+  #2013): the canary library's `mesh_crypto::sha256_domain()` picked the
+  `_ret` names under `#if ESP_IDF_VERSION_MAJOR >= 5`, which compiles the same
+  on both cores but is not that guard, so the job failed; one guard, spelled
+  the one way. The same commit's new host test passed the include-order lint
+  and the `scripts/tests` suite only because both ran while the file was
+  untracked: those gates read `git ls-files`, so run them on the commit, not
+  on the working tree.
 - **Date learned:** 2026-01
 
 ### `esp_camera.h` include order matters
@@ -1062,9 +1070,11 @@
   old sources valgrind reported 126 uses of uninitialized values). The
   Beacon and Chirp hashes followed, and then `mesh_network.cpp`'s
   fingerprint and opera id, every caller refusing
-  (`test_mesh_address_wap.cpp`); `mesh_crypto`'s, the OTA and pseudonym
-  hashes are open (backlog F364), and the flagship's and the common witness
-  core's helpers followed in #1966 (F455, in `CHANGELOG.md`). F403 put the
+  (`test_mesh_address_wap.cpp`); the flagship's and the common witness
+  core's helpers followed in #1966 (F455, in `CHANGELOG.md`), and
+  `mesh_crypto`'s in both trees in #2013 (`test_mesh_crypto_lines.cpp`
+  builds the canary library's body on both IDF lines); the OTA and pseudonym
+  hashes are open (backlog F364). F403 put the
   BLE status service, the witness export's HEAD and the signer behind the
   same gate as BLE discovery; the MQTT bridge's identity, mDNS, the Improv
   door, the Bluetooth and console metadata, the mesh, the hourly chain
@@ -1447,6 +1457,100 @@
   to the same checks. Run `make` in
   `firmware/projects/canary-wap/tests_host/`.
 - **Date learned:** 2026-09
+
+### A constant-time compare for tokens did not make the tag compares constant time
+- **What happened:** the bearer token was compared without an early exit on
+  both Canaries, and `regression_check.sh` said "Auth appears to use
+  constant-time comparison". Three secret-dependent compares were still
+  `memcmp()`: both trees' chain-backup restore checked the backup's
+  HMAC-SHA256 (keyed by the device private key) with it, and the canary-wap's
+  `handle_pair_confirm()` checked the partner's CONFIRM hash (SHA-256 over the
+  X25519 session key) with it. `memcmp()` returns at the first byte that
+  differs, so a refusal's time says how many leading bytes of a forged tag
+  were right. The PIO tree's own CONFIRM check used `ct_equal()`; the WAP's
+  twin did not. A fourth, found by review after the survey that found the
+  three: the canary-wap's household RPA check (`resolve_rpa_detailed()`)
+  compared the AES-128 hash under an enrolled IRK with
+  `computed_hash[0] == expected_hash[0] && ...`, a branch on each byte. And
+  the regression check could not have caught any of it: its grep
+  `"constant_time_compare\|volatile.*result.*\|=\|crypto_verify"` meant
+  `|=` as text, but in a basic regex `\|` is an alternative, so one of its
+  alternatives was `=` and it matched every assignment in the tree. With that
+  alternative gone it still passed on `crypto_verify` (an Ed25519 verify,
+  not a byte compare) and on comment text naming `constant_time_compare()`,
+  this fix's own header comment among them: still a check that could not
+  fail.
+- **Root cause:** the rule was kept where it was first written down (the
+  token compare) and checked by a grep that could not fail; a new compare
+  of a tag reached for the nearest byte compare, `memcmp()`, or wrote the
+  bytes out with `&&`. The survey searched for `memcmp()`-family calls
+  first, so the `&&` chain was a spelling it did not look for.
+- **Fix:** one helper, `firmware/common/core/ct_compare.h`
+  (`ct_compare::equal()`: volatile reads into a volatile accumulator, no
+  early exit, `n == 0` and null answer unequal), staged by the WAP sketch
+  (`check_csi_sync.sh`); the four compares call it, outcomes and log
+  lines unchanged. `regression_check.sh` now fails a `memcmp` / `bcmp` /
+  `strcmp` / `strncmp` / `strcasecmp` or a String `.equals()` whose
+  arguments name an HMAC, a CONFIRM hash, an expected or computed tag or the
+  expected bearer token, and its auth check names each tree's bearer
+  compare (`api_auth.h`'s `constant_time_compare()`, `securacv_auth.cpp`'s
+  `constantTimeCompare()`) and fails unless that file defines it with a
+  volatile read, a `|=` fold and one return and no `break`, and calls it as
+  `NAME(token, expected_token, ...)` on a line of code. Shown failing on
+  eight scratch mutants (a `strncmp()` bearer compare, a renamed helper, an
+  early return, a `break`, no `volatile`, a `memcmp()` and a String
+  `.equals()` canary compare, a renamed file), every one of which the grep
+  before it passed.
+- **Rule:** a compare where one side is a secret, or derived from one, is
+  `ct_compare::equal()` (or a tree's own constant-time compare), never
+  `memcmp()` or an `&&` of bytes. A survey for a pattern finds the
+  spellings it searched for: search for the shapes too (a chain of indexed
+  `==`, a loop that returns). And a guard that greps for a fix must be shown
+  failing once on the code it is meant to catch; one that cannot fail is
+  decoration.
+- **Regression check:** `firmware/tests_host/test_ct_compare.cpp` (the
+  helper's answers, a fault trap that sees each buffer's first and last
+  byte read, the loop's text, the PIO restore run over the fake card, its
+  call site); canary-wap `tests_host/test_mesh_pair_crypto.cpp` and
+  `test_wap_hmac_fail.cpp` (the call sites), `test_mesh_liveness_wap.cpp`
+  (`a_confirm_one_bit_off_ends_the_pairing`), `test_household_rpa.cpp` (the
+  real `household.cpp`: the spec's `ah()` sample, every one-bit-off hash
+  refused, the call site); `regression_check.sh`'s bearer-compare and
+  secret-compare checks, the second of which lists the three `memcmp()`
+  calls on the code before the fix. It reads one line at a time, so the
+  `&&` chain is the host pin's to hold. None of these measures time:
+  constant time is not measurable meaningfully on a host.
+- **Date learned:** 2026-11
+
+### Two sides whose hash failed agree on the zeros (mesh pairing code and CONFIRM, F364)
+- **What happened:** `mesh_crypto::sha256_domain()` returned `void` in both
+  trees, and on a failed step it left zeros, so the 6-digit pairing code and
+  the CONFIRM hash were made from a zeroed digest as from a real one. In a
+  host run of two canary-wap devices over a failing mbedTLS stand-in, with
+  the old call sites, a pairing whose code did not hash completed on 000000,
+  and a zeroed CONFIRM was matched by a side whose own check had failed: the
+  initiator added the joiner and sealed the opera secret to it. The canary
+  tree's initiator, given 32 zero bytes with its check failing, answered
+  `SEND_COMPLETE` the same way.
+- **Root cause:** a check that compares two derived values passes when both
+  derivations fail to the same constant. Zeroing the output on failure, the
+  right move for any one reader, made two failures agree.
+- **Fix:** `sha256_domain()` is `[[nodiscard]] bool` in both trees, and the
+  pairing code, the CONFIRM hash (sent, sent again or checked), the rekey
+  key, the signed message hash and the hashed beacon id refuse a failed hash
+  (backlog F364): the pairing ends (`FailReason::CRYPTO` on the canary tree,
+  an ALERT on the canary-wap), no zeroed code is shown and no zeroed CONFIRM
+  is sent or matched.
+- **Rule:** a value that stands for "the hash failed" must never be one a
+  peer can also produce; refuse before the compare, on both sides.
+- **Regression check:** canary-wap `tests_host/test_mesh_liveness_wap.cpp`
+  (`two_devices_whose_code_does_not_hash_show_no_code_and_do_not_pair`,
+  `two_devices_whose_confirm_does_not_hash_do_not_pair`,
+  `a_zeroed_confirm_is_not_matched_by_a_side_whose_check_did_not_hash`),
+  `test_wap_sha_fail_modules.cpp`, `test_mesh_pair_crypto.cpp`,
+  `test_mesh_crypto_lines.cpp` (the library's body on both IDF lines), and the
+  securacv_mesh and securacv_ble_scan suites.
+- **Date learned:** 2026-11
 
 ---
 
@@ -3039,9 +3143,10 @@
 - **Regression check:** `firmware/tests_host/test_improv_core.cpp`
   (`a_hub_write_from_another_link_is_refused_in_both_join_states`,
   `the_link_generation_cannot_come_round_to_the_join`). The glue's stamp
-  (`link_of()` in `improv_ble.cpp`) was proved only by scratch harnesses; a
-  committed one is open (backlog F472), and the `magic_pairing.md` §9 row
-  is unrun.
+  (`link_of()` in `improv_ble.cpp`) is held on the host by
+  `firmware/tests_host/test_improv_glue.cpp` (`race`, `wrap` and `beside`,
+  both NimBLE majors, over stand-ins); on the radio it is the
+  `magic_pairing.md` §9 row, which is unrun.
 - **Date learned:** 2026-11
 
 ---
@@ -3580,7 +3685,73 @@
   emulated flavor's Join scene and reads the firmware's own labels
   (`emu_screen_labels`) for the name and key it printed, with and without
   the stuck-phone hint.
+- **Amended, 2026-11 (sweep F373, #2013):** the splash's wordmark had the
+  same fault, cut at both edges rather than ellipsized: set in the
+  Character's title face, "SecuraCV" was 191 px on the 172 px glass under
+  Heirloom, and the host fake LVGL modeled no letter spacing, so no host
+  suite could see it. `splash.cpp` now reads the laid-out label's width
+  (`lv_obj_get_width()`) and steps the face, then the spacing, down until
+  `splash_layout.h`'s `word_fits()` keeps `kWordMargin` a side, showing no
+  wordmark where no step fits. Check: the fake now models letter spacing
+  (`test_splash_scenes.cpp`), and `glass_splash_test.cpp`'s hold 9 holds the
+  ink on the real LVGL 8.4.
 - **Date learned:** 2026-09
+
+### A twin's flash that hears writes but not erases brings back what the firmware erased (the Lab's bench, A127)
+- **What happened:** on the Lab's bench a display twin's 10 s BOOT hold ran
+  the firmware's factory reset, and the bench's restart booted it straight
+  back onto the home network. The page keeps its own copy of each twin's
+  flash and restores it on a restart ("booting again with its memory
+  intact"), and `emu_support.cpp`'s `Preferences::remove` and `::clear` never
+  told it: a native run of the erase boot over the old source showed the
+  page hearing 0 of the four erases (`wifi_ssid`, `wifi_pass`, the ring and
+  `ap_pass`), and `emu-shell.js` then seeded the home network into the
+  restored copy as for any boot. The review found a "meet again" had the same
+  hole across a later bench power event.
+- **Root cause:** the twin's persistence was a write-through copy, and an
+  erase is not a write: the page never learned a key was gone, so its copy
+  outlived the firmware's own flash.
+- **Fix:** `Preferences::remove` and `::clear` report each key they erase
+  (`js_nvs_remove` to `Module.onNvsRemove`); the page drops it from its copy
+  and marks it erased, and `start()` seeds no default the flash erased. A
+  meet again forgets the network and the hello the same way (`app.js`
+  `stageFlash`) until the firmware writes them again. The emulator half
+  reaches the Lab with the dist rebuild.
+- **Rule:** a mirror of a store hears every change the store can make,
+  deletes included, or it is a backup that restores what the device threw
+  away.
+- **Regression check:** `canary-local/emulator/test/runtime_turn.sh`'s erase
+  boot (`runtime_turn_test.cpp`: the page hears exactly the four erases),
+  `canary-local/tests/bench.test.js`'s A127 rows, and `bench_probe.mjs`'s
+  10 s-hold check, which fails on a dist built before the fix.
+- **Date learned:** 2026-11
+
+### A turn made from off the panel must lay out the view already open on it (dash settings sheet, F370)
+- **What happened:** the phone app turns a dash's glass through `/api/set`,
+  which only stores the choice; `main.cpp`'s render hands it to the port on
+  its next pass whether or not the settings sheet is open. Nothing laid the
+  open sheet out again: a native run over the old `settings_ui.cpp` left the
+  sheet at its 620x440 landscape layout on the 480x800 canvas, and an open
+  Orientation page kept its check on "Landscape". The on-glass Orientation
+  tap and the reset path re-measured as they turned, so only the turn from
+  off the panel was missed.
+- **Root cause:** each path that turned the glass from the panel laid out its
+  own view, and the path that turned it from the network had no view to tell.
+- **Fix:** the sheet remembers the turn it was laid out at (`s_laid_rot`),
+  and `settings_ui_tick()`, when the glass wears another, runs
+  `layout_host()` and rebuilds the open page at the same scroll offset, never
+  under a finger (the turn waits for the lift); dash7 and nightstand7 keep
+  the Location page's draft across it (`CD_SET_WX`). Every `CD_FLAVOR_DASH`
+  firmware builds it.
+- **Rule:** when something that shapes the canvas can change from off the
+  panel, the view open on it compares what it was laid out for with what the
+  glass wears, each frame; do not count on the path that changed it to call
+  back.
+- **Regression check:** `canary-local/emulator/test/runtime_turn.sh`'s dash
+  pass (`dash_sheet_turn_test.cpp`: the sheet, the open page, and no rebuild
+  under a finger). The dash7 and nightstand7 builds (LVGL 9.5) are
+  compile-tested by CI only.
+- **Date learned:** 2026-11
 
 ---
 
@@ -4537,9 +4708,10 @@
   key is read (400 "body is not JSON"), and the integer reader saturates
   instead of keeping a long number's first nine digits.
 - **Rule:** find a JSON key where a JSON parser would, and give every
-  reader of a request the same bytes. The same class still reads
+  reader of a request the same bytes. The same class still read
   `/api/events/dismiss`, `/api/mqtt/config` and the Tuning Lab's POSTs
-  (backlog F469).
+  until F469 moved them, and the reader, to `json_member.h` (the entry
+  below).
 - **Regression check:** canary-wap `tests_host/test_wap_tune_lab.cpp`
   (`test_the_settings_post_reads_keys_not_values`,
   `test_the_settings_reader_reads_json`, and the pins in
@@ -4558,10 +4730,60 @@
   parameter (`declared_as_parameter()`) and never sizes one by its N.
 - **Rule:** a bound a checker trusts must be one the compiler enforces.
   Read the declaration the way the language does, then prove the reading
-  with a mutation the old reading passes. The same function still takes
-  `if (active && active[0])` for a declaration (backlog F470).
+  with a mutation the old reading passes. The same function also took
+  `if (active && active[0])` for a declaration until F470 (#2013): a match
+  whose type is the name itself, or whose `&&` follows a word that is not
+  `auto` or a declared struct or enum, is now read past.
 - **Regression check:** the checker's self-test (the "WAP guard self-tests"
   job), whose mutations include both planted cases.
+- **Date learned:** 2026-11
+
+### A JSON default is a fallback for a missing key, not a range check (canary-wap Chirp TTL, F412)
+- **What happened:** `POST /api/chirp/send` read `uint8_t ttl =
+  input["ttl_minutes"] | 15;` for a field spec §3.3 bounds to 5-60. A scratch
+  ArduinoJson 7.4.1 harness (the emulator's pinned copy) running that line
+  verbatim signed 300 as 44, 256 as 0 and -1 as 255; only a float, a string
+  or a bool fell back to 15. The brief that sent the fix assumed 300 became
+  15.
+- **Root cause:** `x | 15` answers the default only when the value is not of
+  the default's type; an integer of any size is taken as it is and then
+  narrowed into the byte without a word. The `|` read as validation and was
+  a type test.
+- **Fix:** `ttl_from_request()` (`mesh_network.h`): absent or null is 15, and
+  anything that is not an integer from 5 to 60 answers `invalid_ttl` before
+  it is narrowed. The loop task's `send_chirp()` refuses a byte outside the
+  range first, before any tier expires or any cooldown, nonce, signature or
+  frame, so a refused send spends nothing. The same handler's `template_id`
+  and `detail` still narrow (backlog F485).
+- **Rule:** read a wire integer as `is<int32_t>()`, range-check it, then
+  narrow; `| default` is for an absent key only. Check a claim about a
+  library's coercion by running the library, not by reading the call.
+- **Regression check:** canary-wap `tests_host/test_chirp_commands_wap.cpp`
+  (`a_send_outside_5_to_60_minutes_is_refused`,
+  `the_send_handler_reads_ttl_minutes`, `a_ttl_refusal_expires_no_tier`) and
+  `check_wap_loop_commands.py`'s CV7 pin on the handler's read.
+- **Date learned:** 2026-11
+
+### A stub that answers "started" claims work nobody built, and a cancel of nothing must not reset the state (canary-wap Beacon pairing, F30)
+- **What happened:** Beacon's spec §3.3 pairing was never built, but
+  `start_pair_init()` set the state to `PAIR_INIT` and answered true, and the
+  four `/api/beacon/pair/*` routes answered "started", "confirmed" and "pair
+  canceled" for a pairing that never ran. `cancel_pair()` set the state to
+  Normal whatever it was, so a cancel during an ALARM, a TROUBLE or with the
+  channel disabled read as Normal in `GET /api/beacon`.
+- **Root cause:** the stubs were written as placeholders for a flow, with
+  the flow's success answers, and nothing told a caller the difference.
+- **Fix:** `start_pair_init()`, `start_pair_join()` and `confirm_pair()`
+  return false and touch no state, `cancel_pair()` changes the state only out
+  of a pairing state, and the four routes answer `pairing_not_built`. The
+  spec, the audit doc and the threat model say not built (backlog F30).
+- **Rule:** a stub refuses, by a name that says why, and changes nothing; a
+  cancel changes only the state it cancels.
+- **Regression check:** canary-wap `tests_host/test_beacon_cancel_origination.cpp`
+  (`test_source_pairing_is_refused`, and source pins over every sketch file:
+  no caller of a pairing stub) and `test_beacon_set_load.cpp`
+  (`the_pair_routes_answer_pairing_not_built`, the real `send_error()` over
+  each route's literal).
 - **Date learned:** 2026-11
 
 ## Build profiles: a configuration nobody compiles is a configuration that rots
@@ -5564,6 +5786,41 @@
   the guard), `a_joiner_refusing_a_held_member_from_another_opera_keeps_its_own`
   (fails on a mutant that installs the COMPLETE's opera before `add_peer()`)
   and `a_re_pair_into_another_opera_keeps_the_joiners_other_members`.
+- **Date learned:** 2026-11
+
+### A reader that answers "no key" for a key it could not read must not let the route answer "saved" (canary-wap POST readers, F469)
+- **What happened:** after F462 three more POST readers found a key with
+  `strstr()` anywhere in the body: the events dismissal
+  (`{"note":"event_id 7","event_id":9}` dismissed event 7), the MQTT config
+  POST (`{"x":{"host":"inner"},"host":"outer"}` saved the host inner, and a
+  `"password"` nested in another object passed as the caller typing one, so
+  a session's move of the broker was saved with that value in place of the
+  stored password where the F289 gate answers 403) and the Tuning Lab's
+  POST (a nested knob was stored; of two, the first). Moving them to the
+  F462 reader, which reads a key named twice or a body it cannot parse as
+  no key, would have left `{"password":"a","password":"b"}` answered
+  `{"ok":true}` with the stored password kept: the route asked to change a
+  secret, said it did, and did not.
+- **Root cause:** "no key" is a fine answer for a reader and a wrong one for
+  a route that saves what it read; the two must be told apart.
+- **Fix:** the reader moved to a header-only `json_member.h` and says which
+  of four it found (`json_object_find()`: found, absent, twice, unreadable).
+  The MQTT POST refuses a body that is not one JSON object, or names a key
+  it reads twice, before any field is applied (400), and a `tls_mode` or
+  `port` it cannot read or use (`1.0`, `null`, `70000`) by name: the
+  stricter number reader had made `{"tls_mode":1.0,"ca":...}`, which
+  `strtol()` read as 1, an absent mode, answered saved on plain text (the
+  F469 review); the dismissal answers
+  each case by name and dismisses nothing; the Lab keeps the F462 posture
+  (a knob named twice is neither), since none of its knobs is a secret.
+- **Rule:** when a read can come back "absent", ask what the route answers
+  then; if that answer is "saved" and the absent key was a secret, refuse
+  the request instead.
+- **Regression check:** canary-wap `tests_host/test_mqtt_reinit.cpp`
+  (`the_config_post_reads_the_bodys_own_keys`), `test_wap_tune_lab.cpp`
+  (`the_dismissal_reads_its_own_event_id`,
+  `the_post_reads_the_bodys_own_knobs`, and the pins in
+  `the_wire_readers_find_keys_with_the_reader`).
 - **Date learned:** 2026-11
 
 ## The 2.4.20 audit: one owner for a fact, one door for a field

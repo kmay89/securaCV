@@ -345,6 +345,25 @@ var SAVED_UNDER_IP = 'Saved under an IP address this app cannot reach: it reache
   'its .local name. Remove it below and add it again by its .local name, or open this app from that ' +
   'Canary\'s own address.';
 
+// The same for its sub-views (config, logs, witness), which have neither an
+// address field nor the Remove button, so they point at the device page.
+var SAVED_UNDER_IP_SUBVIEW = 'Saved under an IP address this app cannot reach: it reaches another Canary ' +
+  'only by its .local name. Remove it on its device page and add it again by its .local name, or open ' +
+  'this app from that Canary\'s own address.';
+
+// What a stored device's sub-view shows for a request that failed. One that
+// CanaryAPI.request() refused for its address (err.code needs_local_name)
+// was never made, and LOCAL_NAME_HINT's "Enter its .local name" names a
+// field these views do not have, so it reads SAVED_UNDER_IP_SUBVIEW. Any
+// other failure reads as the error says, after `prefix`, or `fallback` when
+// it says nothing (sweep F475). Every sub-view reads its failures here, so a
+// variant of the saved-under text (sweep F473's .local name on another
+// port) has one place to go.
+function storedDeviceErrorText(err, fallback, prefix) {
+  if (err && err.code === 'needs_local_name') return SAVED_UNDER_IP_SUBVIEW;
+  return (prefix || '') + ((err && err.message) || fallback || '');
+}
+
 function localNameError() {
   var err = new Error(LOCAL_NAME_HINT);
   err.code = 'needs_local_name';
@@ -454,6 +473,23 @@ function maskToken(token) {
 
 // --------------- DOM Helpers ---------------
 
+// The CSP served with this page has style-src 'self', which refuses a style
+// attribute (style-src-attr): the browser drops it and logs a violation, so
+// the layout it carried never shows. app.js sets none: a view's layout is a
+// class in styles.css (sweep F474). Every attribute set from a name held in
+// a variable goes through here, and a style one throws, so a view that
+// still asks for one fails its VM-harness tests (tests/spa) instead of
+// losing its layout in the browser. Writing one property through the CSSOM
+// (node.style.color = ...) is not an attribute, and the CSP does not govern
+// it (tests/spa/csp-compliance.test.js refuses the string forms).
+function setAttr(node, name, value) {
+  if (String(name).toLowerCase() === 'style') {
+    throw new Error('A style attribute is refused by this page\'s CSP (style-src \'self\'): ' +
+      'use a class in styles.css');
+  }
+  node.setAttribute(name, value);
+}
+
 function el(tag, attrs, children) {
   var node = document.createElement(tag);
   if (attrs) {
@@ -465,7 +501,7 @@ function el(tag, attrs, children) {
       } else if (key === 'textContent') {
         node.textContent = attrs[key];
       } else {
-        node.setAttribute(key, attrs[key]);
+        setAttr(node, key, attrs[key]);
       }
     });
   }
@@ -641,7 +677,7 @@ function deviceTypeIcon(info) {
   info.icon.forEach(function (shape) {
     var node = document.createElementNS(svgNs, shape.tag);
     Object.keys(shape.attrs).forEach(function (key) {
-      node.setAttribute(key, shape.attrs[key]);
+      setAttr(node, key, shape.attrs[key]);
     });
     svg.appendChild(node);
   });
@@ -1562,18 +1598,12 @@ function renderCanariesView() {
 
         var uptimeH = Math.floor((info.uptime_s || 0) / 3600);
         var rssiVal = info.wifi_rssi || 0;
-        var rssiClass = rssiVal > -50 ? 'color: var(--color-success)' :
-                        rssiVal > -70 ? 'color: var(--color-warning)' :
-                        'color: var(--color-error)';
+        var rssiClass = rssiVal > -50 ? 'rssi-good' : rssiVal > -70 ? 'rssi-fair' : 'rssi-poor';
 
         dc.stats.appendChild(el('div', { className: 'fleet-device-stats-row' }, [
           el('span', { textContent: 'v' + (info.firmware_version || '?'), className: 'fleet-stat-chip' }),
           el('span', { textContent: uptimeH + 'h up', className: 'fleet-stat-chip' }),
-          el('span', {
-            textContent: rssiVal + ' dBm',
-            className: 'fleet-stat-chip',
-            style: rssiClass,
-          }),
+          el('span', { textContent: rssiVal + ' dBm', className: 'fleet-stat-chip ' + rssiClass }),
         ]));
 
         updateFleetSummary();
@@ -2895,7 +2925,7 @@ function renderConfigView(deviceId, section) {
     })
     .catch(function (err) {
       while (formArea.firstChild) formArea.removeChild(formArea.firstChild);
-      formArea.appendChild(el('div', { className: 'alert alert-error', textContent: err.message }));
+      formArea.appendChild(el('div', { className: 'alert alert-error', textContent: storedDeviceErrorText(err) }));
     });
 }
 
@@ -2974,16 +3004,15 @@ function renderConfigForm(container, device, section, config) {
           }
         })
         .catch(function (err) {
-          alertArea.appendChild(el('div', { className: 'alert alert-error', textContent: err.message }));
+          alertArea.appendChild(el('div', { className: 'alert alert-error', textContent: storedDeviceErrorText(err) }));
         });
     },
   }));
 
   if (section === 'integrations') {
     container.appendChild(el('button', {
-      className: 'btn btn-block',
+      className: 'btn btn-block btn-stacked',
       textContent: 'Test Webhook',
-      style: 'margin-top: 0.5rem',
       onClick: function () {
         var alertArea = document.getElementById('config-alert');
         while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
@@ -3001,7 +3030,7 @@ function renderConfigForm(container, device, section, config) {
             while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
             alertArea.appendChild(el('div', {
               className: 'alert alert-error',
-              textContent: 'Webhook test failed: ' + err.message,
+              textContent: storedDeviceErrorText(err, '', 'Webhook test failed: '),
             }));
           });
       },
@@ -3049,7 +3078,7 @@ function renderLogsView(deviceId) {
     })
     .catch(function (err) {
       while (logContainer.firstChild) logContainer.removeChild(logContainer.firstChild);
-      logContainer.appendChild(el('div', { className: 'alert alert-error', textContent: err.message }));
+      logContainer.appendChild(el('div', { className: 'alert alert-error', textContent: storedDeviceErrorText(err) }));
     });
 }
 
@@ -3113,8 +3142,7 @@ function renderEnvelopeIntegrityBanner(verifyReport, displayedDigest) {
   var children = [el('div', { className: 'timeline-label', textContent: label })];
   if (ee.whole_envelope_digest) {
     children.push(el('div', {
-      className: 'token-display',
-      style: 'font-size: 0.7rem; word-break: break-all; margin-top: 0.25rem',
+      className: 'token-display hash-line',
       textContent: 'fingerprint ' + ee.whole_envelope_digest,
     }));
   }
@@ -3147,8 +3175,7 @@ function renderVerifiedTimeline(container, envelope, verifyReport) {
     el('div', { className: 'card-subtitle', textContent: 'Kernel: ' + (p.kernel_version || '—') }),
     el('div', { className: 'card-subtitle', textContent: 'Ruleset: ' + (p.ruleset_id || '—') }),
     el('div', {
-      className: 'token-display',
-      style: 'font-size: 0.7rem; word-break: break-all; margin-top: 0.25rem',
+      className: 'token-display hash-line',
       textContent: 'device key ' + (p.device_public_key || '—'),
     }),
   ]);
@@ -3220,15 +3247,14 @@ function renderWitnessView(deviceId) {
         })
         .catch(function (err) {
           while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
-          alertArea.appendChild(el('div', { className: 'alert alert-error', textContent: err.message }));
+          alertArea.appendChild(el('div', { className: 'alert alert-error', textContent: storedDeviceErrorText(err) }));
         });
     },
   }));
 
   actions.appendChild(el('button', {
-    className: 'btn btn-block',
+    className: 'btn btn-block btn-stacked',
     textContent: 'Export Chain (JSON)',
-    style: 'margin-top: 0.5rem',
     onClick: function () {
       CanaryAPI.request(device.base_url, '/api/v1/witness/export')
         .then(function (data) {
@@ -3244,15 +3270,14 @@ function renderWitnessView(deviceId) {
         })
         .catch(function (err) {
           while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
-          alertArea.appendChild(el('div', { className: 'alert alert-error', textContent: err.message }));
+          alertArea.appendChild(el('div', { className: 'alert alert-error', textContent: storedDeviceErrorText(err) }));
         });
     },
   }));
 
   actions.appendChild(el('button', {
-    className: 'btn btn-block',
+    className: 'btn btn-block btn-stacked',
     textContent: 'Export Evidence Envelope',
-    style: 'margin-top: 0.5rem',
     title: 'Privacy-coarsened, self-verifying bundle — open in the offline evidence viewer',
     onClick: function () {
       while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
@@ -3271,7 +3296,7 @@ function renderWitnessView(deviceId) {
         .catch(function (err) {
           while (alertArea.firstChild) alertArea.removeChild(alertArea.firstChild);
           // A 422 means coarsening refused to emit (precise data still in the raw chain).
-          var msg = err.message || 'Envelope export failed';
+          var msg = storedDeviceErrorText(err, 'Envelope export failed');
           alertArea.appendChild(el('div', { className: 'alert alert-error', textContent: msg }));
         });
     },
@@ -3282,9 +3307,8 @@ function renderWitnessView(deviceId) {
   // integrity status, so an operator can review the attested events without leaving the app.
   var timelineSection = el('div', { id: 'witness-timeline' });
   var timelineBtn = el('button', {
-    className: 'btn btn-block',
+    className: 'btn btn-block btn-stacked',
     textContent: 'View Verified Timeline',
-    style: 'margin-top: 0.5rem',
     title: 'Render the privacy-coarsened, cryptographically verified events from the evidence envelope',
     onClick: function () {
       // Guard against overlapping requests from rapid clicks (race conditions / stale overwrites).
@@ -3306,7 +3330,7 @@ function renderWitnessView(deviceId) {
         timelineBtn.disabled = false;
         while (timelineSection.firstChild) timelineSection.removeChild(timelineSection.firstChild);
         timelineSection.appendChild(el('div', { className: 'alert alert-error',
-          textContent: err.message || 'Failed to load verified timeline' }));
+          textContent: storedDeviceErrorText(err, 'Failed to load verified timeline') }));
       });
     },
   });
@@ -3321,8 +3345,7 @@ function renderWitnessView(deviceId) {
     el('div', { className: 'spinner' }),
     'Loading records…',
   ]));
-  content.appendChild(el('div', { className: 'card-title mb-8', style: 'margin-top: 1rem',
-    textContent: 'Raw chain records' }));
+  content.appendChild(el('div', { className: 'card-title mb-8 section-gap', textContent: 'Raw chain records' }));
   content.appendChild(recordList);
   app.appendChild(content);
 
@@ -3339,8 +3362,7 @@ function renderWitnessView(deviceId) {
           el('div', { className: 'card-title', textContent: '#' + r.seq + ' ' + r.event_type }),
           el('div', { className: 'card-subtitle', textContent: r.zone + ' — ' + r.timestamp }),
           el('div', {
-            className: 'token-display',
-            style: 'font-size: 0.7rem; word-break: break-all; margin-top: 0.25rem',
+            className: 'token-display hash-line',
             textContent: r.hash,
           }),
         ]);
@@ -3349,7 +3371,7 @@ function renderWitnessView(deviceId) {
     })
     .catch(function (err) {
       while (recordList.firstChild) recordList.removeChild(recordList.firstChild);
-      recordList.appendChild(el('div', { className: 'alert alert-error', textContent: err.message }));
+      recordList.appendChild(el('div', { className: 'alert alert-error', textContent: storedDeviceErrorText(err) }));
     });
 }
 
@@ -3711,7 +3733,7 @@ function renderEventList(container) {
       ? 'No events match this filter.'
       : 'No events recorded yet.';
     listEl.appendChild(el('div', { className: 'empty-state' }, [
-      el('p', { textContent: emptyMsg, style: 'padding: 20px 0;' }),
+      el('p', { className: 'events-empty-msg', textContent: emptyMsg }),
     ]));
     container.appendChild(listEl);
     return;
@@ -3815,8 +3837,8 @@ function renderEventCard(cluster, index) {
       subRow.appendChild(el('span', { className: 'subevent-dot ' + evtMeta.cssClass }));
       subRow.appendChild(el('span', { textContent: evtMeta.label }));
       subRow.appendChild(el('span', {
+        className: 'subevent-time',
         textContent: evt._ts.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' }),
-        style: 'margin-left: auto; color: var(--color-text-muted); font-size: 11px;'
       }));
       subList.appendChild(subRow);
     }
@@ -4272,9 +4294,8 @@ function renderSettingsView() {
   notifCard.appendChild(makeToggle('Vibration', 'vibrate', prefs));
 
   notifCard.appendChild(el('div', {
-    className: 'card-subtitle mt-12 mb-8',
+    className: 'card-subtitle settings-heading mt-12 mb-8',
     textContent: 'Notify for event types:',
-    style: 'font-weight: 500; color: var(--color-text);',
   }));
   // Derive the per-type toggles from EVENT_TYPE_META (highest priority first) so the settings
   // list stays in sync with the event vocabulary automatically when new types are added.
@@ -4286,14 +4307,13 @@ function renderSettingsView() {
     });
 
   notifCard.appendChild(el('div', {
-    className: 'card-subtitle mt-12 mb-8',
+    className: 'card-subtitle settings-heading mt-12 mb-8',
     textContent: 'Quiet Hours:',
-    style: 'font-weight: 500; color: var(--color-text);',
   }));
   notifCard.appendChild(makeToggle('Enable Quiet Hours', 'quiet_hours_enabled', prefs));
 
-  var quietRow = el('div', { className: 'form-group', style: 'display: flex; gap: 12px; margin-top: 8px;' });
-  var startGroup = el('div', { style: 'flex: 1;' });
+  var quietRow = el('div', { className: 'form-group quiet-hours-row' });
+  var startGroup = el('div', { className: 'flex-1' });
   startGroup.appendChild(el('label', { className: 'form-label', textContent: 'Start' }));
   var startInput = el('input', {
     className: 'form-input',
@@ -4307,7 +4327,7 @@ function renderSettingsView() {
   startGroup.appendChild(startInput);
   quietRow.appendChild(startGroup);
 
-  var endGroup = el('div', { style: 'flex: 1;' });
+  var endGroup = el('div', { className: 'flex-1' });
   endGroup.appendChild(el('label', { className: 'form-label', textContent: 'End' }));
   var endInput = el('input', {
     className: 'form-input',

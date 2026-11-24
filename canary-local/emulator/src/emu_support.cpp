@@ -33,6 +33,14 @@ EM_JS(void, js_tone, (int freq_hz, int gain_permille), {
 EM_JS(void, js_nvs_write, (const char* ns, const char* key, const char* hex), {
   if (Module.onNvsWrite) Module.onNvsWrite(UTF8ToString(ns), UTF8ToString(key), UTF8ToString(hex));
 });
+// An erase reaches the page's copy of the flash too (sweep A127): the page
+// restarts the twin from that copy, so a key the firmware erased and the page
+// still held came back on the next boot (a factory reset's networks, a mute's
+// expiry). Called once per key an erase removed, never for one that was not
+// there.
+EM_JS(void, js_nvs_remove, (const char* ns, const char* key), {
+  if (Module.onNvsRemove) Module.onNvsRemove(UTF8ToString(ns), UTF8ToString(key));
+});
 EM_JS(void, js_reboot_request, (), {
   if (Module.onReboot) Module.onReboot();
 });
@@ -73,7 +81,9 @@ uint32_t micros(void) { return millis() * 1000u; }
 
 // ── GPIO: the BOOT/user button ───────────────────────────────────────────
 // The only digital input the display firmware reads (io/boot_button.h —
-// tap = peek, double = lantern, hold = acknowledge). A browser has no
+// tap = peek, hold = acknowledge, and a double press for the lantern on a
+// glass built with FEATURE_LANTERN; the watch has none, and main.cpp's
+// boot line offers it only where it answers). A browser has no
 // button, so the level is pushed in by JS through emu_button() below, the
 // same way pointer events push touch. Released is the honest resting
 // state: BOOT_BUTTON_ACTIVE is LOW on every board that carries one, so
@@ -266,8 +276,9 @@ LittleFSClass LittleFS;
 
 // ── NVS (Preferences) ───────────────────────────────────────────────────
 // One flat map of "ns/key" → bytes. JS preloads it before boot (persisted
-// page-side) and hears every write, so the inspector panel can show the
-// device's memory forming in real time.
+// page-side) and hears every write and every erase, so the inspector panel
+// can show the device's memory forming in real time and a restart boots
+// from the flash the firmware left.
 namespace {
 std::map<std::string, std::vector<uint8_t>>& nvs() {
   static std::map<std::string, std::vector<uint8_t>> m;
@@ -408,13 +419,20 @@ bool Preferences::isKey(const char* key) {
   return nvs().count(nvs_key(ns_, key)) != 0;
 }
 bool Preferences::remove(const char* key) {
-  return nvs().erase(nvs_key(ns_, key)) != 0;
+  if (nvs().erase(nvs_key(ns_, key)) == 0) return false;
+  js_nvs_remove(ns_, key);  // the page forgets it too (sweep A127)
+  return true;
 }
 bool Preferences::clear() {
   const std::string prefix = std::string(ns_) + "/";
   for (auto it = nvs().begin(); it != nvs().end();) {
-    if (it->first.rfind(prefix, 0) == 0) it = nvs().erase(it);
-    else ++it;
+    if (it->first.rfind(prefix, 0) == 0) {
+      const std::string key = it->first.substr(prefix.size());
+      it = nvs().erase(it);
+      js_nvs_remove(ns_, key.c_str());  // each key it erased (sweep A127)
+    } else {
+      ++it;
+    }
   }
   return true;
 }

@@ -544,7 +544,9 @@ any of the above yet: the channel's runtime is not wired into the sketch
 (`init()`, `set_enabled()`, `update()` and `dispatch_espnow_message()` have no
 callers, the shared ESP-NOW receive path forwards to Chirp only, and the
 310-byte `COSIGN_REQ` frame does not fit that path's 250-byte buffer); the
-§3.3 pairing flow is a stub (nothing writes a beacon-set entry or a peer's
+§3.3 pairing flow is not built (the pair routes answer `pairing_not_built`
+since F30, where they answered "started" and "confirmed" for a pairing that
+never ran; nothing writes a beacon-set entry or a peer's
 X25519 key, so the encrypted two-device path has no input — the COSIGN
 transport itself is encrypted and closed above, contrary to the `.cpp`
 header's old "unencrypted broadcast" note, now corrected); rate-limit state

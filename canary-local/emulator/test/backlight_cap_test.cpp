@@ -1,8 +1,8 @@
 // canary-local/emulator/test/backlight_cap_test.cpp — the board's backlight
 // ceiling, in the twin's display HAL (sweep A61). Built and run by
 // glass_turn.sh against the emulator's REAL display HAL
-// (src/emu_hal_display.cpp, through test/native/emscripten.h), once in the
-// dash config and once in the nightlight's; g++ only, no emsdk.
+// (src/emu_hal_display.cpp, through test/native/emscripten.h), in the dash
+// config, the nightlight's and the AMOLED 2.41's; g++ only, no emsdk.
 //
 // The C3-LCD-1.47 (TFT_USE_EXIO, the nightlight's pin map) writes its
 // backlight as one byte into Waveshare's I2C expander, and
@@ -28,8 +28,18 @@
 //     the same byte);
 //   * emu_backlight_cap_pct() names the ceiling: CD_BL_MAX_PCT on the
 //     expander board, 100 on a board with none.
-// In the dash config (no expander, no ceiling) every level and duty passes
-// through as asked, as the twin always passed them.
+// The AMOLED 2.41 (CD_AMOLED_GLASS, sweep A100) has no ceiling, but its
+// night floor is one byte too: display_amoled241.cpp's backlight_night_set()
+// (amoled_byte_night() below, restated and held to the board's source by
+// bench.test.js) clamps the 13-bit duty to 8191, >> 5, raises it to 1 while a
+// glow was asked for, and writes it as the RM690B0's 0x51 brightness byte.
+// So in the amoled241 config every day level passes as asked, and every
+// night duty is held to that byte's step, as on the expander: 256 steps, the
+// dimmest glow at 32, the brightest at 8160. Before A100 the twin passed its
+// duties through unstepped, so a glow asked at 1..31 glowed dimmer than the
+// panel's first step.
+// In the dash config (no expander, no ceiling, an LEDC backlight) every
+// level and duty passes through as asked, as the twin always passed them.
 //
 // Prints "ALL BACKLIGHT CAP TESTS PASSED" on success.
 #include <Arduino.h>
@@ -96,6 +106,20 @@ constexpr unsigned kCapPct = 100;  // display_1in47.cpp's default
 constexpr bool kExpander = false;
 constexpr unsigned kCapPct = 100;
 #endif
+// The boards whose night floor is one byte, stepped 32 duties apart: the
+// expander's PWM register, and the AMOLED's brightness command (sweep A100),
+// which has no ceiling. Separate from the expander's cap: the AMOLED steps
+// its floor and clips nothing.
+#if defined(CD_AMOLED_GLASS) && CD_AMOLED_GLASS
+constexpr bool kAmoled = true;
+#else
+constexpr bool kAmoled = false;
+#endif
+#if (defined(TFT_USE_EXIO) && TFT_USE_EXIO) || (defined(CD_AMOLED_GLASS) && CD_AMOLED_GLASS)
+constexpr bool kNightBytes = true;
+#else
+constexpr bool kNightBytes = false;
+#endif
 
 // display_1in47.cpp's exio_backlight(): kCap and the clip.
 constexpr unsigned kCap = (255u * kCapPct) / 100u;
@@ -104,10 +128,22 @@ unsigned exio(unsigned duty8) { return duty8 > kCap ? kCap : duty8; }
 // display_1in47.cpp's backlight_set() on the expander path.
 unsigned board_byte_day(unsigned level) { return exio(level); }
 
+// display_amoled241.cpp's backlight_night_set(): the same compression, the
+// byte written as the panel's 0x51 command as it is (no ceiling).
+unsigned amoled_byte_night(uint16_t duty13) {
+  constexpr uint16_t NIGHT_DUTY_MAX = 8191;
+  if (duty13 > NIGHT_DUTY_MAX) duty13 = NIGHT_DUTY_MAX;
+  uint8_t d8 = (uint8_t)(duty13 >> 5);
+  if (d8 == 0 && duty13 > 0) d8 = 1;
+  return d8;
+}
+
 // display_1in47.cpp's backlight_night_set() on the expander path: the
 // 13-bit duty clamped to NIGHT_DUTY_MAX, compressed to a byte, never to zero
-// while a glow was asked for, then clipped.
+// while a glow was asked for, then clipped. The AMOLED's path where that is
+// the board.
 unsigned board_byte_night(unsigned duty13) {
+  if (kAmoled) return amoled_byte_night((uint16_t)(duty13 > 65535 ? 65535 : duty13));
   if (duty13 > 8191) duty13 = 8191;
   unsigned d8 = duty13 >> 5;
   if (d8 == 0 && duty13 > 0) d8 = 1;
@@ -128,8 +164,11 @@ constexpr unsigned kNightTop13 = kCap << 5;
 }  // namespace
 
 int main() {
-  printf("%s config: %s, ceiling %u%% (byte %u)\n", kExpander ? "expander (C3-LCD-1.47)" : "no-expander",
-         kExpander ? "the HAL clips at the expander's register" : "no ceiling", kCapPct, kCap);
+  printf("%s config: %s, ceiling %u%% (byte %u)\n",
+         kExpander ? "expander (C3-LCD-1.47)" : kAmoled ? "AMOLED (RM690B0)" : "no-expander",
+         kExpander ? "the HAL clips at the expander's register"
+                   : kAmoled ? "no ceiling, the night floor one brightness byte" : "no ceiling",
+         kCapPct, kCap);
 
   CHECK(emu_backlight_cap_pct() == (int)kCapPct, "emu_backlight_cap_pct() says %d, the board's ceiling is %u",
         emu_backlight_cap_pct(), kCapPct);
@@ -153,7 +192,7 @@ int main() {
   int night_clipped = 0;
   int night_stepped = 0;           // duties the expander's byte moves off the duty asked
   static bool step_seen[8192];     // the night duties the twin applied
-  const unsigned top = kExpander ? 9000u : 8191u;
+  const unsigned top = kNightBytes ? 9000u : 8191u;
   for (unsigned duty = 0; duty <= top; ++duty) {
     const int calls = g_backlight_calls;
     canary::hal::backlight_night_set((uint16_t)duty);
@@ -163,7 +202,7 @@ int main() {
     CHECK(got >= 0 && got <= 8191, "night: backlight_night_set(%u) applies %d, off the 13-bit scale", duty, got);
     if (got < 0 || got > 8191) continue;
     step_seen[got] = true;
-    if (!kExpander) {
+    if (!kNightBytes) {
       CHECK(got == (int)duty, "night: backlight_night_set(%u) applies %d, not the duty asked", duty, got);
       continue;
     }
@@ -176,7 +215,7 @@ int main() {
     CHECK(got == (int)twin_night(duty),
           "night: backlight_night_set(%u) applies %d, not %u (the board's byte %u, << 5)", duty, got,
           twin_night(duty), board_byte_night(duty));
-    CHECK((got & 31) == 0, "night: backlight_night_set(%u) applies %d, between two of the expander's steps", duty, got);
+    CHECK((got & 31) == 0, "night: backlight_night_set(%u) applies %d, between two of the board's steps", duty, got);
     CHECK(duty == 0 || got > 0, "night: backlight_night_set(%u) goes dark; the board raises a glow asked to byte 1", duty);
     CHECK(((unsigned)got >> 5) <= kCap, "night: backlight_night_set(%u) applies %d, whose byte %u is past the cap's %u",
           duty, got, (unsigned)got >> 5, kCap);
@@ -204,12 +243,17 @@ int main() {
     CHECK(day_clipped == (int)(255 - kCap) && night_clipped > 0,
           "the cap clipped %d day levels (want %u) and %d night duties", day_clipped, 255 - kCap, night_clipped);
   } else if (!kExpander) {
-    CHECK(day_clipped == 0 && night_clipped == 0, "no ceiling, yet %d day levels and %d night duties were clipped",
-          day_clipped, night_clipped);
+    // No ceiling: no day level clipped, and no night duty on the scale (the
+    // AMOLED clamps only the duties asked past 8191, as its board does).
+    const int past_scale = kNightBytes ? (int)(top - 8191u) : 0;
+    CHECK(day_clipped == 0 && night_clipped == past_scale,
+          "no ceiling, yet %d day levels and %d night duties were clipped (want 0 and %d)", day_clipped,
+          night_clipped, past_scale);
   }
-  // The night floor's steps (sweep A79): on the expander, dark and one step
-  // per byte up to the cap's, 32 duties apart, the dimmest glow at 32, the
-  // brightest at the cap's step; and the twin stepped duties the glass steps.
+  // The night floor's steps (sweep A79; the AMOLED's, A100): on a board whose
+  // floor is one byte, dark and one step per byte up to the cap's (255 on the
+  // AMOLED), 32 duties apart, the dimmest glow at 32, the brightest at the
+  // cap's step; and the twin stepped duties the glass steps.
   int steps = 0;
   int lowest_glow = -1;
   for (int d = 0; d <= 8191; ++d) {
@@ -217,14 +261,14 @@ int main() {
     steps++;
     if (d > 0 && lowest_glow < 0) lowest_glow = d;
   }
-  if (kExpander) {
+  if (kNightBytes) {
     CHECK(steps == (int)kCap + 1 && lowest_glow == 32 && step_seen[kNightTop13] && night_stepped > 0,
-          "the expander's night floor has %d steps (want %u: dark and bytes 1..%u), its dimmest glow at %d (want "
+          "the board's night floor has %d steps (want %u: dark and bytes 1..%u), its dimmest glow at %d (want "
           "32), %s its cap's step %u, and %d duties stepped",
           steps, kCap + 1, kCap, lowest_glow, step_seen[kNightTop13] ? "reaching" : "never reaching", kNightTop13,
           night_stepped);
   } else {
-    CHECK(steps == 8192 && night_stepped == 0, "no expander, yet the night floor has %d of 8192 duties (%d stepped)",
+    CHECK(steps == 8192 && night_stepped == 0, "no one-byte floor, yet the night floor has %d of 8192 duties (%d stepped)",
           steps, night_stepped);
   }
 

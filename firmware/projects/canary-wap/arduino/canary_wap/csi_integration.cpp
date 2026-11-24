@@ -875,8 +875,8 @@ esp_err_t handle_events_today(httpd_req_t* req) {
 
 esp_err_t handle_events_dismiss(httpd_req_t* req) {
   CSI_AUTH_OR_RETURN(req);
-  /* Body is small JSON: {"event_id": <number>}. We parse with a tiny
-   * scanner to avoid pulling ArduinoJson into this TU. Read whole through
+  /* Body is small JSON: {"event_id": <number>}, read by json_member.h's
+   * reader to keep ArduinoJson out of this TU. Read whole through
    * http_body::read_all() (sweep F300): one httpd_req_recv() returns what
    * ONE socket read delivered, so a body in two TCP segments was parsed
    * cut (its id a prefix of the one sent), and a body past the buffer was
@@ -909,15 +909,36 @@ esp_err_t handle_events_dismiss(httpd_req_t* req) {
     httpd_resp_send(req, "{\"ok\":false,\"reason\":\"body read failed\"}", -1);
     return ESP_OK;
   }
-  const char* k = strstr(body, "event_id");
-  if (!k) {
+  /* The body's own "event_id" member, a whole number from 0 to
+   * 4294967295 (json_member.h's dismiss_event_id(), sweep F469, over all
+   * `got` bytes). It was the first digits after the first "event_id"
+   * anywhere in the body, quoted or not, so {"note":"event_id 7",
+   * "event_id":9} dismissed event 7, and an id past 4294967295 read as
+   * strtoul()'s ULONG_MAX (4294967295 on the ESP32). A body that names it
+   * twice, or that is not one JSON object the reader takes, dismisses
+   * nothing and says so. */
+  uint32_t event_id = 0;
+  const DismissRead id_read = dismiss_event_id(body, got, &event_id);
+  if (id_read == DismissRead::kMissing) {
     httpd_resp_set_status(req, "400 Bad Request");
     httpd_resp_send(req, "{\"ok\":false,\"reason\":\"missing event_id\"}", -1);
     return ESP_OK;
   }
-  const char* digit = k;
-  while (*digit && (*digit < '0' || *digit > '9')) digit++;
-  const uint32_t event_id = (uint32_t)strtoul(digit, nullptr, 10);
+  if (id_read == DismissRead::kTwice) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"event_id is named more than once\"}", -1);
+    return ESP_OK;
+  }
+  if (id_read == DismissRead::kNotJson) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"body is not JSON\"}", -1);
+    return ESP_OK;
+  }
+  if (id_read != DismissRead::kId) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"event_id must be a whole number 0 to 4294967295\"}", -1);
+    return ESP_OK;
+  }
   const bool ok = csi_event_dismiss(event_id);
   /* Persist it (written on the loop task by flush_dismissals), so the
    * reboot refill does not bring the event back undismissed. */

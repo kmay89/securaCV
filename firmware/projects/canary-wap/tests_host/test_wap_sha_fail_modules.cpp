@@ -18,7 +18,9 @@
 //   - Wi-Fi presence's MAC hash (wifi_presence.h, a one-shot): four stack
 //     bytes counted as a device;
 //   - the ble_scan / pairing shim mesh_crypto::sha256_domain(), whose output
-//     kept whatever a failed step left.
+//     kept whatever a failed step left (and, once it zeroed, answered
+//     nothing, so ble_scan.cpp's hashed beacon id and mesh_pair_crypto.h's
+//     pairing code and CONFIRM hash took 32 zero bytes for a digest).
 // Now each helper answers whether every step ran and zeroes its output when
 // one did not, and each caller refuses what the hash was for:
 //   - seal_task(): a failed start, update (the first, a middle or the last
@@ -41,14 +43,21 @@
 //     count no query, always_ignore() answers false and persists nothing;
 //   - hash_mac() answers false with a zeroed hash and process_queue() does
 //     not count the capture;
-//   - sha256_domain() keeps its void signature (ble_scan.cpp is byte-
-//     identical with the canary tree, whose API is void) and zeroes its
-//     output after a failed step, as the canary library's IDF 5 body does.
+//   - sha256_domain() answers false with its output zeroed after a failed
+//     step, as the canary library's does (both copies' ble_scan.cpp moved
+//     with it, byte-identical), and what stands on it refuses:
+//     hash_beacon_id() answers false with a zeroed id, so the Scout lists
+//     nothing for the beacon; confirmation_code() answers false with the
+//     code 0, and confirm_hash() false with the hash zeroed, and
+//     mesh_network.cpp ends the pairing on either (test_mesh_liveness_wap
+//     runs two devices through it).
 //   - beacon_channel.cpp's sha256_two() answers false with a zeroed digest:
 //     no co-sign session key, no fingerprint, and no audit link (the chain
 //     and both logs stay as they were, and a head that did not hash at load
 //     is re-derived before the next append); a tampered neighbor is still
-//     revoked, found by its key.
+//     revoked, found by its key; and init() refuses a device key whose
+//     fingerprint does not hash: false, an ALERT, the channel not
+//     initialized and no key, fingerprint or state taken.
 // mesh_network.cpp's and chirp_channel.cpp's checked hashes run over the
 // whole files in test_mesh_address_wap.cpp and test_chirp_security.cpp.
 // And the sources: none of the five modules' files, nor
@@ -62,7 +71,8 @@
 // table of such lines, but a statement split across lines can still pass
 // it. The behavioral cases above are the proof.
 //
-// This runs the REAL code: mesh_crypto.cpp whole, evidence_update_verify.cpp
+// This runs the REAL code: mesh_crypto.cpp and ble_scan.cpp whole,
+// mesh_pair_crypto.h as the sketch includes it, evidence_update_verify.cpp
 // and securacv_ota.cpp's pure subset linked, and the rest cut verbatim out of
 // the sketch's files (firmware/tests_host/cut_functions.awk for functions; a
 // line range for each module's state block): vault_snapshot.cpp's state,
@@ -71,13 +81,16 @@
 // familiar.cpp's state, secure_wipe(), hash_indices(), the bloom helpers,
 // persist_ignore(), note_fingerprint(), is_ambient(), always_ignore() and
 // is_always_ignored(); wifi_presence.h's state, hash_mac(), mac_seen() and
-// process_queue(); usb_evidence_drive.cpp's dep_sha256(). Under them are
+// process_queue(); usb_evidence_drive.cpp's dep_sha256(); beacon_channel.cpp's
+// sha256_two() and what stands on it, init() among them. Under them are
 // stubs/mesh_net's OpenSSL SHA-256, whose fail knob fails the step and the
 // hash a case names, once (a failed start still sets up, a failed update
 // feeds nothing, a failed finish or one-shot leaves 0xA5 bytes, nothing, or
 // the true digest, as the case chooses), stubs/pair_crypto's real X25519 and
 // HKDF, the fake SD card (stubs/sd_fake), and stand-ins below for the
-// camera, PSRAM, ChaCha20-Poly1305, NVS, the health log and the queue.
+// camera, PSRAM, ChaCha20-Poly1305, NVS, the health log, the queue and,
+// for beacon init(), the beacon set's load, the SD log's head and the state
+// callback.
 // The helpers' answers are read through answered(), which takes a helper
 // that returns nothing as claiming success: such a helper cannot refuse.
 // Host-tested; not run on a device.
@@ -112,6 +125,8 @@
 #include "familiar.h"
 #include "evidence_update_verify.h"
 #include "mesh_crypto.h"
+#include "ble_scan.h"
+#include "mesh_pair_crypto.h"
 #include "beacon_wire.h"
 #include "beacon_cosign_aad.h"
 #include "json_strict.h"     // the route's answers, read as JSON.parse reads them
@@ -1307,13 +1322,14 @@ static void test_mesh_crypto() {
   stub_sha256::arm();
   uint8_t out[32];
   std::memset(out, 0x5C, sizeof out);
-  mesh_crypto::sha256_domain(domain, data, sizeof data, out);
+  CHECK(answered(mesh_crypto::sha256_domain, domain, data, sizeof data, out));
   CHECK(std::memcmp(out, want, 32) == 0);
   uint8_t want_data_only[32];
   openssl_sha("", data, sizeof data, want_data_only);
-  mesh_crypto::sha256_domain(nullptr, data, sizeof data, out);
+  const char* no_domain = nullptr;
+  CHECK(answered(mesh_crypto::sha256_domain, no_domain, data, sizeof data, out));
   CHECK(std::memcmp(out, want_data_only, 32) == 0);
-  mesh_crypto::sha256_domain("", data, sizeof data, out);
+  CHECK(answered(mesh_crypto::sha256_domain, "", data, sizeof data, out));
   CHECK(std::memcmp(out, want_data_only, 32) == 0);
   CHECK(stub_sha256::live == 0);
 
@@ -1330,7 +1346,8 @@ static void test_mesh_crypto() {
                               out_name(fc.out);
     std::memset(out, 0x5C, sizeof out);
     stub_sha256::arm(fc.step, fc.hash, fc.update, fc.out);
-    mesh_crypto::sha256_domain(domain, data, sizeof data, out);
+    CHECK_MSG(!answered(mesh_crypto::sha256_domain, domain, data, sizeof data, out),
+              label + ": answers false");
     CHECK_MSG(stub_sha256::fired, label);
     CHECK_MSG(all_zero(out, sizeof out), label + ": the digest is zeros, not " + hex(out, 4) + "...");
     CHECK_MSG(stub_sha256::live == 0, label + ": the context was freed");
@@ -1338,8 +1355,119 @@ static void test_mesh_crypto() {
   // With no domain the data is the only update, so it is the first.
   std::memset(out, 0x5C, sizeof out);
   stub_sha256::arm(Step::Update, 0, 0);
-  mesh_crypto::sha256_domain(nullptr, data, sizeof data, out);
+  CHECK(!answered(mesh_crypto::sha256_domain, no_domain, data, sizeof data, out));
   CHECK(stub_sha256::fired && all_zero(out, sizeof out));
+  // No output: false, and nothing hashed.
+  stub_sha256::arm();
+  uint8_t* no_out = nullptr;
+  CHECK(!answered(mesh_crypto::sha256_domain, domain, data, sizeof data, no_out));
+  CHECK(stub_sha256::hashes == 0);
+  stub_sha256::disarm();
+}
+
+// The steps a one-domain, one-data hash can fail at (mesh_crypto::
+// sha256_domain()'s two updates), and what a failed finish leaves.
+static const FailCase kDomainHash[] = {
+    {Step::Starts, 0, 0, Out::Scribble, "start"},
+    {Step::Update, 0, 0, Out::Scribble, "the domain's update"},
+    {Step::Update, 0, 1, Out::Scribble, "the data's update"},
+    {Step::Finish, 0, 0, Out::Scribble, "finish"},
+    {Step::Finish, 0, 0, Out::Untouched, "finish"},
+    {Step::Finish, 0, 0, Out::Digest, "finish"},
+};
+
+// ble_scan.cpp (the sketch's copy, byte-identical with the canary tree's):
+// the hashed beacon id the Scout pairs, tracks and lists a beacon by.
+static void test_hashed_beacon_id() {
+  uint8_t key[ble_scan::PER_DEVICE_KEY_LEN], mac[ble_scan::MAC_LEN];
+  for (size_t i = 0; i < sizeof key; i++) key[i] = (uint8_t)(0x21 + 3 * i);
+  for (size_t i = 0; i < sizeof mac; i++) mac[i] = (uint8_t)(0xA0 + i);
+  uint8_t in[sizeof key + sizeof mac];
+  std::memcpy(in, key, sizeof key);
+  std::memcpy(in + sizeof key, mac, sizeof mac);
+  uint8_t want[32];
+  openssl_sha(ble_scan::DOMAIN_HASHED_ID, in, sizeof in, want);
+
+  uint8_t id[ble_scan::HASHED_ID_LEN];
+  stub_sha256::arm();
+  CHECK(answered(ble_scan::hash_beacon_id, key, mac, id));
+  CHECK(std::memcmp(id, want, sizeof id) == 0);
+  CHECK(stub_sha256::live == 0);
+  for (const FailCase& fc : kDomainHash) {
+    const std::string label = std::string("ble_scan::hash_beacon_id, ") + fc.name + " fails, " +
+                              out_name(fc.out);
+    std::memset(id, 0x5C, sizeof id);
+    stub_sha256::arm(fc.step, fc.hash, fc.update, fc.out);
+    CHECK_MSG(!answered(ble_scan::hash_beacon_id, key, mac, id), label + ": answers false (no id)");
+    CHECK_MSG(stub_sha256::fired && stub_sha256::live == 0, label + ": reached, context freed");
+    CHECK_MSG(all_zero(id, sizeof id), label + ": the id is zeros, not " + hex(id, 4) + "...");
+  }
+  stub_sha256::disarm();
+}
+
+// The pairing code through whichever API mesh_pair_crypto.h has: today's
+// answers whether its hash ran and writes the code; the one before sweep
+// F364 returned the code and answered nothing, read here as answering true
+// (as answered() reads a void helper), so every "answers false" check below
+// fails on it.
+template <typename K>
+static auto code_of(const K& key, uint32_t* code, int)
+    -> decltype(mesh_pair_crypto::confirmation_code(key, code)) {
+  return mesh_pair_crypto::confirmation_code(key, code);
+}
+template <typename K>
+static bool code_of(const K& key, uint32_t* code, long) {
+  *code = mesh_pair_crypto::confirmation_code(key);
+  return true;
+}
+
+// mesh_pair_crypto.h: the 6-digit code both screens show and the CONFIRM
+// hash, each one hash under mesh_crypto::sha256_domain().
+static void test_pair_crypto() {
+  using mesh_pair_crypto::ConfirmSender;
+  uint8_t key[mesh_pair_crypto::KEY_LEN];
+  for (size_t i = 0; i < sizeof key; i++) key[i] = (uint8_t)(0x90 ^ (7 * i));
+  uint8_t h[32];
+  openssl_sha(mesh_pair_crypto::DOMAIN_PAIR_CONFIRM, key, sizeof key, h);
+  const uint32_t want_code = (((uint32_t)h[0] << 16) | ((uint32_t)h[1] << 8) | h[2]) % 1000000u;
+
+  stub_sha256::arm();
+  uint32_t code = 0;
+  CHECK(code_of(key, &code, 0) && code == want_code);
+  for (const FailCase& fc : kDomainHash) {
+    const std::string label = std::string("mesh_pair_crypto::confirmation_code, ") + fc.name +
+                              " fails, " + out_name(fc.out);
+    code = 777777u;
+    stub_sha256::arm(fc.step, fc.hash, fc.update, fc.out);
+    CHECK_MSG(!code_of(key, &code, 0), label + ": answers false (no code)");
+    CHECK_MSG(stub_sha256::fired && stub_sha256::live == 0, label + ": reached, context freed");
+    CHECK_MSG(code == 0, label + ": the code is 0, not " + std::to_string(code));
+  }
+
+  for (ConfirmSender sender : {ConfirmSender::INITIATOR, ConfirmSender::JOINER}) {
+    const char* role = sender == ConfirmSender::INITIATOR ? "initiator" : "joiner";
+    uint8_t in[sizeof key + 4];
+    std::memcpy(in, key, sizeof key);
+    for (int i = 0; i < 4; i++) in[sizeof key + i] = (uint8_t)(want_code >> (8 * i));
+    uint8_t want[32];
+    openssl_sha(sender == ConfirmSender::INITIATOR ? mesh_pair_crypto::DOMAIN_PAIR_CONFIRM_INIT
+                                                   : mesh_pair_crypto::DOMAIN_PAIR_CONFIRM_JOIN,
+                in, sizeof in, want);
+    uint8_t out[32];
+    stub_sha256::arm();
+    CHECK(answered(mesh_pair_crypto::confirm_hash, sender, key, want_code, out));
+    CHECK(std::memcmp(out, want, 32) == 0);
+    for (const FailCase& fc : kDomainHash) {
+      const std::string label = std::string("mesh_pair_crypto::confirm_hash (") + role + "), " +
+                                fc.name + " fails, " + out_name(fc.out);
+      std::memset(out, 0x5C, sizeof out);
+      stub_sha256::arm(fc.step, fc.hash, fc.update, fc.out);
+      CHECK_MSG(!answered(mesh_pair_crypto::confirm_hash, sender, key, want_code, out),
+                label + ": answers false (no CONFIRM)");
+      CHECK_MSG(stub_sha256::fired && stub_sha256::live == 0, label + ": reached, context freed");
+      CHECK_MSG(all_zero(out, sizeof out), label + ": the hash is zeros");
+    }
+  }
   stub_sha256::disarm();
 }
 
@@ -1407,6 +1535,41 @@ static bool persist_beacon_set() {
   return true;
 }
 static void recompute_trouble_reasons() {}
+
+// What init() touches besides the above: the device's identity, the
+// channel's RAM state it clears, and stand-ins for the beacon set's load,
+// the SD log of record's head and the state callback (the audit log's
+// load is the real one, cut above).
+static bool g_initialized = false;
+static uint8_t g_device_privkey[DEVICE_PRIVKEY_SIZE];
+static uint8_t g_device_pubkey[DEVICE_PUBKEY_SIZE];
+static uint8_t g_device_fp[DEVICE_FP_SIZE];
+static char g_device_name[BEACON_NAME_LEN + 1];
+static uint8_t g_origination_rate[MAX_BEACON_SET][24];
+static uint8_t g_pair_rate[MAX_BEACON_SET][24];
+static uint8_t g_seen_frames[32][40];
+static size_t g_seen_frame_head = 0;
+static uint8_t g_active_alarm_nonce[BEACON_NONCE_SIZE];
+static uint8_t g_last_alert_id[32];
+static bool g_last_alert_id_valid = false;
+static uint64_t g_last_selftest_ts[MAX_BEACON_SET];
+static bool g_active_alarm_valid = false;
+static struct {
+  bool valid;
+} g_pending_origination, g_pending_cosign_in;
+static int g_set_loads = 0;
+static bool load_beacon_set() {
+  ++g_set_loads;
+  return true;
+}
+static int g_sd_head_reads = 0;
+static bool sd_recover_chain_head(uint8_t out[32]) {
+  ++g_sd_head_reads;
+  std::memset(out, 0, 32);
+  return false;  // no card: the NVS head stands
+}
+static std::vector<BeaconState> g_states;
+static void set_state(BeaconState state) { g_states.push_back(state); }
 
 #include WAP_SHAMOD_BEACON_INC
 
@@ -1629,6 +1792,74 @@ static void test_tamper_revoke() {
   }
   stub_sha256::disarm();
 }
+
+// init() refuses a device key whose fingerprint does not hash (sweep F364's
+// last bullet; beacon_channel.cpp's refusal ran in no host test): false, an
+// ALERT, the channel not initialized, and nothing taken: no key, no
+// fingerprint, no name, the beacon set and audit state as they were, no
+// load and no state change. With the hash running it initializes once.
+static void test_init() {
+  uint8_t priv[DEVICE_PRIVKEY_SIZE], pub[DEVICE_PUBKEY_SIZE];
+  for (size_t i = 0; i < sizeof priv; i++) priv[i] = (uint8_t)(0x71 + i);
+  for (size_t i = 0; i < sizeof pub; i++) pub[i] = (uint8_t)(0x0B + 5 * i);
+  const std::string alert = std::to_string((int)SCV_LOG_ALERT) + "|" +
+                            std::to_string((int)SCV_CAT_CRYPTO) + "|beacon: device fingerprint hash failed";
+  auto fresh = [] {
+    reset();
+    g_initialized = false;
+    std::memset(g_device_privkey, 0, sizeof g_device_privkey);
+    std::memset(g_device_pubkey, 0, sizeof g_device_pubkey);
+    std::memset(g_device_fp, 0, sizeof g_device_fp);
+    std::memset(g_device_name, 0, sizeof g_device_name);
+    g_beacon_set_count = 1;                      // what a refused init must leave
+    g_beacon_set[0].valid = true;
+    g_audit_log_count = g_audit_head = 2;
+    g_set_loads = g_sd_head_reads = 0;
+    g_states.clear();
+  };
+  for (const FailCase& fc : kTwoPart) {
+    if (fc.step == Step::Update && fc.update == 1) continue;  // one part
+    const std::string label = label_of("beacon init's fingerprint", fc);
+    fresh();
+    stub_sha256::arm(fc.step, fc.hash, fc.update, fc.out);
+    CHECK_MSG(!init(priv, pub, "porch"), label + ": answers false");
+    CHECK_MSG(stub_sha256::fired && stub_sha256::live == 0, label + ": reached, context freed");
+    CHECK_MSG(!g_initialized, label + ": not initialized");
+    CHECK_MSG(all_zero(g_device_privkey, sizeof g_device_privkey) &&
+                  all_zero(g_device_pubkey, sizeof g_device_pubkey),
+              label + ": no key copied");
+    CHECK_MSG(all_zero(g_device_fp, sizeof g_device_fp) && g_device_name[0] == '\0',
+              label + ": no fingerprint, no name");
+    CHECK_MSG(g_beacon_set_count == 1 && g_beacon_set[0].valid && g_audit_log_count == 2 &&
+                  g_audit_head == 2,
+              label + ": the set and the audit ring untouched");
+    CHECK_MSG(g_set_loads == 0 && g_sd_head_reads == 0 && g_states.empty() && g_prefs.puts == 0,
+              label + ": nothing loaded, read, written or announced");
+    CHECK_MSG(log_has(alert), label + ": the ALERT is logged");
+    CHECK_MSG(!log_has("beacon channel initialized"), label + ": and no init line");
+  }
+
+  // The hash runs: initialized, once, with the key, the fingerprint
+  // (SHA-256 of the key, the first 8 bytes) and the name.
+  fresh();
+  stub_sha256::arm();
+  CHECK(init(priv, pub, "porch"));
+  CHECK(g_initialized);
+  CHECK(std::memcmp(g_device_privkey, priv, sizeof priv) == 0);
+  CHECK(std::memcmp(g_device_pubkey, pub, sizeof pub) == 0);
+  uint8_t want[32];
+  openssl_sha("", pub, sizeof pub, want);
+  CHECK(std::memcmp(g_device_fp, want, DEVICE_FP_SIZE) == 0);
+  CHECK(std::string(g_device_name) == "porch");
+  CHECK(g_beacon_set_count == 0 && g_audit_log_count == 0 && g_set_loads == 1 && g_sd_head_reads == 1);
+  CHECK(g_states.size() == 1 && g_states[0] == BEACON_STATE_DISABLED);
+  CHECK(log_has("beacon channel initialized") && !log_has(alert));
+  // A second call changes nothing, and hashes nothing.
+  stub_sha256::arm(Step::Starts);
+  CHECK(init(priv, pub, "other"));
+  CHECK(!stub_sha256::fired && std::string(g_device_name) == "porch" && g_set_loads == 1);
+  stub_sha256::disarm();
+}
 }  // namespace beacon_world
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1734,6 +1965,10 @@ static void test_sources() {
 
   const char* files[] = {"vault_snapshot.cpp", "usb_evidence_drive.cpp", "familiar.cpp",
                          "wifi_presence.h", "mesh_crypto.cpp", "evidence_update_verify.cpp"};
+  // And what stands on mesh_crypto::sha256_domain() (sweep F364): the
+  // helper and each one built on it, in the files that call them.
+  const char* const domain_calls[] = {"sha256_domain(", "hash_beacon_id(", "confirmation_code(",
+                                      "confirm_hash("};
   const char* calls[] = {"mbedtls_sha256(", "mbedtls_sha256_starts(", "mbedtls_sha256_update(",
                          "mbedtls_sha256_finish(", "sha256_key_id(", "hash_indices(",
                          "hash_mac(", "d.sha256("};
@@ -1746,7 +1981,13 @@ static void test_sources() {
       {"beacon_channel.cpp",
        {"sha256_two(", "compute_fingerprint(", "audit_head_after(", "rederive_audit_head(",
         "ecdh_session_key("}},
-      {"mesh_network.cpp", {"sign_message(", "verify_signature("}},
+      {"mesh_network.cpp",
+       {"sign_message(", "verify_signature(", "mesh_pair_crypto::confirmation_code(",
+        "mesh_pair_crypto::confirm_hash("}},
+      {"ble_scan.cpp", {std::begin(domain_calls), std::end(domain_calls)}},
+      {"mesh_pair_crypto.h", {std::begin(domain_calls), std::end(domain_calls)}},
+      {"ble_scout.cpp", {"hash_beacon_id(", "ble_scout_key_hash_beacon("}},
+      {"ble_scout_key.cpp", {"hash_beacon_id(", "ble_scout_key_hash_beacon("}},
       {"chirp_channel.cpp", {"session_id_from_pubkey(", "generate_session_identity("}},
   };
   int seen = 0;
@@ -1800,6 +2041,9 @@ int main() {
   beacon_world::test_cosign_key();
   beacon_world::test_audit_chain();
   beacon_world::test_tamper_revoke();
+  beacon_world::test_init();
+  test_hashed_beacon_id();
+  test_pair_crypto();
   test_sources();
 
   if (g_failures != 0) {

@@ -1391,13 +1391,28 @@ void setup() {
   // boards. INPUT_PULLUP matches BOOT_BUTTON_ACTIVE == LOW on every board
   // that carries one today; the classifier debounces in software.
   pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
+  // The line names only the gestures this build answers: the double press
+  // is the lantern's, and a glass built without FEATURE_LANTERN (the watch)
+  // ignores it (the Double case below), so its line offers no lantern
+  // (F413).
 #if defined(FEATURE_PAIR_DEMO) && FEATURE_PAIR_DEMO
+#if defined(FEATURE_LANTERN) && FEATURE_LANTERN
   boot_kv("Button",
           "BOOT: tap = peek, double = lantern, hold = acknowledge, keep "
           "holding 5 s = pair demo, 10 s = factory reset (identity kept)");
 #else
+  boot_kv("Button",
+          "BOOT: tap = peek, hold = acknowledge, keep holding 5 s = pair "
+          "demo, 10 s = factory reset (identity kept)");
+#endif
+#else
+#if defined(FEATURE_LANTERN) && FEATURE_LANTERN
   boot_kv("Button", "BOOT: tap = peek, double = lantern, hold = acknowledge, "
                     "keep holding 10 s = factory reset (identity kept)");
+#else
+  boot_kv("Button", "BOOT: tap = peek, hold = acknowledge, "
+                    "keep holding 10 s = factory reset (identity kept)");
+#endif
 #endif
 #endif
 
@@ -2086,9 +2101,13 @@ void loop() {
     // advisory — a boot-log line, nothing on the glass. Reset at 10 s, while
     // the hand is still on the button so the feedback lands: the saved
     // networks (the whole ring, and the setup AP's stored key) and the screen
-    // settings go; the witness identity stays — it is this unit's birth
-    // certificate, and every hub and display that pinned it would otherwise
-    // meet a stranger. The reboot into the setup wizard waits for the RELEASE
+    // settings go. What stays is what the hub and the fleet know this glass
+    // by: its device id, the pseudonym salt that id's suffix is derived from
+    // (securacv_id), and the witnesses' keys it pinned (cvtrust), so it comes
+    // back the same display to them, still trusting the same canaries. A
+    // display holds no witness key of its own (net/mqtt_mgr.cpp's health
+    // publish carries none), so "identity kept" on the line below means
+    // those. The reboot into the setup wizard waits for the RELEASE
     // edge, not because the erase does (it is done at 10 s), but because
     // BOOT is GPIO0 on the boards that carry it — a strapping pin — and a
     // reset with it held low is the ROM's download-mode gesture, not ours.

@@ -36,6 +36,37 @@ import {
 const firstMeetingForgets = (nsKey) =>
   nsKey.startsWith("scv-hello/") ||
   nsKey === "securacv/wifi_ssid" || nsKey === "securacv/wifi_pass";
+// ...and the names among them a boot seeds as defaults (emu-shell.js start()
+// gives a provisioned unit that has met the home network and the hello's
+// mark; bench.test.js holds this list to start()'s own seeds).
+const FIRST_MEETING_SEEDS = ["securacv/wifi_ssid", "securacv/wifi_pass", "scv-hello/met"];
+
+// The page's copy of the flash a boot starts from (sweep A127): `image`
+// holds every key the firmware wrote, `erased` every key it erased and has
+// not written since. A preserved boot (the firmware's restart, a bench power
+// event) restores the image and hands start() the erased keys, which it seeds
+// none of back as a default. A "meet again" is a preserved boot that forgets
+// first: its keys leave the image and are marked erased, with the defaults
+// that would put them back, so a later preserved boot of a unit that has not
+// yet walked its portal (or finished its hello) comes back into them again,
+// not onto the home network a provisioned boot seeds; the firmware's own
+// write (the portal's credentials, the hello's mark) clears each mark. The
+// other marks stay, as the rest of the flash does. A fresh boot starts the
+// record over. Returns what start() takes.
+const stageFlash = (image, erased, { preserve = false, firstMeeting = false } = {}) => {
+  if (!preserve) {
+    erased.clear();
+    return { nvsImage: null, erased: null };
+  }
+  if (firstMeeting) {
+    for (const k of [...image.keys(), ...FIRST_MEETING_SEEDS]) {
+      if (!firstMeetingForgets(k)) continue;
+      image.delete(k);
+      erased.add(k);
+    }
+  }
+  return { nvsImage: image, erased };
+};
 
 // The device a fleet.html#<id> link names. A hand-typed or truncated link
 // (fleet.html#%E0) is not valid percent-encoding and decodeURIComponent throws
@@ -228,6 +259,9 @@ async function openSheet(dev) {
     emu: null,
     fleet: null,
     nvsImage: new Map(),
+    // Flash keys the firmware erased and has not written since (sweep A127):
+    // a preserved boot must not seed them back (emu-shell.js start's erased).
+    nvsErased: new Set(),
     dispose: [],
   };
   state.sheet = ctx;
@@ -543,7 +577,18 @@ async function buildDisplaySheet(ctx, side, stage) {
         row.append(el("span", "wire-dir", "net"), el("span", "wire-topic", k), el("span", "wire-pay", d));
         wireLog.prepend(row);
       },
-      onNvsWrite: (ns, key, hexVal) => ctx.nvsImage.set(`${ns}/${key}`, hexVal),
+      onNvsWrite: (ns, key, hexVal) => {
+        ctx.nvsImage.set(`${ns}/${key}`, hexVal);
+        ctx.nvsErased.delete(`${ns}/${key}`);
+      },
+      // An erase reaches the page's copy of the flash too (sweep A127): the
+      // key leaves the image every restart boots from, and stays marked so
+      // the restart does not seed it back as a default (a factory reset's
+      // networks, a mute's expiry). A dist built before it never calls this.
+      onNvsRemove: (ns, key) => {
+        ctx.nvsImage.delete(`${ns}/${key}`);
+        ctx.nvsErased.add(`${ns}/${key}`);
+      },
       onReboot: async () => {
         ctx.bench?.releaseBoot(); // a held press goes with the app (sweep A99)
         ctx.emu.retire();
@@ -575,16 +620,19 @@ async function buildDisplaySheet(ctx, side, stage) {
     // button un-remembers — nor a Wi-Fi network a previous setup walk
     // stored: a first meeting is a factory-fresh unit, so the firmware's own
     // provision_needed() opens its setup portal (the phone in "Try it").
-    const img = !opts.preserve
-      ? null
-      : opts.firstMeeting
-        ? new Map([...ctx.nvsImage].filter(([k]) => !firstMeetingForgets(k)))
-        : ctx.nvsImage;
+    // The keys the firmware erased stay erased across every preserved boot
+    // (sweep A127): the 10 s hold's factory reset comes back unprovisioned,
+    // into its setup portal. The keys a "meet again" forgets stay forgotten
+    // the same way, so a bench power event before the phone walks the
+    // portal raises it again (stageFlash above). A fresh boot stages the
+    // unit's memory itself and starts the record over.
+    const flash = stageFlash(ctx.nvsImage, ctx.nvsErased, opts);
     await ctx.emu.start({
       provisioned: true,
       firstMeeting: !!opts.firstMeeting,
       seed: 20260719,
-      nvsImage: img,
+      nvsImage: flash.nvsImage,
+      erased: flash.erased,
     });
     ctx.emu.setLocalHour(10);
     // The fleet outlives display reboots: real witnesses keep their keys
@@ -1066,16 +1114,17 @@ function benchView(ctx, guideCtx, noteLine) {
   if (bootPressOffered(profile)) {
     const b = el("button", "bench-chip bench-momentary bench-press");
     const does = (bootSpec?.note || "").split("while running: ")[1];
-    // The 10 s hold runs the firmware's factory reset, but the bench restarts
-    // the twin from the page's copy of its flash, which no erase reaches
-    // (emu_support.cpp's Preferences::remove/clear never call js_nvs_write),
-    // so the title says what this bench does, not what a board would
-    // (sweep A99 review; bench_probe.mjs holds it past 10 s to keep it true).
+    // The 10 s hold runs the firmware's factory reset, and the erase reaches
+    // the page's copy of the flash the bench restarts the twin from
+    // (emu_support.cpp's Preferences::remove/clear call js_nvs_remove ->
+    // onNvsRemove, sweep A127), so the twin comes back as a board does:
+    // unprovisioned, into its setup portal (bench_probe.mjs holds it past
+    // 10 s and waits for the portal's serial line to keep this true).
     b.title = "A momentary press on the twin's BOOT button, held for as long as you hold this; the toggle beside it is " +
       `the strap. ${does ? `The running firmware: ${does}. ` : ""}Its reset hold runs too: held 3 s it warns on the ` +
       "serial; held 10 s the firmware erases its saved networks and screen settings (the identity stays) and " +
-      "restarts, but this bench restarts it from the page's copy of its flash, which no erase reaches, so it comes " +
-      "back on its home network.";
+      "restarts, and the erase lasts: this bench restarts it from the page's copy of its flash, which the erase " +
+      "reached, so it comes back without a network and raises its setup portal, as a board does.";
     const st = el("span", "bench-chip-state");
     b.append(el("strong", null, `${bootSpec?.label || "BOOT"} press`), st);
     const down = (ev) => {

@@ -16,6 +16,8 @@
  *   8. Registry add / find / remove round-trip.
  *   9. Registry bounded at MAX_PAIRED_BEACONS — N+1 add returns false.
  *  10. Registry re-add of same id updates the label (idempotent).
+ *  11. A hashed id whose hash fails is no id (sweep F364): false, 16 zero
+ *      bytes; null inputs refused.
  *
  * Build:
  *   g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
@@ -28,6 +30,7 @@
  */
 
 #include "ble_scan.h"
+#include "mesh_crypto.h"   /* mesh_crypto::test::fail_sha256_domain (sweep F364) */
 
 #include <cassert>
 #include <cstdio>
@@ -82,6 +85,29 @@ void test_hash_mac_distinguishing() {
   assert(ble_scan::hash_beacon_id(key, mac2, h2));
   assert(std::memcmp(h1, h2, ble_scan::HASHED_ID_LEN) != 0);
   std::printf("PASS test_hash_mac_distinguishing\n");
+}
+
+void test_hash_refuses_a_failed_hash() {
+  uint8_t key[ble_scan::PER_DEVICE_KEY_LEN];
+  uint8_t mac[ble_scan::MAC_LEN] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x55};
+  for (size_t i = 0; i < sizeof(key); ++i) key[i] = (uint8_t)(0x40 + i);
+  uint8_t id[ble_scan::HASHED_ID_LEN];
+  std::memset(id, 0x5C, sizeof(id));
+  mesh_crypto::test::fail_sha256_domain(ble_scan::DOMAIN_HASHED_ID, 1);
+  const bool hashed = ble_scan::hash_beacon_id(key, mac, id);
+  assert(mesh_crypto::test::sha256_domain_failures() == 1);
+  assert(!hashed);
+  for (uint8_t b : id) assert(b == 0);
+  /* The next one hashes, and is not zeros. */
+  const bool again = ble_scan::hash_beacon_id(key, mac, id);
+  assert(again);
+  bool any = false;
+  for (uint8_t b : id) any |= b != 0;
+  assert(any);
+  const bool null_key = ble_scan::hash_beacon_id(nullptr, mac, id);
+  const bool null_out = ble_scan::hash_beacon_id(key, mac, nullptr);
+  assert(!null_key && !null_out);
+  std::printf("PASS test_hash_refuses_a_failed_hash\n");
 }
 
 void test_hashed_id_equal() {
@@ -250,6 +276,7 @@ int main() {
   test_hash_deterministic();
   test_hash_key_isolation();
   test_hash_mac_distinguishing();
+  test_hash_refuses_a_failed_hash();
   test_hashed_id_equal();
   test_kalman_first_sample_shortcut();
   test_kalman_converges_to_true_value();

@@ -604,6 +604,56 @@
      "pose": "cad"
     },
     {
+     "id": "cam_screws",
+     "source": "proc",
+     "part": "screw",
+     "params": {
+      "len": 4
+     },
+     "instances": [
+      [
+       10.5,
+       30.4,
+       14.78
+      ],
+      [
+       10.5,
+       17.9,
+       14.78
+      ],
+      [
+       -10.5,
+       30.4,
+       14.78
+      ],
+      [
+       -10.5,
+       17.9,
+       14.78
+      ]
+     ],
+     "explode": [
+      0,
+      0,
+      6
+     ],
+     "insert": [
+      0,
+      0,
+      -12
+     ],
+     "step": 2,
+     "name": "M2 camera screws — up through the OV5647's four mounting holes into the front's camera posts",
+     "class": "internal",
+     "qty": 4,
+     "pose": "cad",
+     "irot": [
+      180,
+      0,
+      0
+     ]
+    },
+    {
      "id": "flex",
      "source": "proc",
      "part": "ribbon",

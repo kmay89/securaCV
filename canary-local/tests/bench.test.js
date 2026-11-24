@@ -146,7 +146,7 @@ test("bench facts cite files that still say them; the Nightlight's says what its
 // leans on: its restatement of the board's path is the board's source, the
 // script runs it in both configs, and the page says what the emulator in use
 // does (backlightCapNote, run as app.js ships it).
-test("A61, A79: the twin clips the Nightlight's backlight and steps its night floor where the board's HAL does, and the bench row says which", () => {
+test("A61, A79, A100: the twin clips the Nightlight's backlight and steps its night floor, and the AMOLED's, where the board's HAL does, and the bench row says which", () => {
   const REPO = join(ROOT, "..");
   const board = readFileSync(join(REPO, "firmware/projects/canary-display/src/hal/display_1in47.cpp"), "utf8");
   const native = readFileSync(join(ROOT, "emulator/test/backlight_cap_test.cpp"), "utf8");
@@ -176,14 +176,40 @@ test("A61, A79: the twin clips the Nightlight's backlight and steps its night fl
     native.includes("CHECK(((unsigned)got >> 5) <= kCap,") &&
     native.includes("CHECK(steps == (int)kCap + 1 && lowest_glow == 32 && step_seen[kNightTop13] && night_stepped > 0,"),
   "backlight_cap_test.cpp holds the night duty the twin applies to the board's byte, step by step");
+  // The AMOLED 2.41's night path (sweep A100), line for line, and the test's
+  // restatement of it: the same byte, written as the panel's brightness
+  // command, with no ceiling.
+  const amoled = readFileSync(join(REPO, "firmware/projects/canary-display/src/hal/display_amoled241.cpp"), "utf8");
+  const amNight = /void backlight_night_set\(uint16_t duty13\) \{\n([\s\S]*?)\n\}/.exec(amoled)?.[1] || "";
+  assert.strictEqual(amNight, "  constexpr uint16_t NIGHT_DUTY_MAX = 8191;\n" +
+    "  if (duty13 > NIGHT_DUTY_MAX) duty13 = NIGHT_DUTY_MAX;\n" +
+    "  uint8_t d8 = (uint8_t)(duty13 >> 5);\n  if (d8 == 0 && duty13 > 0) d8 = 1;\n  panel_brightness(d8);",
+  "display_amoled241.cpp's night path changed: restate it in backlight_cap_test.cpp's amoled_byte_night()");
+  assert.ok(/void backlight_set\(uint8_t level\) \{\n  panel_brightness\(level\);\n\}/.test(amoled),
+    "the AMOLED's day path writes the level as asked (no ceiling), as the twin passes it");
+  assert.ok(/void panel_brightness\(uint8_t v\) \{[\s\S]*?s_bus->writeC8D8\(0x51, v\);/.test(amoled), "...through the RM690B0's one brightness byte");
+  const amTest = /unsigned amoled_byte_night\(uint16_t duty13\) \{\n([\s\S]*?)\n\}/.exec(native)?.[1] || "";
+  assert.strictEqual(amTest, amNight.replace("  panel_brightness(d8);", "  return d8;"),
+    "backlight_cap_test.cpp's amoled_byte_night() is the board's night path, returning the byte it writes");
+  assert.ok(native.includes("#if defined(CD_AMOLED_GLASS) && CD_AMOLED_GLASS\nconstexpr bool kAmoled = true;") &&
+    native.includes("#if (defined(TFT_USE_EXIO) && TFT_USE_EXIO) || (defined(CD_AMOLED_GLASS) && CD_AMOLED_GLASS)\nconstexpr bool kNightBytes = true;") &&
+    native.includes("  if (kAmoled) return amoled_byte_night("),
+  "the test steps the night floor on both one-byte boards, apart from the expander's ceiling");
+  const amCfg = readFileSync(join(REPO, "firmware/configs/canary-display/amoled241/config.h"), "utf8");
+  assert.match(amCfg, /^#define CD_AMOLED_GLASS\s+1\b/m, "the amoled241 config builds the AMOLED glass");
+  assert.ok(!/^#define (?:TFT_USE_EXIO|CD_BL_MAX_PCT)\b/m.test(amCfg), "...with no expander and no ceiling");
   // the twin's night step, as the board's backlight_night_set() makes the
-  // byte, on the expander board alone
+  // byte, on the expander board and the AMOLED
   const nightBody = /int capped_night\(uint16_t duty13\) \{\n([\s\S]*?)\n\}/.exec(hal)?.[1] || "";
-  assert.strictEqual(nightBody, "#if defined(TFT_USE_EXIO) && TFT_USE_EXIO\n" +
+  assert.strictEqual(nightBody, "#if (defined(TFT_USE_EXIO) && TFT_USE_EXIO) || (defined(CD_AMOLED_GLASS) && CD_AMOLED_GLASS)\n" +
     "  const int duty = duty13 > 8191 ? 8191 : duty13;  // NIGHT_DUTY_MAX\n" +
     "  int byte = duty >> 5;\n  if (byte == 0 && duty > 0) byte = 1;\n" +
     "  if (byte > kBacklightCap8) byte = kBacklightCap8;\n  return byte << 5;\n#else\n  return duty13;\n#endif",
-  "the twin steps the night floor to the expander's byte on the expander board, and passes it elsewhere");
+  "the twin steps the night floor to the board's byte on the expander board and the AMOLED, and passes it elsewhere");
+  // ...and the AMOLED's has no ceiling: the cap stays the expander's alone,
+  // so its top step is 255 << 5 = 8160
+  assert.match(hal, /#if defined\(TFT_USE_EXIO\) && TFT_USE_EXIO\n#ifndef CD_BL_MAX_PCT\n#define CD_BL_MAX_PCT 100[^\n]*\n#endif\nconstexpr int kBacklightCapPct = CD_BL_MAX_PCT;\n#else\nconstexpr int kBacklightCapPct = 100;\n#endif/,
+    "the ceiling is the expander's alone");
   // the twin's HAL: the board's gate, the board's byte, both sinks through it,
   // and the binding the page asks
   assert.ok(hal.includes("#if defined(TFT_USE_EXIO) && TFT_USE_EXIO\n#ifndef CD_BL_MAX_PCT\n#define CD_BL_MAX_PCT 100"));
@@ -199,6 +225,17 @@ test("A61, A79: the twin clips the Nightlight's backlight and steps its night fl
     gt.includes('\n"$OUT/backlight_cap_test"\n'), "glass_turn.sh runs the backlight test in the dash config");
   assert.ok(gt.includes('"${NL_CXX[@]}" -c "$HERE/backlight_cap_test.cpp" -o "$OUT/nl_backlight_cap_test.o"') &&
     gt.includes('\n"$OUT/nl_backlight_cap_test"\n'), "...and in the nightlight's");
+  // ...and in the AMOLED 2.41's (sweep A100), against a HAL built there
+  assert.ok(gt.includes('AM_CFG="$FW/configs/canary-display/amoled241"') &&
+    gt.includes('AM_PINS="$FW/boards/waveshare-esp32s3-amoled241/pins"') &&
+    gt.includes('-I "$AM_CFG" -I "$AM_PINS"') &&
+    gt.includes('"${AM_CXX[@]}" -c "$EMU/src/emu_hal_display.cpp" -o "$OUT/am_emu_hal_display.o"') &&
+    gt.includes('"${AM_CXX[@]}" -c "$HERE/backlight_cap_test.cpp" -o "$OUT/am_backlight_cap_test.o"') &&
+    gt.includes('g++ -o "$OUT/am_backlight_cap_test" "$OUT/am_backlight_cap_test.o" "$OUT/am_emu_hal_display.o"') &&
+    gt.includes('\n"$OUT/am_backlight_cap_test"\n'), "...and in the AMOLED's, against the HAL built in its config");
+  const buildSh = readFileSync(join(ROOT, "emulator/build.sh"), "utf8");
+  assert.ok(buildSh.includes('PINS_DIR="$FW/boards/waveshare-esp32s3-amoled241/pins"\n  CFG_DIR="$FW/configs/canary-display/amoled241"'),
+    "build.sh's amoled241 flavor is that pin map and config");
   // the bench row's word, as app.js ships it
   const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
   const at = app.indexOf("function backlightCapNote(");
@@ -1206,23 +1243,66 @@ test("A99: the Lab's bench offers the press beside the strap where the firmware 
   assert.ok(app.includes("    ctx.leaveView = unhook;\n"), "the bench view leaves its release for the tab that replaces it");
   assert.match(app, /const leave = ctx\.leaveView;\n\s*ctx\.leaveView = null;\n\s*leave\?\.\(\);\n\s*panel\.innerHTML = "";/,
     "the display sheet's tabs let the old view go before they replace it");
-  // the 10 s hold: the firmware erases its networks, but the bench restarts
-  // the twin from the page's copy of its flash, which no erase reaches, so
-  // the title says it comes back on its home network (bench_probe holds it
-  // past 10 s and reads the serial). Should the twin's erase ever reach that
-  // copy, or a provisioned boot stop seeding the network, this fails first.
-  assert.match(app, /held 10 s the firmware erases its saved networks and screen settings \(the identity stays\) and " \+\n\s*"restarts, but this bench restarts it from the page's copy of its flash, which no erase reaches, so it comes " \+\n\s*"back on its home network\."/,
-    "the press's title says the bench gives the twin its network back after a factory reset");
+  // the 10 s hold (sweep A127, which turned A99's pins around): the firmware
+  // erases its networks, and the erase reaches the page's copy of the flash
+  // the bench restarts the twin from, so the title says the erase lasts and
+  // the twin comes back into its setup portal (bench_probe holds it past
+  // 10 s and waits for the portal's serial line). Should an erase stop
+  // reaching that copy, or a preserved boot seed an erased network back,
+  // this fails first.
+  assert.match(app, /held 10 s the firmware erases its saved networks and screen settings \(the identity stays\) and " \+\n\s*"restarts, and the erase lasts: this bench restarts it from the page's copy of its flash, which the erase " \+\n\s*"reached, so it comes back without a network and raises its setup portal, as a board does\."/,
+    "the press's title says a factory reset lasts across the bench's restart");
+  assert.ok(!app.includes("which no erase reaches"), "no copy says the bench undoes the erase any more");
   const support = readFileSync(join(ROOT, "emulator/src/emu_support.cpp"), "utf8");
-  for (const fn of ["bool Preferences::remove(const char* key) {", "bool Preferences::clear() {"]) {
+  assert.match(support, /EM_JS\(void, js_nvs_remove, \(const char\* ns, const char\* key\), \{\n\s*if \(Module\.onNvsRemove\) Module\.onNvsRemove\(UTF8ToString\(ns\), UTF8ToString\(key\)\);\n\}\);/,
+    "an erase is a page call of its own, js_nvs_remove -> Module.onNvsRemove");
+  const fnBody = (fn) => {
     const at = support.indexOf(fn);
     assert.ok(at >= 0, `emu_support.cpp still defines ${fn}`);
-    const body = support.slice(at, support.indexOf("\n}\n", at));
-    assert.ok(!body.includes("js_nvs_write"), `${fn} now reaches the page's copy of the flash: the press's title must say a factory reset lasts`);
-  }
+    return support.slice(at, support.indexOf("\n}\n", at));
+  };
+  // remove(): the page hears only a key the map held (a remove of a key that
+  // never existed is not an erase), and after the map lets it go
+  assert.match(fnBody("bool Preferences::remove(const char* key) {"),
+    /\n  if \(nvs\(\)\.erase\(nvs_key\(ns_, key\)\) == 0\) return false;\n  js_nvs_remove\(ns_, key\);[^\n]*\n  return true;$/,
+    "Preferences::remove tells the page of each key it erased, and only those");
+  // clear(): each key of the namespace it erased, by its own name
+  const clear = fnBody("bool Preferences::clear() {");
+  assert.match(clear, /const std::string key = it->first\.substr\(prefix\.size\(\)\);\n\s*it = nvs\(\)\.erase\(it\);\n\s*js_nvs_remove\(ns_, key\.c_str\(\)\);/,
+    "Preferences::clear tells the page of every key it erased");
+  for (const fn of ["bool Preferences::remove(const char* key) {", "bool Preferences::clear() {"])
+    assert.ok(!fnBody(fn).includes("js_nvs_write"), `${fn} reports an erase, not a write`);
   const shellSrc = readFileSync(join(ROOT, "emulator/web/emu-shell.js"), "utf8");
+  // emu-shell: the call passes through, start() takes the erased keys, and
+  // its defaults skip each of them (the provisioned seed of the home network
+  // included), while every default the flash did not erase is seeded as
+  // before
+  assert.ok(shellSrc.includes("onNvsRemove: (ns, key) => shell.opts.onNvsRemove?.(ns, key),"), "emu-shell passes the erase to the page");
+  assert.match(shellSrc, /nvsImage = null, erased = null, rotation = null, timeScale = null \} = \{\}\) \{/, "start() takes the page's erased keys");
+  assert.ok(shellSrc.includes("this._erased = new Set(erased || []);"), "start() records them before it seeds a default");
+  assert.match(shellSrc, /\n  _nvsPut\(ns, key, str\) \{\n    if \(this\._erased\?\.has\(`\$\{ns\}\/\$\{key\}`\)\) return;\n    this\.c\.nvsPreseed\(/,
+    "a default the flash erased is not seeded again");
+  const startBody = shellSrc.slice(shellSrc.indexOf("  async start({"), shellSrc.indexOf("\n  _nvsPut(ns, key, str) {"));
+  assert.ok(startBody.indexOf("this._erased = new Set(erased || []);") < startBody.indexOf('this._nvsPut("securacv", "wifi_ssid", HOME_LAN.ssid);'),
+    "the erased keys are in place before the first default");
+  assert.strictEqual((startBody.match(/this\.c\.nvsPreseed\(/g) || []).length, 0, "every default goes through _nvsPut");
   assert.match(shellSrc, /if \(provisioned && !firstMeeting\) \{\n\s*this\._nvsPut\("securacv", "wifi_ssid", HOME_LAN\.ssid\);/,
-    "a provisioned boot seeds the home network: the press's title leans on it");
+    "a provisioned boot still seeds the home network the flash did not erase");
+  // app.js: the erase leaves the image and is marked; a later write of the
+  // key clears the mark; every boot is staged by stageFlash (its behavior is
+  // the "meet again" test below): a preserved one passes the marks, a fresh
+  // one starts the record over
+  assert.ok(app.includes("    nvsErased: new Set(),\n"), "the sheet keeps the erased keys beside its image");
+  assert.match(app, /onNvsWrite: \(ns, key, hexVal\) => \{\n\s*ctx\.nvsImage\.set\(`\$\{ns\}\/\$\{key\}`, hexVal\);\n\s*ctx\.nvsErased\.delete\(`\$\{ns\}\/\$\{key\}`\);\n\s*\},/,
+    "a write puts the key in the image and clears its erase");
+  assert.match(app, /onNvsRemove: \(ns, key\) => \{\n\s*ctx\.nvsImage\.delete\(`\$\{ns\}\/\$\{key\}`\);\n\s*ctx\.nvsErased\.add\(`\$\{ns\}\/\$\{key\}`\);\n\s*\},/,
+    "an erase takes the key out of the image and marks it");
+  assert.match(app, /\n    const flash = stageFlash\(ctx\.nvsImage, ctx\.nvsErased, opts\);\n    await ctx\.emu\.start\(\{\n      provisioned: true,\n      firstMeeting: !!opts\.firstMeeting,\n      seed: 20260719,\n      nvsImage: flash\.nvsImage,\n      erased: flash\.erased,\n    \}\);\n/,
+    "every boot starts the twin from the page's copy of the flash as stageFlash stages it");
+  assert.strictEqual((app.match(/stageFlash\(/g) || []).length, 1, "bootInner is stageFlash's one caller");
+  assert.strictEqual((app.match(/ctx\.nvsErased\.clear\(\)|nvsErased\.clear\(\)/g) || []).length, 0, "no boot clears the marks but stageFlash");
+  assert.strictEqual((app.match(/boot\(\{ preserve: true \}\)/g) || []).length, 2,
+    "the two preserved boots (the bench's power events and the firmware's restart) go through bootInner");
   assert.ok(app.includes("booting again with its memory intact"), "the bench's reboot restores the page's copy of the flash");
   assert.ok(app.includes('window.addEventListener("blur", letGo);') && app.includes('document.addEventListener("visibilitychange", hidden);'),
     "a hand that leaves the window or the page lets go");
@@ -1244,6 +1324,226 @@ test("A99: the Lab's bench offers the press beside the strap where the firmware 
   }
   const read = BENCH_FIXES.find((f) => f.symptom === "Pressing BOOT does nothing").steps.find((st) => st.boot === "read");
   assert.match(read.body, /the press control beside it presses the twin's button while the app runs/, "the read story points to the press");
+});
+
+// Sweep F413: main.cpp's boot log names the BOOT gestures, and the double
+// press is the lantern's: main.cpp's Double case does nothing without
+// FEATURE_LANTERN, which the watch does not set, so the watch's line offered
+// a gesture its button ignores. Every Button line that names the lantern now
+// sits under FEATURE_LANTERN, beside a line for the glass without one. The
+// walk below follows main.cpp's own #if nesting: a string is under the
+// lantern only inside the true branch of an #if that tests FEATURE_LANTERN.
+// bench_probe.mjs reads the watch twin's line itself once the dist is
+// rebuilt.
+test("F413: a Button boot line names the lantern only where FEATURE_LANTERN builds it", () => {
+  const mainCpp = readFileSync(join(ROOT, "..", "firmware/projects/canary-display/src/main.cpp"), "utf8");
+  const lines = mainCpp.split("\n");
+  const stack = [];   // { cond, elseBranch }
+  const found = [];   // { text, lantern: under the lantern's true branch, button: under BOOT_BUTTON_PIN }
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i].trim();
+    let m;
+    if ((m = /^#\s*(if|ifdef|ifndef)\b(.*)$/.exec(l))) { stack.push({ cond: `${m[1]} ${m[2].trim()}`, elseBranch: false }); continue; }
+    if (/^#\s*elif\b/.test(l)) { stack[stack.length - 1] = { cond: l.replace(/^#\s*elif\s*/, "if "), elseBranch: false }; continue; }
+    if (/^#\s*else\b/.test(l)) { stack[stack.length - 1].elseBranch = true; continue; }
+    if (/^#\s*endif\b/.test(l)) { stack.pop(); continue; }
+    if (!l.startsWith('boot_kv("Button"')) continue;
+    let call = l;
+    while (!/\);\s*$/.test(call) && i + 1 < lines.length) call += " " + lines[++i].trim();
+    const text = [...call.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((x) => x[1]).slice(1).join("");
+    const holds = (re) => stack.some((f) => re.test(f.cond) && !/!\s*defined/.test(f.cond) && !f.elseBranch);
+    found.push({ text, lantern: holds(/^if defined\(FEATURE_LANTERN\) && FEATURE_LANTERN$/), button: holds(/BOOT_BUTTON_PIN/) });
+  }
+  assert.ok(found.length > 0, "main.cpp's Button boot lines were found");
+  for (const f of found) {
+    assert.ok(f.button, `a Button line outside the BOOT_BUTTON_PIN gate: ${f.text}`);
+    if (/lantern/.test(f.text)) assert.ok(f.lantern, `a Button line offers the lantern on a glass built without it: ${f.text}`);
+    else assert.ok(!f.lantern, `a Button line under the lantern does not name it: ${f.text}`);
+  }
+  assert.strictEqual(found.length, 4, `main.cpp's Button boot lines: ${JSON.stringify(found.map((f) => f.text))}`);
+  const texts = found.map((f) => f.text);
+  assert.deepStrictEqual(texts.filter((t) => !/lantern/.test(t)).sort(), [
+    "BOOT: tap = peek, hold = acknowledge, keep holding 10 s = factory reset (identity kept)",
+    "BOOT: tap = peek, hold = acknowledge, keep holding 5 s = pair demo, 10 s = factory reset (identity kept)",
+  ], "the glass without a lantern is offered tap, hold and the reset hold (and the pair demo where it is built)");
+  assert.deepStrictEqual(texts.filter((t) => /lantern/.test(t)).sort(), [
+    "BOOT: tap = peek, double = lantern, hold = acknowledge, keep holding 10 s = factory reset (identity kept)",
+    "BOOT: tap = peek, double = lantern, hold = acknowledge, keep holding 5 s = pair demo, 10 s = factory reset (identity kept)",
+  ], "a lantern glass's line is unchanged");
+  // ...because the double press is the lantern's alone
+  const dbl = /case canary::io::ButtonEvent::Double: \{\n#if defined\(FEATURE_LANTERN\) && FEATURE_LANTERN\n[\s\S]*?\n#endif\n\s*break;\n\s*\}/.exec(mainCpp);
+  assert.ok(dbl, "main.cpp's Double case answers only under FEATURE_LANTERN");
+  // the watch builds no lantern, and its pin map carries BOOT: its twin prints
+  // the line without one; every other BOOT glass builds the lantern
+  const cfg = (f) => readFileSync(join(ROOT, "..", `firmware/configs/canary-display/${f}/config.h`), "utf8");
+  assert.ok(!/^#define FEATURE_LANTERN\b/m.test(cfg("watch")), "the watch's config builds no lantern");
+  for (const f of ["nightlight", "nightstand", "touch169", "amoled241"])
+    assert.match(cfg(f), /^#define FEATURE_LANTERN\s+1\b/m, `${f} builds the lantern`);
+  // the reset line bench_probe.mjs pins is unchanged: the display keeps its
+  // device id, pseudonym salt and pins, and holds no witness key
+  assert.ok(mainCpp.includes('boot_line("[input] BOOT held 10 s -> factory reset (credentials + settings, identity kept)");'));
+  assert.ok(!mainCpp.includes("the witness identity stays"), "the 10 s hold's comment no longer says a display keeps a witness identity");
+  assert.ok(mainCpp.includes("A\n    // display holds no witness key of its own"), "...it says a display holds none");
+  const support = readFileSync(join(ROOT, "emulator/src/emu_support.cpp"), "utf8");
+  assert.ok(!support.includes("tap = peek, double = lantern, hold = acknowledge"), "emu_support.cpp no longer offers every twin the lantern");
+});
+
+// Sweep A127: the bench restarts the twin from the page's copy of its flash,
+// and an erase now reaches that copy (emu_support.cpp's js_nvs_remove ->
+// Module.onNvsRemove). start() is handed the keys the page heard erased and
+// seeds none of them back as a default, and every default the flash did not
+// erase exactly as before. Before A127 start() took no erased keys and seeded
+// the home network on every provisioned boot, so a factory reset came back
+// on it.
+test("A127: start() seeds no default the flash erased, every one it did not, and passes the erase to the page", async () => {
+  const { CanaryEmulator, HOME_LAN } = await import("../emulator/web/emu-shell.js");
+  const boot = async (opts, page = {}) => {
+    const seeded = [];
+    const factory = async (imports) => ({
+      ...imports,
+      cwrap: (name) => (...args) => {
+        if (name === "emu_nvs_preseed_hex") seeded.push(`${args[0]}/${args[1]}=${Buffer.from(args[2], "hex").toString()}`);
+        return 0;
+      },
+      HEAPU8: new Uint8Array(16),
+      UTF8ToString: () => "[]",
+    });
+    const canvas = { getContext: () => ({}), addEventListener: () => {} };
+    const emu = new CanaryEmulator(factory, { canvas, ...page });
+    await emu.start(opts);
+    return { seeded, emu };
+  };
+  const DEFAULTS = [
+    `securacv/wifi_ssid=${HOME_LAN.ssid}`, `securacv/wifi_pass=${HOME_LAN.pass}`,
+    "securacv/mqtt_host=hub.local", "securacv/mqtt_user=fleet", "securacv/mqtt_pass=fleet", "scv-hello/met=\x01",
+  ];
+  // no erase heard: every default, as before A127 (and an erased list that
+  // is empty, or absent, is the same boot)
+  assert.deepStrictEqual((await boot({ provisioned: true })).seeded, DEFAULTS);
+  assert.deepStrictEqual((await boot({ provisioned: true, erased: new Set() })).seeded, DEFAULTS);
+  // the factory reset's erase (runtime_config.cpp's forget_wifi_credentials):
+  // the network stays gone, the broker and the remembered hello are seeded
+  const FORGOT = ["securacv/wifi_ssid", "securacv/wifi_pass", "securacv/wifi_nets", "securacv/ap_pass"];
+  const reset = await boot({ provisioned: true, erased: new Set(FORGOT) });
+  assert.deepStrictEqual(reset.seeded, DEFAULTS.slice(2), "an erased network is not seeded back; every other default is");
+  // ...an array serves as well, and the image still lands over the defaults
+  const img = new Map([["securacv/wifi_nets", Buffer.from("ring").toString("hex")], ["scv-glass/s", Buffer.from("blob").toString("hex")]]);
+  assert.deepStrictEqual((await boot({ provisioned: true, erased: ["securacv/mqtt_host"], nvsImage: img })).seeded,
+    [...DEFAULTS.filter((d) => !d.startsWith("securacv/mqtt_host=")), "securacv/wifi_nets=ring", "scv-glass/s=blob"],
+    "one erased default is the only one skipped, and the image is restored after the defaults");
+  // a first meeting seeds neither the network nor the hello, erased or not
+  assert.deepStrictEqual((await boot({ provisioned: true, firstMeeting: true, erased: new Set(FORGOT) })).seeded, DEFAULTS.slice(2, 5));
+  // a later start without the list is not haunted by the earlier one's
+  {
+    const { emu } = reset;
+    const again = [];
+    emu.factory = async (imports) => ({ ...imports, cwrap: (name) => (...a) => { if (name === "emu_nvs_preseed_hex") again.push(`${a[0]}/${a[1]}`); return 0; }, HEAPU8: new Uint8Array(16), UTF8ToString: () => "[]" });
+    await emu.start({ provisioned: true });
+    assert.deepStrictEqual(again, DEFAULTS.map((d) => d.split("=")[0]), "a start without erased keys seeds every default");
+  }
+  // the module's erase reaches the page's handler, by name; with no handler
+  // (a page that never asked) it is a no-op, and a dist that never calls it
+  // changes nothing above
+  const heard = [];
+  const { emu } = await boot({}, { onNvsRemove: (ns, key) => heard.push(`${ns}/${key}`) });
+  assert.strictEqual(typeof emu.module.onNvsRemove, "function", "the shell hands the module an onNvsRemove import");
+  emu.module.onNvsRemove("securacv", "wifi_nets");
+  assert.deepStrictEqual(heard, ["securacv/wifi_nets"]);
+  const quiet = await boot({});
+  assert.doesNotThrow(() => quiet.emu.module.onNvsRemove("securacv", "ap_pass"));
+});
+
+// Sweep A127, review: a "meet again" forgets the hello and the Wi-Fi network,
+// and that forget lasts like the firmware's own erase does. app.js stages
+// every boot's flash in stageFlash (its one caller is pinned above): the
+// keys a meeting forgets leave the page's copy of the flash and are marked
+// erased, with the defaults that would put them back, so a bench power event
+// or the firmware's restart before the phone walks the portal brings the
+// twin back into it, not onto the home network; the firmware's own write
+// (the portal's credentials, the hello's mark) clears each mark. Before, a
+// meet again cleared the marks and forgot only from that one boot's copy, so
+// the next preserved boot seeded the home network and the hello's mark again
+// and restored a walked network: a met-again twin joined its home network
+// after a bench RESET (bench_probe.mjs drives that in Chromium).
+test("A127: a meet again forgets its keys for every boot after it, until the firmware writes them", async () => {
+  const { CanaryEmulator, HOME_LAN } = await import("../emulator/web/emu-shell.js");
+  const app = readFileSync(join(ROOT, "assets/app.js"), "utf8");
+  const from = app.indexOf("const firstMeetingForgets = (nsKey) =>");
+  const at = app.indexOf("const stageFlash = (");
+  assert.ok(from >= 0 && at > from, "app.js stages a boot's flash in stageFlash, defined after firstMeetingForgets");
+  const { firstMeetingForgets, FIRST_MEETING_SEEDS, stageFlash } =
+    new Function(`${app.slice(from, app.indexOf("\n};\n", at) + 4)}\nreturn { firstMeetingForgets, FIRST_MEETING_SEEDS, stageFlash };`)();
+  // the shell's own start() on a fake module: every key it preseeds, in order
+  const start = async (opts) => {
+    const seeded = [];
+    const factory = async (imports) => ({
+      ...imports,
+      cwrap: (name) => (...a) => {
+        if (name === "emu_nvs_preseed_hex") seeded.push(`${a[0]}/${a[1]}=${Buffer.from(a[2], "hex").toString()}`);
+        return 0;
+      },
+      HEAPU8: new Uint8Array(16),
+      UTF8ToString: () => "[]",
+    });
+    await new CanaryEmulator(factory, { canvas: { getContext: () => ({}), addEventListener: () => {} } }).start(opts);
+    return seeded;
+  };
+  const names = (seeded) => seeded.map((s) => s.slice(0, s.indexOf("=")));
+  // the seeds a meeting marks are exactly the defaults start() gives a
+  // provisioned unit that has met and leaves out of a first meeting, each a
+  // key a meeting forgets, and a first meeting seeds no key one forgets
+  const metSeeds = names(await start({ provisioned: true }));
+  const firstSeeds = names(await start({ provisioned: true, firstMeeting: true }));
+  assert.deepStrictEqual([...FIRST_MEETING_SEEDS].sort(), metSeeds.filter((k) => !firstSeeds.includes(k)).sort(),
+    "FIRST_MEETING_SEEDS is the defaults a first meeting does not seed");
+  for (const k of FIRST_MEETING_SEEDS) assert.ok(firstMeetingForgets(k), `${k} is a key a meeting forgets`);
+  for (const k of firstSeeds) assert.ok(!firstMeetingForgets(k), `a first meeting seeds ${k}, which a meeting forgets`);
+
+  // one sheet's flash, as app.js keeps it (onNvsWrite / onNvsRemove, pinned above)
+  const image = new Map();
+  const erased = new Set();
+  const wrote = (k, v) => { image.set(k, Buffer.from(v).toString("hex")); erased.delete(k); };
+  const erase = (k) => { image.delete(k); erased.add(k); };
+  const boot = async (opts = {}) => {
+    const flash = stageFlash(image, erased, opts);
+    return start({ provisioned: true, firstMeeting: !!opts.firstMeeting, nvsImage: flash.nvsImage, erased: flash.erased });
+  };
+  const HOME = [`securacv/wifi_ssid=${HOME_LAN.ssid}`, `securacv/wifi_pass=${HOME_LAN.pass}`];
+  const BROKER = ["securacv/mqtt_host=hub.local", "securacv/mqtt_user=fleet", "securacv/mqtt_pass=fleet"];
+  const HELLO = ["scv-hello/met=\x01"];
+  // the sheet opens on a fresh boot, every default; the firmware writes keys of its own
+  assert.deepStrictEqual(await boot(), [...HOME, ...BROKER, ...HELLO]);
+  wrote("securacv/wifi_nets", "ring");
+  wrote("scv-glass/s", "blob");
+  const KEPT = ["securacv/wifi_nets=ring", "scv-glass/s=blob"];
+  // meet again: no network, no hello; the broker and the rest of the flash stay
+  assert.deepStrictEqual(await boot({ preserve: true, firstMeeting: true }), [...BROKER, ...KEPT]);
+  // a bench power event, then the firmware's restart, before the phone walks
+  // the portal: still no network and no hello (before: both seeded again)
+  assert.deepStrictEqual(await boot({ preserve: true }), [...BROKER, ...KEPT],
+    "a preserved boot after a meet again seeds neither the home network nor the hello's mark");
+  assert.deepStrictEqual(await boot({ preserve: true }), [...BROKER, ...KEPT], "...nor does the one after it");
+  // the hello's mark and the portal's credentials, written by the firmware:
+  // the marks clear, and the next boot restores what it wrote over the defaults
+  wrote("scv-hello/met", "\x01");
+  wrote("securacv/wifi_ssid", "Cafe");
+  wrote("securacv/wifi_pass", "latte");
+  assert.deepStrictEqual(await boot({ preserve: true }),
+    [...HOME, ...BROKER, ...HELLO, ...KEPT, "scv-hello/met=\x01", "securacv/wifi_ssid=Cafe", "securacv/wifi_pass=latte"]);
+  // a meet again forgets a walked network from the page's copy itself, and a
+  // hello key of any name (before: from that one boot's copy only, and the
+  // next boot restored the network)
+  wrote("scv-hello/seen", "x");
+  assert.deepStrictEqual(await boot({ preserve: true, firstMeeting: true }), [...BROKER, ...KEPT]);
+  assert.deepStrictEqual([...image.keys()].filter(firstMeetingForgets), [], "the page's copy holds no key a meeting forgets");
+  assert.deepStrictEqual(await boot({ preserve: true }), [...BROKER, ...KEPT], "a walked network a meet again forgot is not restored");
+  // every other mark stays through a meet again, as the rest of the flash does
+  erase("securacv/mqtt_host");
+  erase("securacv/wifi_nets");
+  assert.deepStrictEqual(await boot({ preserve: true, firstMeeting: true }), [...BROKER.slice(1), "scv-glass/s=blob"]);
+  // a fresh boot starts the record over: no image, no marks
+  assert.deepStrictEqual(stageFlash(image, erased, {}), { nvsImage: null, erased: null });
+  assert.strictEqual(erased.size, 0, "a fresh boot clears the marks");
 });
 
 // Sweep A101: the Nightlight's ESP32-C3 has no download-mode banner the Lab

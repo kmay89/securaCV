@@ -57,9 +57,9 @@ behavior is a change to that one file — never a sweep across boards.
 - **Fleet Chirp advert** — the 17-byte BLE alert the canary-wap sends on the
   beacon's company id, and the one parse rule the firmware receivers share
   (the canary's Scout roster feed, the Scout pairing filter in both trees,
-  canary-sense, canary-vision, the display). The canary-wap's own nearby scan
-  (`ble_nearby.h`) reads the same offsets, held to the header by
-  `static_assert`, on a wider rule of its own. Core:
+  canary-sense, canary-vision, the display, and since sweep F459 the
+  canary-wap's own nearby scan, `ble_nearby.h`, which read the offsets on a
+  wider rule of its own before). Core:
   `firmware/common/fleet_link/fleet_chirp.h` (its opening comment names the
   include path each tree uses); guards: `check_fleet_beacon_sync.sh` (wap
   byte-copy) + `check_display_arduino_sync.sh` (display regen); test:

@@ -180,7 +180,7 @@ bool NvsManager::clear() {
 // The three SHA-256 steps as the core spells them with an answer (sweep
 // F455). mbedTLS 2.28 (IDF 4.4, Arduino core 2.0.17: every env but
 // env:full) answers a step only through the _ret names, and its plain
-// names return void; mbedTLS 3.x (IDF 5.5, core 3.3.8: env:full) removed
+// names return void; mbedTLS 3.x (IDF 5.5, core 3.3.11: env:full) removed
 // the _ret names, and its plain names answer int. The same version guard
 // securacv_network.cpp keys its certificate serial on (mbedtls/version.h
 // defines it on both majors; were it unset, the _ret names are picked, which

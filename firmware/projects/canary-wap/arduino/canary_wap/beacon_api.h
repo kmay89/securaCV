@@ -18,9 +18,11 @@
  * (#438).
  *
  * The handlers themselves are thin JSON wrappers around beacon_channel::*
- * public functions. The cryptographic origination, NFPA-72 state machine,
- * and audit log live in beacon_channel.cpp; this file does not duplicate
- * any of that logic.
+ * public functions, except the four /api/beacon/pair/* routes, which call
+ * nothing and answer pairing_not_built while the spec §3.3 pairing flow is
+ * not built (sweep F30). The cryptographic origination, NFPA-72 state
+ * machine, and audit log live in beacon_channel.cpp; this file does not
+ * duplicate any of that logic.
  *
  * NOTE: this file is only included from canary_wap.ino when
  * FEATURE_BEACON_CHANNEL is enabled in build_config.h. Default OFF.
@@ -198,9 +200,10 @@ inline esp_err_t handle_set_list(httpd_req_t* req) {
     fp_to_hex(e->fingerprint, fp_hex);
     m["fingerprint"] = fp_hex;
     // The member's name as a page shows it (sweep F408): nothing in this
-    // firmware fills it yet, but v0.3's pairing will, from a peer's frame,
-    // and ArduinoJson writes a control byte raw and ill-formed UTF-8 as it
-    // is. Held by check_wap_json_answers.py J10, as the Bluetooth names are.
+    // firmware fills it yet, but the spec §3.3 pairing will once it is built
+    // (sweep F30), from a peer's frame, and ArduinoJson writes a control
+    // byte raw and ill-formed UTF-8 as it is. Held by
+    // check_wap_json_answers.py J10, as the Bluetooth names are.
     char name[wap_json::replaced_cap(beacon_channel::BEACON_NAME_LEN)];
     wap_json::shown_text(name, sizeof(name), e->name);
     m["name"] = name;
@@ -225,28 +228,29 @@ inline esp_err_t handle_set_list(httpd_req_t* req) {
   return rc;
 }
 
-// POST /api/beacon/pair/start
+// POST /api/beacon/pair/start, /join, /confirm and /cancel. The spec §3.3
+// pairing flow is not built (beacon_channel.cpp's start_pair_init() names
+// what it lacks), so there is no pairing to start, join, confirm or cancel:
+// each route answers {"success":false,"error":"pairing_not_built"} and
+// changes nothing. They answered "pair_init started", "pair_join started"
+// and "pair confirmed" on stubs that only moved the state, and "pair
+// canceled" for a pairing that never was, after setting the state to
+// Normal whatever it had been, an alarm included (sweep F30). The pairing
+// PR writes what each answers once there is a flow behind it.
 inline esp_err_t handle_pair_start(httpd_req_t* req) {
-  return beacon_channel::start_pair_init() ? send_success(req, "pair_init started")
-                                            : send_error(req, "pair_init failed");
+  return send_error(req, "pairing_not_built");
 }
 
-// POST /api/beacon/pair/join
 inline esp_err_t handle_pair_join(httpd_req_t* req) {
-  return beacon_channel::start_pair_join() ? send_success(req, "pair_join started")
-                                            : send_error(req, "pair_join failed");
+  return send_error(req, "pairing_not_built");
 }
 
-// POST /api/beacon/pair/confirm
 inline esp_err_t handle_pair_confirm(httpd_req_t* req) {
-  return beacon_channel::confirm_pair() ? send_success(req, "pair confirmed")
-                                         : send_error(req, "pair confirm failed");
+  return send_error(req, "pairing_not_built");
 }
 
-// POST /api/beacon/pair/cancel
 inline esp_err_t handle_pair_cancel(httpd_req_t* req) {
-  beacon_channel::cancel_pair();
-  return send_success(req, "pair canceled");
+  return send_error(req, "pairing_not_built");
 }
 
 // Read a request body completely (NUL-terminated), or refuse it by name.

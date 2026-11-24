@@ -5741,6 +5741,117 @@ void test_a_hostile_nearby_name_never_reaches_the_answer() {
   std::printf("PASS a_hostile_nearby_name_never_reaches_the_answer\n");
 }
 
+// Only a Chirp lists a Canary by its advert (sweep F459). The scan read a
+// chirp by offsets on its own rule, any manufacturer blob of 17 bytes or
+// more on company 0xFFFF whatever its type byte, where fleet_chirp_parse(),
+// the rule every other receiver reads by since #1961, takes exactly 17 bytes
+// and types 0x01..0x05: an 18-byte blob, or a type 0x00 or 0x06, was listed
+// in GET /api/nearby as a Canary under the prefix its bytes 15 and 16 spell.
+// It parses with fleet_chirp_parse() now. Each advert below goes to the REAL
+// scan callback, with and without the SecuraCV service UUID, and a name that
+// names no Canary ('beacon-x'): a Chirp is listed under its fingerprint
+// bytes, anything else is counted as a non-Canary and listed nowhere, and an
+// advert whose name is a Canary's is listed under the name's prefix, never
+// the blob's.
+void test_only_a_chirp_lists_a_canary_by_its_advert() {
+  static HostSemaphore nearby_mutex;
+  auto chirp_blob = [](size_t len, uint16_t company, uint8_t type, uint8_t fp0, uint8_t fp1) {
+    std::string b(len, '\0');
+    b[0] = (char)(company & 0xFF);
+    b[1] = (char)(company >> 8);
+    if (len > FLEET_CHIRP_OFF_TYPE) b[FLEET_CHIRP_OFF_TYPE] = (char)type;
+    for (size_t i = 0; i < FLEET_CHIRP_CHAIN_LEN && FLEET_CHIRP_OFF_CHAIN + i < len; ++i) {
+      b[FLEET_CHIRP_OFF_CHAIN + i] = (char)(0xA0 + i);
+    }
+    if (len > FLEET_CHIRP_OFF_FP + 1) {
+      b[FLEET_CHIRP_OFF_FP] = (char)fp0;
+      b[FLEET_CHIRP_OFF_FP + 1] = (char)fp1;
+    }
+    return b;
+  };
+  struct Heard {
+    const char* what;
+    std::string name;
+    std::string mfg;
+    bool uuid;
+    const char* listed;   // the prefix it is listed under; nullptr: a non-Canary
+    bool chirp;           // counted as a chirp received
+  };
+  std::vector<Heard> heard;
+  // The five Chirp types, exactly 17 bytes: Canaries, by their advert alone.
+  for (uint8_t t = FLEET_CHIRP_TYPE_FIRST; t <= FLEET_CHIRP_TYPE_LAST; ++t) {
+    static char prefixes[5][5];
+    std::snprintf(prefixes[t - 1], sizeof prefixes[0], "10%02x", (unsigned)t);
+    heard.push_back({"a 17-byte Chirp", "beacon-x", chirp_blob(17, 0xFFFF, t, 0x10, t), t % 2 == 1,
+                     prefixes[t - 1], true});
+  }
+  // What fleet_chirp_parse() refuses: no Canary, whatever the blob's last
+  // bytes spell.
+  heard.push_back({"an 18-byte blob", "beacon-x", chirp_blob(18, 0xFFFF, CHIRP_HEARTBEAT, 0x7e, 0x02), true,
+                   nullptr, false});
+  heard.push_back({"an 18-byte blob, no UUID", "beacon-x", chirp_blob(18, 0xFFFF, CHIRP_HEARTBEAT, 0x7e, 0x03),
+                   false, nullptr, false});
+  heard.push_back({"a 31-byte blob", "", chirp_blob(31, 0xFFFF, CHIRP_ALERT, 0x7e, 0x04), true, nullptr, false});
+  heard.push_back({"type 0x00", "beacon-x", chirp_blob(17, 0xFFFF, 0x00, 0x7e, 0x05), true, nullptr, false});
+  heard.push_back({"type 0x06", "beacon-x", chirp_blob(17, 0xFFFF, 0x06, 0x7e, 0x06), true, nullptr, false});
+  heard.push_back({"type 0x06, no UUID", "beacon-x", chirp_blob(17, 0xFFFF, 0x06, 0x7e, 0x07), false, nullptr,
+                   false});
+  heard.push_back({"type 0xff", "beacon-x", chirp_blob(17, 0xFFFF, 0xFF, 0x7e, 0x08), true, nullptr, false});
+  heard.push_back({"another company", "beacon-x", chirp_blob(17, 0x02E5, CHIRP_HEARTBEAT, 0x7e, 0x09), true,
+                   nullptr, false});
+  // A refused blob beside a Canary's name: the name's prefix, not the blob's.
+  heard.push_back({"an 18-byte blob, a Canary's name", "SCV-ABCD", chirp_blob(18, 0xFFFF, CHIRP_BOOT, 0x7e, 0x0a),
+                   true, "abcd", false});
+
+  memset(ble_nearby::g_nearbyCanaries, 0, sizeof ble_nearby::g_nearbyCanaries);
+  ble_nearby::g_nonCanaryCount = 0;
+  ble_nearby::g_beaconsReceived = 0;
+  ble_nearby::g_chirpsReceived = 0;
+  ble_nearby::g_nearbyMutex = &nearby_mutex;
+  std::vector<std::string> listed;
+  uint16_t non_canary = 0;
+  uint32_t chirps = 0;
+  for (const Heard& h : heard) {
+    NimBLEAdvertisedDevice adv;
+    adv.name = h.name;
+    adv.mfg = h.mfg;
+    if (h.uuid) adv.services.push_back(NimBLEUUID(SCV_SERVICE_UUID));
+    NimBLEScanCallbacks* cb = &ble_nearby::g_scanCallbacks;
+    host_sim::task = "nimble";
+    cb->onResult(&adv);
+    host_sim::task = "loop";
+    if (h.listed != nullptr) {
+      listed.push_back(h.listed);
+    } else {
+      ++non_canary;
+    }
+    if (h.chirp) ++chirps;
+    json_strict::Value v;
+    const std::string body = nearby_answer(&v);
+    const json_strict::Value* canaries = v.get("canaries");
+    const bool right = canaries != nullptr && canaries->kind == json_strict::Value::Array &&
+                       canaries->items.size() == listed.size() && ble_nearby::g_nonCanaryCount == non_canary &&
+                       ble_nearby::g_chirpsReceived == chirps;
+    if (!right) std::fprintf(stderr, "after %s: GET /api/nearby %s (non-Canaries %u)\n", h.what, body.c_str(),
+                             (unsigned)ble_nearby::g_nonCanaryCount);
+    CHECK(right);
+    for (size_t i = 0; i < listed.size(); ++i) {
+      const json_strict::Value* p = canaries->items[i].get("device_id_prefix");
+      CHECK(p != nullptr && p->text == listed[i]);
+    }
+  }
+  // Each Chirp's slot holds its type and its chain prefix, as
+  // fleet_chirp_parse() read them.
+  for (uint8_t t = FLEET_CHIRP_TYPE_FIRST; t <= FLEET_CHIRP_TYPE_LAST; ++t) {
+    const NearbyCanary& c = ble_nearby::g_nearbyCanaries[t - 1];
+    CHECK(c.active && c.lastChirpType == (ChirpType)t);
+    for (size_t i = 0; i < FLEET_CHIRP_CHAIN_LEN; ++i) CHECK(c.chainHashPrefix[i] == (uint8_t)(0xA0 + i));
+  }
+  CHECK(ble_nearby::g_beaconsReceived == 0);
+  ble_nearby::g_nearbyMutex = nullptr;
+  std::printf("PASS only_a_chirp_lists_a_canary_by_its_advert\n");
+}
+
 // One Canary heard every way it advertises (sweep F425): its name as
 // ble_manager.h builds it ("SCV-" and the last four of hex_to_str()'s
 // uppercase key fingerprint, 'SCV-7E01'), its chirp (device id 7e 01, at
@@ -7416,6 +7527,7 @@ const Test kTests[] = {
     {"a_cleared_list_stays_cleared_after_a_reboot", test_a_cleared_list_stays_cleared_after_a_reboot},
     {"a_nearby_name_prefix_is_hex_or_refused", test_a_nearby_name_prefix_is_hex_or_refused},
     {"a_hostile_nearby_name_never_reaches_the_answer", test_a_hostile_nearby_name_never_reaches_the_answer},
+    {"only_a_chirp_lists_a_canary_by_its_advert", test_only_a_chirp_lists_a_canary_by_its_advert},
     {"one_canary_heard_by_name_chirp_and_beacon_takes_one_slot",
      test_one_canary_heard_by_name_chirp_and_beacon_takes_one_slot},
     {"a_passkey_outside_pairing_mode_is_shown_nowhere", test_a_passkey_outside_pairing_mode_is_shown_nowhere},

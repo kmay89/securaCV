@@ -21,55 +21,13 @@ class Preferences;
  * {"label":"privacy_ceiling","x":"p2"} stored the privacy ceiling P2,
  * {"label":"pet_mode","x":true} turned pet mode on, and
  * {"note":"preset","pet_mode":true,"preset":"quiet"} stored no preset. Every
- * key the route reads is found here instead, where a JSON parser finds it.
- * Pure: no NVS, no Arduino; test_wap_tune_lab.cpp runs it. */
-
-/** One member of a JSON object, as json_object_member() found it. */
-struct JsonMember {
-  const char* key;     /* the key's opening quote */
-  const char* value;   /* the value's first byte */
-  size_t value_len;    /* the value's bytes: a string with both quotes, an
-                          object or array to its closing bracket, a literal
-                          or number whole */
-};
-
-/** Deepest nesting json_object_member() reads; a deeper body is refused. */
-constexpr size_t kJsonMaxDepth = 16;
-
-/** Find the member `key` (spelled bare: "pet_mode") of the one JSON object
- *  text[0, len) holds, whitespace around it and nothing else. Only the
- *  object's own members count: a key spelled inside a string (escaped
- *  quotes and all) or a member of an object or array nested in it is not
- *  one. The whole text is read, never a byte past `len`, and it must be
- *  JSON: strings closed, no raw control byte in one, each escape whole
- *  (\" \\ \/ \b \f \n \r \t \uXXXX), brackets matched at most
- *  kJsonMaxDepth deep, every value a string, an object, an array, true,
- *  false, null or a number, commas and colons where they belong. A byte
- *  0x80 and above in a string is taken as it is (UTF-8 is not validated;
- *  no word or bool read here can match one). False,
- *  with *out untouched, when it is not, when no member has the key, and
- *  when two do (parsers disagree on which one wins, so neither does). An
- *  own member's key that holds an escape makes the text unreadable too:
- *  none of the keys read here needs one, and the time zone's reader
- *  (tz_rule::json_string_field()) takes its key as it is spelled. */
-bool json_object_member(const char* text, size_t len, const char* key, JsonMember* out);
-
-/** The member's value as a bool: true or false, or the same in quotes (a
- *  value sent as a string reads as the bare one, as it always has). */
-bool json_member_bool(const JsonMember& m, bool* out);
-
-/** Where json_member_int() saturates, either side. */
-constexpr int32_t kJsonIntMax = 999999999;
-
-/** The member's value as an integer: a number with no fraction or
- *  exponent, or the same digits in quotes, saturated at kJsonIntMax either
- *  side (a longer number reads as kJsonIntMax, never as its first digits;
- *  every reader here clamps far inside that). */
-bool json_member_int(const JsonMember& m, int32_t* out);
-
-/** True when the member's value is the string `word`, exactly (a string
- *  that holds an escape is none of the words read here). */
-bool json_member_is(const JsonMember& m, const char* word);
+ * key the route reads is found by json_object_member() instead, where a
+ * JSON parser finds it. The reader (JsonMember, json_object_member() and the
+ * json_member_*() value readers) moved to json_member.h (F469), header-only,
+ * so the MQTT config POST, the events dismissal and the Tuning Lab read
+ * through the same one; it is included here, so this file's callers did
+ * not change. Pure: no NVS, no Arduino; test_wap_tune_lab.cpp runs it. */
+#include "json_member.h"
 
 /** The household time zone a POST /api/settings body names (sweep F28):
  *  its "tz" (a POSIX rule) and "tz_iana" (a zone name), each a member of

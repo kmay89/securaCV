@@ -55,7 +55,12 @@
 //     survives byte for byte (before, it was replaced by one no restore
 //     accepts); restore_chain(): a failing HMAC refuses, so a forged backup
 //     whose HMAC field is 32 zero bytes is never accepted against the zeroed
-//     output;
+//     output; and a working one compares in constant time (ct_compare.h,
+//     the staged copy of firmware/common/core's) over the whole field: a
+//     backup one bit off in its HMAC's first, a middle or its last byte, or
+//     in its payload, is refused with the same mismatch line and writes
+//     nothing (the memcmp() it replaced refused these too, sooner the fewer
+//     leading bytes matched; the source pin below fails on it);
 //   - provision_device(), cut verbatim too, over stand-ins for everything it
 //     calls but the two mints: a refused mint (either HMAC at any step) or a
 //     token whose store fails answers false with g_device.initialized false,
@@ -102,7 +107,11 @@
 //     the chain state is loaded; nvs_store_token() and derive_api_token() are
 //     called once each, in provision_device(), only when the token is
 //     neither Refused nor Loaded, and the token's NVS entry is named by no
-//     other function (no route, loop pass or reset writes it).
+//     other function (no route, loop pass or reset writes it);
+//     data_mgmt_api.h's restore_chain() compares the HMAC with
+//     ct_compare::equal() over the whole 32-byte field, after the failed
+//     HMAC's refusal, and calls no memcmp(), and the header includes
+//     ct_compare.h.
 // Host-tested; not run on a device.
 //
 // Build/run: make -C firmware/projects/canary-wap/tests_host run-wap-hmac-fail
@@ -127,6 +136,7 @@
 #include <vector>
 
 #include "chain_state.h"  // the sketch's {seq, head} blob, pure
+#include "ct_compare.h"   // the sketch's staged copy: restore_chain() compares its HMAC with it
 
 #include "FS.h"           // stubs/sd_fake
 #include "SD.h"           // stubs/sd_fake
@@ -878,6 +888,65 @@ static void restore_refuses_a_failed_hmac() {
   }
 }
 
+// A working HMAC and a backup one bit off: restore_chain() compares the
+// whole field in constant time (ct_compare::equal()), so a flip in its
+// first, a middle or its last byte is refused, as is a flip in the payload
+// the HMAC covers, each with the one mismatch line and nothing written; the
+// backup as written still restores.
+static void restore_refuses_a_backup_one_bit_off() {
+  uint8_t key[32];
+  key_0x01(key);
+  uint8_t head9[32];
+  chain_head(head9, 9);
+
+  fresh_card();
+  seam::arm(seam::Step::None);
+  CHECK_MSG(datamgmt::backup_chain(head9, 9, key), "a working HMAC writes the backup");
+  const std::string good = SD.files[kBackup];
+  CHECK_MSG(good.size() == datamgmt::BACKUP_SIZE, "a backup of " + std::to_string(good.size()));
+  if (good.size() != datamgmt::BACKUP_SIZE) return;
+
+  struct Flip {
+    size_t at;
+    uint8_t mask;
+    const char* what;
+  };
+  const Flip flips[] = {
+      {44, 0x01, "the HMAC's first byte"}, {44, 0x80, "the HMAC's first byte (top bit)"},
+      {59, 0x01, "a middle HMAC byte"},    {60, 0x10, "a middle HMAC byte"},
+      {75, 0x01, "the HMAC's last byte"},  {75, 0x80, "the HMAC's last byte (top bit)"},
+      {8, 0x01, "the payload's seq"},      {12, 0x01, "the payload's first head byte"},
+      {43, 0x80, "the payload's last byte"},
+  };
+  for (const Flip& f : flips) {
+    std::string bad = good;
+    bad[f.at] = (char)(bad[f.at] ^ f.mask);
+    SD.files[kBackup] = bad;
+    g_log.clear();
+    uint8_t got[32];
+    std::memset(got, 0xEE, sizeof(got));
+    uint32_t seq = 0xEEEEEEEE;
+    const size_t writes = SD.writes;
+    CHECK_MSG(!datamgmt::restore_chain(got, &seq, key), std::string(f.what) + " flipped: restored");
+    bool untouched = seq == 0xEEEEEEEE && SD.writes == writes;
+    for (uint8_t b : got) untouched = untouched && b == 0xEE;
+    CHECK_MSG(untouched, std::string(f.what) + " flipped: wrote the seq, the head or the card");
+    int mismatches = 0;
+    for (const LogLine& l : g_log) {
+      mismatches += l.message == "Chain restore: HMAC mismatch (tampered?)" && l.level == SCV_LOG_ERROR &&
+                    l.category == SCV_CAT_STORAGE;
+    }
+    CHECK_MSG(mismatches == 1, std::string(f.what) + " flipped: " + std::to_string(mismatches) +
+                                   " mismatch line(s), not one");
+  }
+
+  SD.files[kBackup] = good;
+  uint8_t got[32] = {0};
+  uint32_t seq = 0;
+  CHECK_MSG(datamgmt::restore_chain(got, &seq, key) && seq == 9 && std::memcmp(got, head9, 32) == 0,
+            "the backup as written does not restore seq 9");
+}
+
 // ── provision_device() after a refused mint ─────────────────────────────────
 // provision_device(), cut verbatim, over stand-ins for everything it calls
 // but the two mints, which are the real ones above over the HMAC seam. NVS
@@ -1565,6 +1634,40 @@ static void sketch_text() {
                 count_of(ino, "\"api_tkn\"") == 1 && count_of(ino, "NVS_KEY_API_TKN") == named + 1,
             "the token's NVS entry is named outside its definition and its three helpers");
 
+  // restore_chain() compares the HMAC in constant time (ct_compare.h): over
+  // the whole field, refusing with the mismatch line, after a failed HMAC is
+  // refused, and with no memcmp() (the one it replaced returned at the first
+  // byte that differed). The header includes the staged copy.
+  {
+    const std::string dm = strip_comments(read_file(dir + "/data_mgmt_api.h"));
+    const std::string restore = body_of(dm, "inline bool restore_chain(");
+    CHECK_MSG(!restore.empty(), "data_mgmt_api.h: no restore_chain()");
+    auto squeezed = [](const std::string& t) {
+      std::string out;
+      for (char c : t) {
+        if (!std::isspace(static_cast<unsigned char>(c))) out += c;
+      }
+      return out;
+    };
+    const std::string sq = squeezed(restore);
+    const std::string compared = squeezed(
+        "if (!ct_compare::equal(buf + BACKUP_PAYLOAD, calc_hmac, sizeof(calc_hmac))) {"
+        "  log_health(SCV_LOG_ERROR, SCV_CAT_STORAGE, \"Chain restore: HMAC mismatch (tampered?)\", nullptr);"
+        "  return false;"
+        "}");
+    const std::string refused = squeezed("if (!hmac_sha256(privkey, 32, buf, BACKUP_PAYLOAD, calc_hmac)) {");
+    CHECK_MSG(count_of(sq, compared) == 1,
+              "restore_chain() does not compare the HMAC with ct_compare::equal() over the whole field");
+    CHECK_MSG(sq.find("memcmp(") == std::string::npos, "restore_chain() calls memcmp()");
+    CHECK_MSG(count_of(sq, squeezed("uint8_t calc_hmac[32];")) == 1, "restore_chain(): calc_hmac is not 32 bytes");
+    CHECK_MSG(sq.find(refused) != std::string::npos && sq.find(refused) < sq.find(compared),
+              "restore_chain(): the HMAC is compared before a failed HMAC is refused");
+    CHECK_MSG(count_of(sq, squeezed("static_assert(BACKUP_PAYLOAD + sizeof(calc_hmac) == BACKUP_SIZE,")) == 1,
+              "restore_chain(): the HMAC field's extent is not asserted");
+    CHECK_MSG(count_of(squeezed(dm), "#include\"ct_compare.h\"") == 1,
+              "data_mgmt_api.h does not include ct_compare.h once");
+  }
+
   // The buffers the mints fill are the sizes this suite gives them.
   CHECK_MSG(ino.find("char     api_token_str[36];") != std::string::npos &&
                 ino.find("char     ap_password[16];") != std::string::npos,
@@ -1587,6 +1690,7 @@ int main() {
   resolve_ap_password_after_a_failed_provisioning();
   backup_keeps_the_last_good_one();
   restore_refuses_a_failed_hmac();
+  restore_refuses_a_backup_one_bit_off();
   provision_device_completes();
   a_refused_mint_keeps_the_stored_chain();
   a_key_not_established_stops_first();
@@ -1599,8 +1703,8 @@ int main() {
   }
   std::printf("test_wap_hmac_fail: ALL %d CHECKS PASSED (hmac_sha256 at every failing step, "
               "the SoftAP key, the API token, the stored token never written over, "
-              "resolve_ap_password in both builds, the chain backup and restore, the sketch's "
-              "call sites)\n",
+              "resolve_ap_password in both builds, the chain backup and restore (its HMAC compared in "
+              "constant time), the sketch's call sites)\n",
               g_checks);
   return 0;
 }

@@ -1,6 +1,129 @@
 # Changelog
 
 ## [Unreleased]
+### canary-wap reads each POST body by its own members and refuses a Chirp TTL, a Beacon pairing and a mesh hash it cannot honor, four secret compares go through a constant-time helper, the setup doors log what they refused, the Vision app keeps to its CSP, the dash sheet, the watch's boot log and the splash wordmark follow their glass, the Lab's bench keeps an erase, and the 7-inch frame's words, the build matrix's claims and the parity plan are held to what they rest on (#2013, wave 26)
+
+- **canary-wap reads a POST body by its own members (F469, F470; F459's code
+  half).** `POST /api/events/dismiss`, `POST /api/mqtt/config` and the Tuning
+  Lab's POSTs read each key only as a member of the body's own JSON object
+  (the header-only `json_member.h`), so a value spelled like a key, a nested
+  object's member or the first of two duplicates no longer counts: on the old
+  code `{"note":"host","x":"evil.example"}` saved the broker host
+  `evil.example`. The MQTT config POST answers 400 and applies nothing for a
+  body that is not one JSON object, a setting named twice, a `tls_mode` it
+  cannot read (`1.0`, `null`) or a port that is not a whole number from 1 to
+  65535, and moving the broker with a `password` only inside a nested object
+  gets 403 `password_needed`. A dismissal reads ids from 0 to 4294967295
+  exactly and answers each refusal by name. `GET /api/nearby` lists a Chirp
+  advert only through `fleet_chirp_parse()`, so an 18-byte blob or a type
+  0x00 or 0x06 on company 0xFFFF is no longer listed as a Canary.
+  `check_wap_json_answers.py` no longer reads `if (x && x[0])` or `(n * n)`
+  as a declaration.
+- **Chirp and Beacon refuse what they cannot honor (F412's send half, F30's
+  stub half).** `POST /api/chirp/send` takes a `ttl_minutes` from 5 to 60 (15
+  when absent) and answers `invalid_ttl` for anything else, sending nothing;
+  it used to sign 300 as 44 minutes and -1 as 255. The four Beacon pairing
+  routes answer `pairing_not_built`, where they answered "started" and
+  "confirmed" for a pairing that never ran, and a cancel no longer turns an
+  ALARM or a TROUBLE into Normal. Beacon is off in every stock build.
+- **A mesh pairing code or CONFIRM that fails to hash is refused in both
+  trees (F364, in part).** `mesh_crypto::sha256_domain()` says whether every
+  mbedTLS step ran, in the canary library (both IDF lines, the spelling picked
+  by F455's `MBEDTLS_VERSION_NUMBER` guard) and in the canary-wap shim. A
+  pairing code or CONFIRM hash in either tree, a rekey key or signed message
+  on the canary tree, or a hashed beacon id that did not hash is refused: the
+  pairing ends (`FailReason::CRYPTO` on the canary tree; an ALERT on the
+  canary-wap, whose `POST /api/mesh/pair/confirm` answers 400
+  `confirm_failed`), no zeroed code is shown, no zeroed CONFIRM is sent or
+  matched, and the BLE Scout lists no zero id. `beacon_channel::init()`'s
+  refusal of a key whose fingerprint does not hash is run by a host case. The
+  canary tree's mesh fingerprint and opera id still take zeros when they do
+  not hash (F484).
+- **Four secret-dependent compares use a constant-time helper (found in
+  this PR's review; no backlog id).** The canary-wap's pairing CONFIRM check,
+  both trees' chain-backup HMAC check and the canary-wap's household RPA hash
+  check returned at the first byte that differed; they now call one helper,
+  `ct_compare::equal()` (`firmware/common/core/ct_compare.h`), whose loop
+  runs the whole length with no branch on the bytes (its x86-64 and riscv32
+  assembly read; the Xtensa build not read; no timing measured), and every
+  outcome and log line is unchanged. `regression_check.sh`'s auth check,
+  which could not fail, now names each tree's bearer compare and fails one
+  whose body loses its volatile `|=` fold or gains an early exit, and a new
+  check fails a `memcmp()`/`strcmp()`-family or String `.equals()` compare
+  whose line names an HMAC, a tag, a CONFIRM hash or the expected token (it
+  reads one line at a time, so a byte-by-byte `==` chain passes it).
+- **The Bluetooth setup door logs what it refused (F471, F472).** The
+  canary-wap logs a second Wi-Fi write refused mid-join as a WARNING, "Setup
+  door: Wi-Fi settings refused", not "accepted, joining". The Sense and Vision
+  glue (`firmware/common/network/improv_ble.cpp`) runs unedited on the host
+  for both NimBLE majors in `firmware/tests_host/test_improv_glue.cpp`, part
+  of the default `make -C firmware/tests_host`.
+- **canary-vision keeps to its own CSP (F474, F475).** The sixteen inline
+  `style:` keys the served `style-src 'self'` refused are classes in
+  `spa/styles.css`, so Settings' Quiet Hours fields, the fleet card's RSSI
+  chip and the Events, witness and config views take the layout they were
+  written for, and `el()` throws on a `style` key. A device stored under a
+  refused IP says, in every sub-view, to remove it on its device page and add
+  it again by its `.local` name. The docs say tokens live in `sessionStorage`
+  under `canary_token:<id>`, not in `localStorage`.
+- **Displays (F370, F413, F373).** An open dash settings sheet is laid out
+  again when the phone app turns the glass, never under a finger (every
+  `CD_FLAVOR_DASH` firmware; dash7 and nightstand7 keep the Location page's
+  draft across the turn). The watch's boot log no longer offers a lantern it
+  does not build, and the factory reset's comment says what a display keeps.
+  On the S3 nightstand's 172 px glass under Heirloom the splash's wordmark,
+  191 px wide in Montserrat 36, steps down to Montserrat 28 and fits; no
+  other shipped glass changes.
+- **The Lab (A127, A100; C25's Vision half).** An erase on a display twin
+  reaches the page's copy of its flash, so the bench's 10 s factory reset
+  comes back into the setup portal and stays there across a bench RESET, and
+  a "meet again" stays unprovisioned across a bench power event. The AMOLED
+  2.41 twin steps its night floor as the panel's brightness byte does. The
+  Vision Assemble tab draws the camera's four screws, held by a test to the
+  printed front's posts.
+- **The emulator dist is rebuilt by the Actions workflow in this PR.** The
+  display and twin changes above move all six canary-display bundles; the
+  "Rebuild emulator dist (pinned emsdk)" workflow commits the rebuilt dist to
+  this branch before it merges.
+- **Checks that read what they claim (C33, C37, C10 and C21 in part; D23,
+  CI28).** `check_word_ink.py` (enclosure.yml) measures the 7-inch frame's
+  brand words in their real font and holds the case's five keep-outs to the
+  ink; it carries the peel scoop's 1.70 mm overlap as its one known failure,
+  which waits on a maintainer's pick (C33). `lint_build_matrix.py` names the
+  code each of its six unmapped claims rests on and fails, naming C37, when
+  that code goes or turns conditional. `DESIGN_RULES.md` §10 gains the J-box's
+  `pigtail_w` / `pigtail_h` row, held to `KNOB_MEANINGS` both ways, and
+  `test_enclosure_parsers.py`'s `LabMisses` holds every knob the Lab's parser
+  misses to one `HELP_DEBT` counts. `firmware/PARITY_PLAN.md` §1 is the
+  dashboard rows where canary (PIO) and canary-wap differ, held there by
+  `test_parity_plan.py`, and the microcopy grade gate's comments name
+  `DEFAULT_MAX_GRADE`. No `.scad`, STL, `build_matrix.json` or `catalog.json`
+  byte moved.
+- **Backlog:** F469, F470, F471, F472, F474, F475, F370, F413, F373, A127,
+  A100, D23 and CI28 are closed. F30, F364, F412, F447, F459, F473, F372,
+  C10, C12, C21, C25, C33 and C37 now say what remains, most of it a
+  maintainer's call, F251 and F476 say their dashboard move restates the
+  parity plan, and F479's figures move to the 67,914 B of gzip this tree
+  serves. New from the wave: F484-F490, F492, F493, A136-A138, C39,
+  D28 and CI31-CI33, among them the canary tree's fingerprint and opera id
+  that are used as zeros when they do not hash (F484), the Chirp send's
+  other narrowed fields (F485) and the compares left as `memcmp()` (F486).
+  F491, Sense's NimBLE floor, was filed here and closed by #1986 before the
+  wave landed.
+- Host-tested here: the canary-wap host suite under g++, clang++ 18 and
+  ASan/UBSan, firmware.yml's mesh + ble_scan step, `firmware/tests_host`
+  (the Improv glue and constant-time suites, ASan/UBSan included), the
+  canary-display host suites with native LVGL 8.4 and 9.5 renders, the Lab's
+  native turn and backlight runs, its node suites and Chromium runs of
+  `bench_probe.mjs` on the committed (pre-rebuild) dist, with its watch
+  Button-line and 10 s-hold checks relaxed and the rebuilt dist's erases
+  injected (the committed probe's two checks wait on the Actions rebuild), the
+  Vision app's node tests and a headless Chromium CSP probe,
+  `check_word_ink.py` under OpenSCAD 2021.01, and the `scripts/tests` suite.
+  The ESP32 PlatformIO and Arduino compiles are CI's (dash7 and nightstand7,
+  on LVGL 9.5, are compile-tested only), no timing was measured for the
+  constant-time compares, and nothing was run on a device or a bench.
+
 ### Trustee keys can be wrapped at rest: `trustee keygen`, `wrap` and `pubkey`; a passphrase comes from the terminal or `--passphrase-fd`, never argv or the environment
 
 - **`break_glass trustee keygen --id ID --output F`**, run by the trustee on
@@ -120,7 +243,8 @@
   re-import it. SD Wear Estimate is created only for a device whose health
   carries the `sd` object, today the canary base alone; an existing install
   keeps the entity each other Canary was given, shown unavailable and
-  restored until you delete it.
+  restored until you delete it. The blueprint's recovered push still cannot
+  tell a battery recovery from a memory one (HA69, filed after the merge).
 - **canary-vision asks for a `.local` name instead of an IP its CSP refuses
   (F448, the code half).** Manual entry, "Add with token", a pasted or
   scanned receipt and a prefilled host answer "enter its .local name" for an
@@ -146,9 +270,10 @@
 - **Backlog:** F455, F460, F462, F464, F465 and F467 are closed, and F250's
   open half is F282's. F38, F232, F234, F140, F318, F445, F447, F448, F449,
   F443, F468, F367, F20, F219, F147, F254, F364 and HA46 now say what
-  remains (HA60 was closed on main by 2.4.20, and stays closed). New from the wave: F469-F478, D23 and CI28, among them the
-  flagship's `/EXPORT` (F476) and two calls on a hash that fails at
-  provisioning or at a link (F477, F478).
+  remains (HA60 was closed on main by 2.4.20, and stays closed). New from
+  the wave: F469-F478, D23 and CI28, among them the flagship's `/EXPORT`
+  (F476) and two calls on a hash that fails at provisioning or at a link
+  (F477, F478).
 - Host-tested here: the canary-wap host suite under g++, clang++ 18 and
   ASan/UBSan, `test_sha_fail_flagship` in both mbedTLS spellings, both
   dashboards' and the Vision app's node tests, the Vision app in headless

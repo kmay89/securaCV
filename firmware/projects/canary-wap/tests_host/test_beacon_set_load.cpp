@@ -9,9 +9,16 @@
 // entry's 25-byte name, which handle_set_list() wrote into the answer as it
 // was, so ArduinoJson read the name to the first zero byte past its field,
 // and wrote a control byte raw and ill-formed UTF-8 as it is. Nothing in this
-// firmware fills a member's name yet (start_pair_init() and
-// start_pair_join() only set the state, "deferred to v0.3"), but v0.3's
-// pairing will, from a peer's frame.
+// firmware fills a member's name yet: the spec §3.3 pairing flow is not
+// built (start_pair_init(), start_pair_join() and confirm_pair() refuse, and
+// the /api/beacon/pair/* routes answer pairing_not_built, sweep F30), but
+// the pairing that is built will, from a peer's frame.
+//
+// The pair routes' answer (sweep F30): each route's one statement, read from
+// beacon_api.h, handed to the REAL send_error() this suite cuts, answers
+// {"success":false,"error":"pairing_not_built"}: strict JSON that claims no
+// pairing. They answered "pair_init started", "pair_join started", "pair
+// confirmed" and "pair canceled".
 //
 // Now an entry is loaded only as NVS returns it whole and as a member (its
 // `valid` byte 1): any other is not loaded, so the set and its count hold
@@ -69,6 +76,7 @@
 #include "wap_json_writer.h"
 #include "browser_utf8.h"
 #include "json_strict.h"
+#include "beacon_source_scan.h"
 
 // The health log the cut code writes (health_log.h's health_log()).
 std::vector<std::string> g_health;
@@ -458,6 +466,44 @@ void test_without_flash_encryption_nothing_loads() {
   std::printf("PASS without_flash_encryption_nothing_loads\n");
 }
 
+// POST /api/beacon/pair/start, /join, /confirm and /cancel (sweep F30):
+// each route is one `return send_error(req, "...");` (read from beacon_api.h
+// with its comments stripped; test_beacon_cancel_origination pins the whole
+// body), and that error, through the real send_error() and send_reply(), is
+// one strict JSON answer that refuses and names pairing_not_built, with no
+// message that could read as a pairing started, confirmed or canceled.
+void test_the_pair_routes_answer_pairing_not_built() {
+  std::string api_path = CANARY_WAP_INO;
+  api_path.erase(api_path.rfind('/') + 1);
+  api_path += "beacon_api.h";
+  std::ifstream in(api_path);
+  CHECK(in.good());
+  std::stringstream ss;
+  ss << in.rdbuf();
+  const std::string api = beacon_source_scan::strip_comments(ss.str());
+  for (const char* route : {"handle_pair_start", "handle_pair_join", "handle_pair_confirm", "handle_pair_cancel"}) {
+    const std::string body = beacon_source_scan::function_body(api, route);
+    const std::string head = "return send_error(req, \"";
+    const size_t at = body.find(head);
+    const size_t end = at == std::string::npos ? at : body.find("\");", at + head.size());
+    if (end == std::string::npos) std::fprintf(stderr, "%s: %s\n", route, body.c_str());
+    CHECK(end != std::string::npos);
+    const std::string error = body.substr(at + head.size(), end - at - head.size());
+    httpd_req_t req;
+    CHECK(beacon_api::send_error(&req, error.c_str()) == ESP_OK);
+    CHECK(req.sends == 1 && req.status == "200 OK");
+    json_strict::Value v;
+    CHECK(json_strict::parse(req.resp, &v) && v.kind == json_strict::Value::Object);
+    const json_strict::Value* ok = v.get("success");
+    const json_strict::Value* err = v.get("error");
+    CHECK(ok != nullptr && ok->kind == json_strict::Value::Bool && !ok->b);
+    CHECK(err != nullptr && err->kind == json_strict::Value::String && err->text == "pairing_not_built");
+    CHECK(v.get("message") == nullptr && v.keys.size() == 2);
+    CHECK(req.resp == "{\"success\":false,\"error\":\"pairing_not_built\"}");
+  }
+  std::printf("PASS the_pair_routes_answer_pairing_not_built\n");
+}
+
 }  // namespace
 
 int main() {
@@ -466,6 +512,7 @@ int main() {
   test_a_set_of_refused_rows_reads_empty();
   test_a_member_name_reaches_the_answer_as_shown();
   test_without_flash_encryption_nothing_loads();
+  test_the_pair_routes_answer_pairing_not_built();
   std::printf("ALL %d Beacon set load checks PASSED\n", g_checks);
   return 0;
 }

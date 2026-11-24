@@ -64,11 +64,37 @@ constexpr const char* DOMAIN_MESSAGE     = "securacv:mesh:message:v0";
  * out must point to at least SHA256_OUT_LEN bytes. domain is a
  * null-terminated UTF-8 string. data may be empty (data=nullptr,
  * data_len=0).
+ *
+ * Answers whether every mbedTLS step ran (sweep F364). On the ESP32's
+ * hardware SHA a start, update or finish can answer an error, and after
+ * one the digest skipped bytes or was never written; then `out` is zeroed
+ * and the answer is false, and every caller refuses what the hash was for
+ * (a pairing code, a CONFIRM, a rekey key, a signature, a hashed beacon
+ * id) instead of using 32 zero bytes as a digest. [[nodiscard]]: a caller
+ * that drops the answer draws -Wunused-result, a warning only, since
+ * neither CI's host builds of this library (firmware.yml's mesh and
+ * ble_scan suites) nor its PlatformIO envs pass -Werror; the host cases
+ * that run each caller's refusal are the guard. False also for a null
+ * `out`.
  * ────────────────────────────────────────────────────────────────────────── */
 
-void sha256_domain(const char* domain,
-                   const uint8_t* data, size_t data_len,
-                   uint8_t out[SHA256_OUT_LEN]);
+[[nodiscard]] bool sha256_domain(const char* domain,
+                                 const uint8_t* data, size_t data_len,
+                                 uint8_t out[SHA256_OUT_LEN]);
+
+#ifdef CSI_TEST_HOST_BUILD
+/* Host-test hook (sweep F364). The host build's vendored SHA-256 has no
+ * failing step, so a test that needs sha256_domain() to refuse arms one:
+ * the next `count` hashes whose domain is exactly `domain` (nullptr: any
+ * domain) fail. A failed hash writes 0xA5 over `out` first, as a step the
+ * engine left half done might, so the zeros a caller reads are
+ * sha256_domain()'s own. fail_sha256_domain(nullptr, 0) disarms; each call
+ * re-arms and restarts the count sha256_domain_failures() reads. */
+namespace test {
+void fail_sha256_domain(const char* domain, int count);
+int  sha256_domain_failures();
+}  /* namespace test */
+#endif
 
 /* ──────────────────────────────────────────────────────────────────────────
  * IDENTITY DERIVATION
@@ -84,6 +110,12 @@ void sha256_domain(const char* domain,
  * bound on random collisions, which is sound for the design target
  * (sub-100-device home mesh). The 16-byte (128-bit) opera_id has 2^64
  * birthday resistance.
+ *
+ * When the hash fails (sha256_domain() answers false) the output is all
+ * zeros. Both keep their void signature for now: what each of their ten
+ * callers in mesh_session.cpp and mesh_state.cpp should refuse mirrors the
+ * canary-wap's open policy calls (sweep F456-F458), so it is decided there
+ * first (the sweep ledger's follow-up to F364).
  * ────────────────────────────────────────────────────────────────────────── */
 
 void compute_fingerprint(const uint8_t pubkey[PUBKEY_LEN],
@@ -114,6 +146,11 @@ bool ct_equal(const uint8_t* a, const uint8_t* b, size_t n);
  * On host build, sign/verify use a deterministic non-cryptographic
  * shim so the API surface is exercisable without rweather/Crypto. Real
  * Ed25519 correctness is validated on-device.
+ *
+ * A message whose hash fails is neither signed nor verified (sweep F364):
+ * sign answers false with sig_out zeroed, verify answers false. Before,
+ * each went on over whatever the failed hash left, so a sender signed, and
+ * a receiver checked, a digest that was not the message's.
  * ────────────────────────────────────────────────────────────────────────── */
 
 bool ed25519_generate_keypair(uint8_t pubkey[PUBKEY_LEN],

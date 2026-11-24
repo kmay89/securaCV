@@ -89,7 +89,7 @@ The reference implementation in `device-api/` uses Express and defines the HTTP 
 
 ### Companion SPA
 
-The SPA is a vanilla JavaScript application with no frameworks, no build step, and no external dependencies. It runs entirely in the browser, uses `localStorage` for per-device token storage, and only communicates with private-network addresses. It complies with the strict Content Security Policy: no inline scripts, no `eval`, no `innerHTML`, no tracking.
+The SPA is a vanilla JavaScript application with no frameworks, no build step, and no external dependencies. It runs entirely in the browser, keeps each device's token in `sessionStorage` (the device list, with no token, in `localStorage`), and only communicates with private-network addresses. It complies with the strict Content Security Policy: no inline scripts, no inline style attributes, no `eval`, no `innerHTML`, no tracking.
 
 ### Fleet Discovery
 

@@ -503,6 +503,20 @@ does not deliver whole with `400` `{"ok":false,"reason":"body read failed"}`,
 and nothing is dismissed. Before F300 a body in two TCP segments was parsed
 cut, its id a prefix of the one sent.
 
+The id is the body's own `"event_id"` member (sweep F469; `json_member.h`'s
+`dismiss_event_id()`, over every byte received): a whole number from 0 to
+4294967295, bare or in quotes. A body with none is refused with `400`
+`{"ok":false,"reason":"missing event_id"}` (a string spelled `event_id`, or
+an `event_id` inside a nested object, is none), one that names it twice with
+`400` `{"ok":false,"reason":"event_id is named more than once"}`, one that is
+not one JSON object (cut, bytes after it, a NUL) with `400`
+`{"ok":false,"reason":"body is not JSON"}`, and an id with a sign, a
+fraction or an exponent, or past 4294967295, with `400`
+`{"ok":false,"reason":"event_id must be a whole number 0 to 4294967295"}`;
+nothing is dismissed. Before F469 the id was the first digits after the
+first `event_id` anywhere in the body, so `{"note":"event_id 7","event_id":9}`
+dismissed event 7.
+
 ```bash
 curl -X POST http://canary.local/api/events/dismiss \
      -H 'Content-Type: application/json' \
@@ -574,9 +588,17 @@ dashboard's own preset and sensitivity among them (the Lab lists them), so
 it returns the device to balanced at sensitivity 50, and Quiet Hours go
 back to off (23:00 to 07:00, disabled), as before. Either reset first drops
 a slider or toggle save still waiting to be sent, then reloads the rows
-from the device. A value `tune_post()` cannot read (not a number,
-`true` / `false`, or `null`) is ignored, as before; JSON whitespace,
-newlines included, may sit on either side of the colon.
+from the device. A value `tune_post()` cannot read (not an integer
+literal, `true` / `false` / `1` / `0` for a bool, or `null`) is ignored, as
+before; a number written with a fraction or an exponent is one since sweep
+F469, a whole one too (`40.5` was stored as 40; `40.0` and `4e1` are
+ignored now, and `40` is stored). JSON whitespace,
+newlines included, may sit on either side of the colon. Each knob is a member
+of the body's own object (sweep F469, `json_member.h`): a knob inside a nested
+object or an array is not one of the body's, a knob named twice is neither,
+and a body that is not one JSON object stores no knob (`400` `"no recognized
+keys"` when none is left). Before F469 the knob was found by its quoted name
+anywhere in the body, so a nested one was stored and of two the first won.
 
 ---
 

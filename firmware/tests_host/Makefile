@@ -220,10 +220,47 @@ PROVGATE_BIN = $(BUILD_DIR)/test_provisioning_gate
 # session — the door that is open exactly while the device has no working
 # Wi-Fi of its own, a tap that opens it for a minute, the join timeout, and
 # which advert is on air in each state. The NimBLE glue (improv_ble.cpp) is
-# compiled by the family envs; the iOS twin is pinned to the same vectors in
-# ImprovWireTests.swift.
+# compiled by the family envs and driven here by test_improv_glue.cpp (below);
+# the iOS twin is pinned to the same vectors in ImprovWireTests.swift.
 IMPROV_HDR = ../common/network/improv_core.h
 IMPROV_BIN = $(BUILD_DIR)/test_improv_core
+
+# The Sense and Vision Improv glue (common/network/improv_ble.cpp, sweep
+# F472), compiled unedited over the NimBLE / Arduino / WiFi / esp stand-ins
+# in stubs/improv_glue/ for both NimBLE majors the families build (2.x on
+# core 3.3.11 for ESP_ARDUINO_VERSION_MAJOR 3, 1.4.x on core 2.0.17 for 2)
+# and driven as the radio drives it: the host task's write stamp and
+# mailboxes, the 32-bit connect generation, link_of()'s handle check, the
+# hub hand-off's gate and the board's store verdict, the Wi-Fi settings
+# verdict's words and the portal's join verdicts, the unencrypted and
+# malformed-write refusals, the network scan's stream under each core's scan
+# rules, the glue's own link drops, the first-boot window across each reset
+# reason, and the refused GATT start. Every scenario runs in its own process
+# (the glue's state is file-static and begin() runs once a boot; `reset`
+# forks one per boot it plays); the recipe first holds each binary's --list
+# to IMPROVGLUE_SCENARIOS, so a scenario added on one side only fails the
+# build.
+IMPROVGLUE_SRC       = ../common/network/improv_ble.cpp
+IMPROVGLUE_BIN       = $(BUILD_DIR)/test_improv_glue
+IMPROVGLUE_BINS      = $(IMPROVGLUE_BIN)_core3 $(IMPROVGLUE_BIN)_core2
+IMPROVGLUE_SCENARIOS = drop nodrop race secondwifi wrap beside portalrefused joinfail storerefused \
+                       unencrypted commands scan linger reset companion startfail init
+
+# canary-wap's own Improv door glue (projects/canary-wap/arduino/canary_wap/
+# ble_improv.cpp, sweep F471): handle_command() and the two helpers it calls
+# (same_addr(), note_link_wrote()) cut verbatim by cut_functions.awk, so the
+# file's NimBLE half never compiles, over the sketch's staged improv_core.h
+# and its health_log.h, and stand-ins for the mailbox statics,
+# publish_error() / publish_state(), log_health() and the sketch's bridges.
+# It holds the rule test_improv_glue.cpp's secondwifi holds on the common
+# glue: the WIFI_SETTINGS line's level and words are the write's verdict, so
+# a second write refused mid-join logs WARNING "refused" (and counts in
+# s_refused), never INFO "accepted, joining".
+BLEIMPW_DIR  = ../projects/canary-wap/arduino/canary_wap
+BLEIMPW_SRC  = $(BLEIMPW_DIR)/ble_improv.cpp
+BLEIMPW_SIGS = bool same_addr(const ble_addr_t& a, const ble_addr_t& b) {|void note_link_wrote(uint16_t conn, const ble_addr_t& addr, uint32_t now_ms) {|void handle_command(uint32_t now_ms) {
+BLEIMPW_INC  = $(BUILD_DIR)/ble_improv_command_wap.inc
+BLEIMPW_BIN  = $(BUILD_DIR)/test_ble_improv_command_wap
 
 # The claim ticket (common/network/claim_ticket.h): how a phone that handed
 # a WAP its Wi-Fi over the Bluetooth setup door is paired without the bearer
@@ -257,7 +294,8 @@ AUTHBACKOFF_BIN = $(BUILD_DIR)/test_auth_backoff
 # five keys, each once; a DNS name or IPv4 literal; a plain integer port; user
 # and pass together, 64 bytes each; the three escapes a password can need and
 # no other; 240 bytes at most), every refusal wiping the record, and the one
-# status byte the phone reads back. The NimBLE glue is improv_ble.cpp's.
+# status byte the phone reads back. The NimBLE glue is improv_ble.cpp's
+# (test_improv_glue.cpp drives it).
 HUBHO_HDR = ../common/network/hub_handoff.h
 HUBHO_BIN = $(BUILD_DIR)/test_hub_handoff
 
@@ -943,6 +981,26 @@ KEYDRAW_READS       = $(KEYDRAW_CRYPTO_SRC) $(WITKEY_SRCS) $(KEYDRAW_WAP_SRC) \
                       ../canary/lib/securacv_witness/src/securacv_witness.cpp
 KEYDRAW_BIN         = $(BUILD_DIR)/test_key_draw_check
 
+# The constant-time byte compare (test_ct_compare.cpp):
+# common/core/ct_compare.h's answers, a fault trap on each buffer's first and
+# last byte (a forward early exit never reads the last, a backward one the
+# first), and the text of its loop; and
+# its canary (PIO) caller, run on its own code: datamgmt_backup_chain() and
+# datamgmt_restore_chain() cut out of securacv_data_mgmt.cpp
+# (cut_functions.awk) with the backup format's four constants (the awk below
+# takes each line once, or the build fails), over the canary-wap suites' fake
+# SD card (stubs/sd_fake) and OpenSSL's HMAC-SHA256. It reads the source and
+# the header (argv) to pin the call site and the loop. The canary-wap's two
+# callers are its own suites' (test_mesh_pair_crypto, test_mesh_liveness_wap,
+# test_wap_hmac_fail).
+CTCMP_HDR        = ../common/core/ct_compare.h
+CTCMP_DM_SRC     = ../canary/lib/securacv_data_mgmt/src/securacv_data_mgmt.cpp
+CTCMP_DM_SIGS    = bool datamgmt_backup_chain(void) {|bool datamgmt_restore_chain(void) {
+CTCMP_DM_CONSTS  = $(BUILD_DIR)/ct_compare_datamgmt_consts.inc
+CTCMP_DM_INC     = $(BUILD_DIR)/ct_compare_datamgmt.inc
+CTCMP_SD_FAKE    = ../projects/canary-wap/tests_host/stubs/sd_fake
+CTCMP_BIN        = $(BUILD_DIR)/test_ct_compare
+
 # The flagship's and the common witness core's SHA-256 fail closed (repo
 # sweep F455, test_sha_fail_flagship.cpp; the canary-wap's F364 rule on the
 # other trees). The helpers answer whether each mbedTLS step ran and zero
@@ -1361,6 +1419,37 @@ $(PROVGATE_BIN): test_provisioning_gate.cpp $(PROVGATE_HDR) $(PROVGATE_MAIN) $(P
 $(IMPROV_BIN): test_improv_core.cpp $(IMPROV_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_improv_core.cpp
 
+$(IMPROVGLUE_BIN)_core3: IMPROVGLUE_MAJOR = 3
+$(IMPROVGLUE_BIN)_core2: IMPROVGLUE_MAJOR = 2
+$(IMPROVGLUE_BINS): test_improv_glue.cpp $(IMPROVGLUE_SRC) Makefile | $(BUILD_DIR)
+	$(call with_deps,$(CXX) $(CXXFLAGS) -DFEATURE_IMPROV=1 -DESP_ARDUINO_VERSION_MAJOR=$(IMPROVGLUE_MAJOR) \
+	    -I stubs/improv_glue -I ../common test_improv_glue.cpp $(IMPROVGLUE_SRC) -o $@)
+
+# Each binary's scenario list must be this file's; then each scenario runs
+# alone, and one that fails, crashes or trips a sanitizer stops make, named.
+.PHONY: run-improv-glue
+run-improv-glue: $(IMPROVGLUE_BINS)
+	@for b in $(IMPROVGLUE_BINS); do \
+	  test "$$(./$$b --list)" = "$(IMPROVGLUE_SCENARIOS)" || \
+	    { echo "$$b --list: '$$(./$$b --list)'; the Makefile runs '$(IMPROVGLUE_SCENARIOS)'" >&2; exit 1; }; \
+	done
+	@for b in $(IMPROVGLUE_BINS); do for s in $(IMPROVGLUE_SCENARIOS); do \
+	  ./$$b $$s || { echo "$$b $$s: exit $$?" >&2; exit 1; }; \
+	done; done
+run: run-improv-glue
+
+$(BLEIMPW_INC): $(BLEIMPW_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(BLEIMPW_SIGS)' -f cut_functions.awk $(BLEIMPW_SRC) > $@.tmp && mv $@.tmp $@
+
+$(BLEIMPW_BIN): test_ble_improv_command_wap.cpp $(BLEIMPW_INC) Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -I stubs/improv_glue -I $(BLEIMPW_DIR) \
+	    -DBLEIMPW_INC='"$(abspath $(BLEIMPW_INC))"' test_ble_improv_command_wap.cpp -o $@
+
+.PHONY: run-ble-improv-command-wap
+run-ble-improv-command-wap: $(BLEIMPW_BIN)
+	./$(BLEIMPW_BIN)
+run: run-ble-improv-command-wap
+
 $(CLAIM_BIN): test_claim_ticket.cpp $(CLAIM_HDR) Makefile | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ test_claim_ticket.cpp
 
@@ -1715,6 +1804,25 @@ $(KEYDRAW_BIN): test_key_draw_check.cpp $(KEYDRAW_CRYPTO_INC) $(KEYDRAW_WAP_INC)
 run-key-draw-check: $(KEYDRAW_BIN)
 	./$(KEYDRAW_BIN) $(KEYDRAW_READS)
 run: run-key-draw-check
+
+$(CTCMP_DM_CONSTS): $(CTCMP_DM_SRC) Makefile | $(BUILD_DIR)
+	awk '/^static constexpr (uint32_t|size_t) +BACKUP_(MAGIC|VERSION|PAYLOAD|SIZE) +=/ { n++; printf "#line %d \"%s\"\n", FNR, FILENAME; print } \
+	  END { if (n != 4) { print "securacv_data_mgmt.cpp: " n + 0 " BACKUP_ constant line(s), expected 4" > "/dev/stderr"; exit 1 } }' \
+	  $(CTCMP_DM_SRC) > $@.tmp && mv $@.tmp $@
+
+$(CTCMP_DM_INC): $(CTCMP_DM_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
+	awk -v 'sigs=$(CTCMP_DM_SIGS)' -f cut_functions.awk $(CTCMP_DM_SRC) > $@.tmp && mv $@.tmp $@
+
+$(CTCMP_BIN): test_ct_compare.cpp $(CTCMP_HDR) $(CTCMP_DM_CONSTS) $(CTCMP_DM_INC) \
+              $(wildcard $(CTCMP_SD_FAKE)/*.h) ../canary/include/log_level.h Makefile | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -Wno-deprecated-declarations -I ../common -I ../canary/include -I $(CTCMP_SD_FAKE) \
+	  -I $(BUILD_DIR) -DCT_DATAMGMT_CONSTS_INC='"$(notdir $(CTCMP_DM_CONSTS))"' \
+	  -DCT_DATAMGMT_INC='"$(notdir $(CTCMP_DM_INC))"' test_ct_compare.cpp -lcrypto -o $@
+
+.PHONY: run-ct-compare
+run-ct-compare: $(CTCMP_BIN)
+	./$(CTCMP_BIN) $(CTCMP_DM_SRC) $(CTCMP_HDR)
+run: run-ct-compare
 
 $(BUILD_DIR)/sha_fail_crypto.inc: $(SHAFL_CRYPTO_SRC) cut_functions.awk Makefile | $(BUILD_DIR)
 	awk -v 'sigs=$(SHAFL_CRYPTO_SIGS)' -f cut_functions.awk $(SHAFL_CRYPTO_SRC) > $@.tmp && mv $@.tmp $@
