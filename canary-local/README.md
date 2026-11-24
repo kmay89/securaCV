@@ -247,7 +247,9 @@ Three doors into the same live device, all driven by one scenario API
 - **Try it** — free play: link switches, time controls, staged events,
   tamper, household ack-sync from a "sibling display". And the first
   boot: "meet the bird again" reboots a factory-fresh unit (no Wi-Fi
-  stored), the real `net/provision.cpp` raises its `SecuraCV-display-XXXX`
+  stored, and none seeded again by a bench power event or a restart until
+  the portal stores one: `assets/app.js` `stageFlash`, held by
+  `tests/bench.test.js` and `tests/bench_probe.mjs`), the real `net/provision.cpp` raises its `SecuraCV-display-XXXX`
   SoftAP, and a phone (`assets/onboard-phone.js`) walks the display's own
   portal — join with the key from the glass's QR, the captive DNS answer,
   the firmware's page in a sandboxed `srcdoc` frame, `/scan`, `/join`,
@@ -949,7 +951,10 @@ fails on byte drift.
   `duty >> 5`, raised to 1 when a glow was asked for, clipped at the cap,
   then `<< 5`): 128 steps 32 apart from dark to 4064, so a glow under 32
   shows at 32 and a duty past the cap's byte at 4064 (the twin's own duty is
-  checked, not only the byte the board would make of it); in the dash's
+  checked, not only the byte the board would make of it); in the AMOLED
+  2.41's config (A100) every day level passes as asked and every night duty
+  steps to the byte its RM690B0's brightness command takes, the same `>> 5`
+  with no ceiling, 256 steps up to 8160; in the dash's
   config every one passes through as asked. With no argument
   it fetches `third_party/lvgl` at `build.sh`'s `LVGL_TAG` when it is
   absent, so CI runs it before any step that reads the committed dist (a
@@ -972,14 +977,23 @@ fails on byte drift.
   y, LVGL 8.4's animation list, the glass's shape and turn, and the
   firmware's `[orient]` serial lines: every boot's last announcement, and
   one made after each turn, must carry the quarter turns the glass is worn
-  at (A81: `Orient`'s R90, R180 and R270 as 1, 2 and 3). Fetches LVGL,
+  at (A81: `Orient`'s R90, R180 and R270 as 1, 2 and 3). One more boot runs
+  the 10 s hold's erase (A127): `forget_wifi_credentials()` must reach the
+  page as `js_nvs_remove` for exactly `wifi_ssid`, `wifi_pass`, the ring and
+  `ap_pass`, and a `Preferences::clear()` once per key it erased. Then the
+  same script builds `build.sh`'s dash TU list and defines with
+  `dash_sheet_turn_test.cpp` (F370): a settings sheet open when the phone
+  turns the glass (the stored rotation, as `/api/set` writes it) must be laid
+  out for the 480x800 column it then wears, its Orientation row and page
+  naming the turn worn, and nothing is rebuilt while a finger is down. Both
+  drivers run, and the script fails at its end if either did. Fetches LVGL,
   Crypto and
   ArduinoJson at `build.sh`'s pins when absent, and CI runs it right after
   `glass_turn.sh`.
   `tests/onboard.test.js` holds its TU lists, defines and language flags to
-  what `build.sh` hands em++ for the nightlight, and each page call it (and
-  `glass_turn.sh`'s two tests) defines to the signature of the `EM_JS` it
-  stands in for. Both scripts build in `GLASS_TURN_OUT` /
+  what `build.sh` hands em++ for the nightlight and for the dash, and each
+  page call its two drivers (and `glass_turn.sh`'s two tests) define to the
+  signature of the `EM_JS` it stands in for. Both scripts build in `GLASS_TURN_OUT` /
   `RUNTIME_TURN_OUT` when set and leave it there; otherwise in a temporary
   directory they remove on exit, pass or fail (A82).
 

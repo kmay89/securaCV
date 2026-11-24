@@ -6,9 +6,11 @@ The plan asks the dashboard's microcopy to read at ≤ 6th grade so it works
 for grandmas and 10-year-olds. This script computes the aggregate
 Flesch-Kincaid Grade Level across every user-facing string in
 csi_dashboard_html.h's COPY object and fails if it scores worse than the
-configured ceiling (default 6th grade — matches the spec's target with
-no slack, since the corpus reads at ~3.4 today and any future jargon
-that pushes the aggregate past 6 deserves to be caught).
+ceiling: --max-grade when given, else DEFAULT_MAX_GRADE, the plan's
+6th-grade target with no slack, since the corpus reads at ~3.4 today and
+any future jargon that pushes the aggregate past the target deserves to
+be caught. (scripts/tests/test_microcopy_fkgl.py holds this sentence to
+the constant, and microcopy_lint.sh to passing no --max-grade.)
 
 We aggregate into one corpus rather than per-string because:
   - Many strings are short (1-3 words) where FKGL is meaningless.

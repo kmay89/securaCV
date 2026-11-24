@@ -101,10 +101,13 @@ In code this layout is spelled once, in `firmware/common/fleet_link/fleet_chirp.
 the builder the canary-wap sends with, and the parser the canary, canary-sense,
 canary-vision and display receivers read with, host-tested by
 `test_fleet_chirp.cpp` beside it. The canary-wap's own nearby scan
-(`ble_nearby.h`) keeps a wider rule of its own (17 bytes or more, any type
-byte) over the same offsets. The header's opening comment names the include
-path each tree uses; [parity by architecture](FLEET_PARITY.md) names the
-guards that hold its copies.
+(`ble_nearby.h`) reads it with the same parser since sweep F459; it kept a
+wider rule of its own before (17 bytes or more, any type byte), which listed
+an 18-byte blob or a type 0x00 or 0x06 in `GET /api/nearby` as a Canary.
+Whether such adverts should ever be listed, under a non-Canary label, is an
+open decision. The header's opening comment names the include path each tree
+uses; [parity by architecture](FLEET_PARITY.md) names the guards that hold
+its copies.
 
 ### 5.2 Chirp Types
 

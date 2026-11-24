@@ -9,8 +9,13 @@
 # boot at that rotation seats it, hop with the tumble's Startle (F242; inside
 # the first 8 s of uptime, F279), keep one owner of the bird's y through that
 # hop (F244) and write one "[orient] app picker -> rotation R (was P)" line
-# (F285). No emsdk: this proves the sources the dist is built from, not the
-# dist's bytes.
+# (F285); and the 10 s hold's erase must reach the page key by key (A127).
+# Then the same for build.sh's dash TU list and defines, with
+# dash_sheet_turn_test.cpp: the dash turned by the phone under an open
+# settings sheet, which must be laid out for the frame the glass then wears,
+# and never under a finger (F370). Both drivers run; the script fails at its
+# end if either did. No emsdk: this proves the sources the dist is built
+# from, not the dist's bytes.
 #
 #   bash canary-local/emulator/test/runtime_turn.sh [LVGL_DIR [ARDUINOJSON_DIR [ARDUINOLIBS_DIR]]]
 #
@@ -182,4 +187,75 @@ for src in "${EMU_C_SRCS[@]}"; do
 done
 # The emulator's time() wrap, linked the way build.sh links it.
 g++ -o "$OUT/runtime_turn_test" "${objs[@]}" "$OUT"/lvgl/*.o -Wl,--wrap=time -lm
-"$OUT/runtime_turn_test"
+failed=()
+"$OUT/runtime_turn_test" || failed+=(nightlight)
+
+# ── The dash (F370) ─────────────────────────────────────────────────────
+# build.sh's dash flavor, built the same way into its own directories (its
+# LVGL too: the nightlight's lean budget drops fonts the dash's faces use):
+# dash_sheet_turn_test.cpp opens the settings sheet, turns the glass the way
+# the phone's /api/set does, and holds the sheet to the frame the glass then
+# wears. DASH_DEFS is build.sh's DEFINES for the dash, word for word and in
+# its order, less the same reproducibility words; onboard.test.js holds both
+# and DASH_FIRMWARE_SRCS to build.sh's dash.
+DASH_CFG="$FW/configs/canary-display/dash"
+DASH_PINS="$FW/boards/waveshare-esp32s3-lcd43/pins"
+DASH_DEFS=(-DARDUINO=10812 -DLV_CONF_INCLUDE_SIMPLE
+           '-DEMU_BUILD_FLAVOR="dash"' -DFEATURE_CHIME=1
+           -DARDUINOJSON_ENABLE_ARDUINO_STRING=0 -DARDUINOJSON_ENABLE_ARDUINO_STREAM=0
+           -DARDUINOJSON_ENABLE_ARDUINO_PRINT=0 -DARDUINOJSON_ENABLE_PROGMEM=0)
+DASH_INC=(-I "$HERE/runtime_turn" -I "$EMU/shim" -I "$EMU/src" -I "$PROJ/include"
+          -I "$DASH_CFG" -I "$DASH_PINS" -I "$FW/common" -I "$LVGL" -I "$CRYPTO" -I "$AJ/src")
+mkdir -p "$OUT/lvgl_dash" "$OUT/dash"
+export DASH_LVGL_FLAGS="-std=gnu11 -O1 -w ${DASH_DEFS[*]} ${DASH_INC[*]}"
+# shellcheck disable=SC2016  # the inner script expands $OUT, $LVGL and $DASH_LVGL_FLAGS itself
+find "$LVGL/src" -name '*.c' -print0 | sort -z | xargs -0 -n 8 -P "$(nproc)" bash -c '
+  for src in "$@"; do
+    obj="$OUT/lvgl_dash/$(echo "${src#$LVGL/}" | tr "/." "__").o"
+    [[ -f "$obj" && "$obj" -nt "$src" ]] && continue
+    gcc $DASH_LVGL_FLAGS -c "$src" -o "$obj"
+  done' _
+# build.sh's FIRMWARE_SRCS for the dash: the base list alone (the color and
+# RTC blocks are the portrait flavors').
+DASH_FIRMWARE_SRCS=(
+  "$PROJ/src/main.cpp"
+  "$PROJ/src/glass_settings.cpp"
+  "$PROJ/src/runtime_config.cpp"
+  "$PROJ/src/trust.cpp"
+  "$PROJ/src/diagnostics.cpp"
+  "$PROJ/src/hal/chime.cpp"
+  "$PROJ/src/net/mqtt_mgr.cpp"
+  "$PROJ/src/net/provision.cpp"
+  "$PROJ"/src/ui/*.cpp
+  "$PROJ"/src/care/*.cpp
+  "$PROJ"/src/fleet/*.cpp
+  "$FW/common/boot/boot_banner.cpp"
+)
+DASH_CXX=(g++ -std=gnu++17 -O1 -w -fno-exceptions -fno-rtti -include time.h "${DASH_DEFS[@]}" "${DASH_INC[@]}")
+dash_objs=()
+pids=()
+for src in "${DASH_FIRMWARE_SRCS[@]}" "${CRYPTO_SRCS[@]}" "${EMU_SRCS[@]}" "$HERE/dash_sheet_turn_test.cpp"; do
+  obj="$OUT/dash/$(echo "$src" | tr '/.' '__').o"
+  dash_objs+=("$obj")
+  extra=()
+  [[ "$(basename "$src")" == "emu_main.cpp" ]] && extra=(-Dmain=emu_entry)
+  "${DASH_CXX[@]}" "${extra[@]}" -c "$src" -o "$obj" &
+  pids+=($!)
+  if (( ${#pids[@]} >= $(nproc) )); then
+    wait "${pids[0]}"
+    pids=("${pids[@]:1}")
+  fi
+done
+for p in "${pids[@]}"; do wait "$p"; done
+for src in "${EMU_C_SRCS[@]}"; do
+  obj="$OUT/dash/$(echo "$src" | tr '/.' '__').o"
+  dash_objs+=("$obj")
+  gcc -std=gnu11 -O1 -w "${DASH_DEFS[@]}" "${DASH_INC[@]}" -c "$src" -o "$obj"
+done
+g++ -o "$OUT/dash_sheet_turn_test" "${dash_objs[@]}" "$OUT"/lvgl_dash/*.o -Wl,--wrap=time -lm
+"$OUT/dash_sheet_turn_test" || failed+=(dash)
+
+if ((${#failed[@]})); then
+  echo "runtime_turn: FAILED in: ${failed[*]}" >&2
+  exit 1
+fi

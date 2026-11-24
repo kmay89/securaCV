@@ -15,7 +15,10 @@ through scripts/_device_join.py, so the two lints cannot disagree). Each
 product's feature claims are held to its own tree (section 2a-bis): the flag
 the tree spells the feature with (featureCatalog's, or FLAG_ALIASES') must be
 #define'd there, and a reading must be under it (thermal: a die-temperature
-read), read by the sweep-C35 suite's tree reader. Every count of the flagship
+read), read by the sweep-C35 suite's tree reader. A claim no flag is mapped
+for (UNMAPPED) names the code it rests on instead (EVIDENCE, section
+2a-ter), which must stay in its tree as unconditional code, as far as the
+source itself shows (macros are not expanded). Every count of the flagship
 self-test's probes a note states is held to the suite itself
 (securacv_diagnostics.cpp's TESTS[]: a lane's note reaches the website's
 /checkup page). It is a cheap grep-style check (no PlatformIO), run in
@@ -23,12 +26,14 @@ self-test's probes a note states is held to the suite itself
 
 Exit non-zero on any drift, printing every problem.
 """
+import bisect
 import functools
 import importlib.util
 import json
 import re
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 from _device_join import (
     load_manifests,
@@ -68,6 +73,51 @@ UNMAPPED = {
     ("canary-sense", "selftest"),
     ("canary-display", "selftest"),
 }
+
+# The code each UNMAPPED claim rests on today (sweep C37): a source of that
+# tree (test_board_thermal_notes.tree_files) and a needle that must stand in
+# it as code, under no #if / #ifdef / #ifndef (needle_sites says exactly what
+# counts, and what it does not model). It names the code; it maps nothing, so
+# the claim stays in UNMAPPED and the copy question stays open. When the code
+# goes, or goes conditional, the lint says what may be done about the claim
+# instead (lost_code). The table and UNMAPPED must hold the same keys, so
+# neither can rot.
+EVIDENCE = {
+    # The CSI library and its HTTP endpoints (csi_integration::init in setup()).
+    ("canary-wap", "csi"): ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+                            '#include "csi_integration.h"'),
+    # The wizard's on-demand self-test, GET /api/selftest — not a boot one.
+    ("canary-wap", "selftest"): ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+                                 '#include "selftest_api.h"'),
+    # The GNSS UART setup() opens for an optional module (PHASE 4).
+    ("canary-wap", "gps"): ("firmware/projects/canary-wap/arduino/canary_wap/canary_wap.ino",
+                            "Serial1.begin(GPS_BAUD"),
+    # The OTA engine's boot self-test: one required wifi probe, then confirm
+    # or roll back the image (ota_boot_validate).
+    ("canary-vision", "selftest"): ("firmware/projects/canary-vision/src/net/ota_mgr.cpp",
+                                    "securacv_ota_boot_self_test();"),
+    ("canary-sense", "selftest"): ("firmware/projects/canary-sense/src/net/ota_mgr.cpp",
+                                   "securacv_ota_boot_self_test();"),
+    # The canary-display-watch lane builds src/ (src_dir = src).
+    ("canary-display", "selftest"): ("firmware/projects/canary-display/src/net/ota_mgr.cpp",
+                                     "securacv_ota_boot_self_test();"),
+}
+
+# The feature every build must list (check_features): its claim can be held
+# to code or mapped to a flag, never dropped.
+ALWAYS_LISTED = "selftest"
+
+
+def lost_code(feat: str) -> str:
+    """The words a row's failure ends with: what may be done about the claim
+    whose code went, and the sweep item that asks it. A claim may be dropped
+    or mapped (a FLAG_ALIASES spelling, or a flag the tree grows), except the
+    ALWAYS_LISTED one, which every build must keep."""
+    if feat == ALWAYS_LISTED:
+        return (f"the claim lost the code it rests on: restore the code, or map the claim "
+                f"(a flag the tree #defines, in FLAG_ALIASES); a '{feat}' claim cannot be "
+                f"dropped, every build must list it (sweep C37)")
+    return "the claim lost the code it rests on: drop it or map it (sweep C37)"
 
 _TREE_SUITE = ROOT / "scripts" / "tests" / "test_board_thermal_notes.py"
 
@@ -165,6 +215,288 @@ def feature_flag_errors(matrix: dict, tree_facts, env_flags, aliases=None,
                           f"{flag} — the claim can be held to it; drop it from UNMAPPED")
     for tree, feat in sorted(set(aliases) - claimed):
         errors.append(f"FLAG_ALIASES maps ({tree!r}, {feat!r}), which no lane claims — drop it")
+    return errors
+
+
+# ── the code an UNMAPPED claim rests on (sweep C37) ──────────────────────────
+
+_LEX_RE = re.compile(r"//|/\*|[\"']")
+_WORD_BEFORE_RE = re.compile(r"\w{1,16}\Z")
+_LITERAL_PREFIXES = ("u8", "u", "U", "L")
+_RAW_PREFIXES = ("R", "u8R", "uR", "UR", "LR")
+# Translation phase 2: a backslash that ends a line joins the next line to it.
+# GCC and Clang take spaces or tabs between the backslash and the newline as
+# well (with a warning), and so does this.
+_SPLICE_RE = re.compile(r"\\[ \t\f\v]*\r?\n")
+# A directive's `#` (or its digraph `%:`) and keyword, from the start of a
+# logical line: whitespace, and comments blanked to it, may come first.
+_DIRECTIVE_RE = re.compile(r"\s*(#|%:)\s*(\w*)")
+# What each offset of lex_c's text is.
+CODE, LITERAL, COMMENT = 0, 1, 2
+# A translation unit: what a build compiles on its own. A header is compiled
+# only where something includes it, so it cannot be a claim's evidence.
+_UNIT_SUFFIXES = (".ino", ".c", ".cc", ".cpp")
+
+
+class Lexed(NamedTuple):
+    """lex_c's reading of a source: `text` is the source after translation
+    phase 2 (every line splice taken out) with every comment blanked to
+    spaces (a block comment's newlines kept), and `kind[i]` says what offset
+    i of `text` is (CODE, LITERAL or COMMENT). `src` is the source as read,
+    and `joins` / `taken` map an offset of `text` back to it: the k-th
+    splice came out at text offset joins[k], and taken[k] characters had
+    come out by then."""
+    text: str
+    kind: bytearray
+    src: str
+    joins: list
+    taken: list
+
+    def src_offset(self, at: int) -> int:
+        """The offset in `src` of offset `at` of `text`."""
+        k = bisect.bisect_right(self.joins, at)
+        return at + (self.taken[k - 1] if k else 0)
+
+    def text_offset(self, at: int) -> int:
+        """The offset in `text` of offset `at` of `src`, which is not inside
+        a splice (lex_c maps only the end of a raw string, just past its
+        closing quote)."""
+        lo, hi = 0, len(self.joins)
+        while lo < hi:  # the splices that end at or before `at` in src
+            mid = (lo + hi) // 2
+            if self.joins[mid] + self.taken[mid] <= at:
+                lo = mid + 1
+            else:
+                hi = mid
+        return at - (self.taken[lo - 1] if lo else 0)
+
+
+@functools.lru_cache(maxsize=8)  # three rows read the one 685 KB sketch
+def lex_c(src: str) -> Lexed:
+    """C/C++ source read through translation phases 1 to 3, as far as a
+    needle needs: a byte-order mark is not a character of the source, every
+    line splice comes out first (so a `//` comment whose line ends in a
+    backslash takes the next line with it, and a string can run on across
+    one), and then comments and literals are told apart. A raw string
+    (R"d(...)d", with the u8/u/U/L prefixes) runs to its own close in the
+    source as read, since the standard undoes a splice inside one; an
+    ordinary literal stops before an unescaped newline, so one stray quote
+    (an apostrophe in an #if 0 block) cannot swallow the rest of the file. A
+    quote after a digit is a C++14 digit separator, not a literal. A
+    literal's prefix is part of it. Trigraphs, gone from C++17 and off in
+    GCC's gnu modes, are not read."""
+    if src.startswith("\ufeff"):
+        src = " " + src[1:]  # the mark is not a token; offsets hold
+    parts: list[str] = []
+    joins: list[int] = []
+    taken: list[int] = []
+    pos = gone = 0
+    for m in _SPLICE_RE.finditer(src):
+        parts.append(src[pos:m.start()])
+        joins.append(m.start() - gone)
+        gone += m.end() - m.start()
+        taken.append(gone)
+        pos = m.end()
+    parts.append(src[pos:])
+    text = "".join(parts)
+    lexed = Lexed(text, bytearray(len(text)), src, joins, taken)
+    out = list(text)
+    kind = lexed.kind
+    n = len(text)
+    i = 0
+    while True:
+        m = _LEX_RE.search(text, i)
+        if m is None:
+            break
+        i, tok = m.start(), m.group()
+        if tok == "//":
+            # No newline is left inside a line comment: phase 2 took them out.
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            out[i:j] = " " * (j - i)
+            kind[i:j] = bytes([COMMENT]) * (j - i)
+            i = j
+            continue
+        if tok == "/*":
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            out[i:j] = ["\n" if ch == "\n" else " " for ch in text[i:j]]
+            kind[i:j] = bytes([COMMENT]) * (j - i)
+            i = j
+            continue
+        before = _WORD_BEFORE_RE.search(text, max(0, i - 16), i)
+        word = before.group() if before else ""
+        if tok == "'" and word[:1].isdigit():
+            i += 1  # 1'000'000: a digit separator
+            continue
+        start = i - len(word) if word in _LITERAL_PREFIXES + _RAW_PREFIXES else i
+        k = text.find("(", i + 1, i + 18) if tok == '"' and word in _RAW_PREFIXES else -1
+        if k >= 0 and not re.search(r"[\s\\)\"]", text[i + 1:k]):
+            close = ")" + text[i + 1:k] + '"'
+            at = src.find(close, lexed.src_offset(k) + 1)
+            j = n if at < 0 else lexed.text_offset(at + len(close))
+        else:
+            j = i + 1
+            while j < n and text[j] != tok and text[j] != "\n":
+                j += 2 if text[j] == "\\" else 1
+            if j < n and text[j] == tok:
+                j += 1
+            j = min(j, n)
+        kind[start:j] = bytes([LITERAL]) * (j - start)
+        i = j
+    return lexed._replace(text="".join(out))
+
+
+def needle_sites(src: str, needle: str) -> tuple[list[int], list[str]]:
+    """Where `needle` stands in `src` as compiled code: (the 1-based lines of
+    `src` it does, why each other occurrence does not count).
+
+    The source is read as lex_c reads it, splices out, and the needle counts
+    only where it starts in code (not in a comment, nor in a string or
+    character literal, its prefix included), whole at both ends (`foo()` is
+    not in `my_foo()`), on a logical line no #if / #ifdef / #ifndef / #elif /
+    #else encloses (an #if 0 block, an #if 1 block and an include guard all
+    count as conditional: the needle belongs at a call site in a .ino /
+    .cpp, and a false red is the safe way to be wrong), and not inside a
+    directive unless it IS that directive (`#include "x.h"` counts; the same
+    text in a #define body compiles only where the macro is used, so it does
+    not). A logical line ends at a newline in code: one inside a block
+    comment or a raw string does not end it (phase 3 makes the comment one
+    space), so the rest of the line a comment closes on still belongs to the
+    directive it opened in.
+
+    It holds the needle to the ways code stops compiling that show in the
+    source itself. It does not expand macros (a #define that turns the
+    needle's name into nothing would fool it), nor know which files a build
+    compiles beyond the tree reader's list, nor whether anything calls the
+    code at run time."""
+    lexed = lex_c(src)
+    text, kind = lexed.text, lexed.kind
+    line_starts = [0] + [m.end() for m in re.finditer("\n", lexed.src)]
+
+    def line_of(at: int) -> int:
+        return bisect.bisect_right(line_starts, lexed.src_offset(at))
+
+    ends = [m.start() for m in re.finditer("\n", text) if kind[m.start()] == CODE]
+    starts = [0] + [e + 1 for e in ends]
+    ends.append(len(text))
+    # Each directive (by its logical line), and the conditionals open after
+    # it: (the `#if` as written, its line, the branch now in force, its line).
+    frames: list[tuple[str, int, str, int]] = []
+    directive: dict[int, tuple[int, int, str]] = {}
+    after: list[int] = []
+    open_after: list[tuple[tuple[str, int, str, int], ...]] = []
+    for idx, (ls, le) in enumerate(zip(starts, ends)):
+        m = _DIRECTIVE_RE.match(text, ls, le)
+        if m is None:
+            continue
+        no, kw = line_of(m.start(1)), m.group(2)
+        directive[idx] = (m.start(1), no, "".join(text[m.start(1):m.end()].split()))
+        said = " ".join(text[m.start(1):le].split())
+        if kw in ("if", "ifdef", "ifndef"):
+            frames.append((said, no, said, no))
+        elif kw in ("elif", "elifdef", "elifndef", "else") and frames:
+            frames[-1] = (frames[-1][0], frames[-1][1], said, no)
+        elif kw == "endif" and frames:
+            frames.pop()
+        after.append(idx)
+        open_after.append(tuple(frames))
+    head = r"(?<!\w)" if re.match(r"\w", needle) else ""
+    tail = r"(?!\w)" if re.search(r"\w$", needle) else ""
+    good: list[int] = []
+    why: list[str] = []
+    for m in re.finditer(head + re.escape(needle) + tail, text):
+        at = m.start()
+        if kind[at] != CODE:
+            continue  # in a literal (a comment is blanked): not code at all
+        idx = bisect.bisect_right(starts, at) - 1
+        no = line_of(at)
+        e = bisect.bisect_left(after, idx) - 1
+        ctx = open_after[e] if e >= 0 else ()
+        d = directive.get(idx)
+        if d and d[0] != at:
+            body = (" (a macro body compiles only where the macro is used)"
+                    if d[2].endswith("define") else "")
+            why.append(f"line {no} is inside the {d[2]} on line {d[1]}, not code{body}")
+        elif ctx:
+            chain = ", inside ".join(
+                f"`{branch}` (line {bno}) of `{opened}` (line {ono})" if bno != ono
+                else f"`{opened}` (line {ono})"
+                for opened, ono, branch, bno in reversed(ctx))
+            why.append(f"line {no} is under {chain}")
+        else:
+            good.append(no)
+    return good, why
+
+
+@functools.lru_cache(maxsize=None)
+def _read_source(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+@functools.lru_cache(maxsize=None)
+def _tree_paths(tree: str) -> frozenset:
+    """The sweep-C35 suite's files of `tree`, resolved (read once a run)."""
+    return frozenset(Path(p).resolve() for p in tree_suite().tree_files(tree))
+
+
+def evidence_errors(evidence=None, unmapped=None, tree_files=None, read=None,
+                    trees=None) -> list[str]:
+    """Each UNMAPPED claim still has the code EVIDENCE says it rests on.
+
+    The two tables hold the same keys (a claim with no row, or a row for a
+    claim UNMAPPED does not list, is named). For each row, the source path is
+    a translation unit (a .ino / .c / .cc / .cpp: a header compiles only
+    where it is included) among its tree's files (`tree_files`, the
+    sweep-C35 suite's reader by default), and the needle stands in it as
+    compiled code (needle_sites). `read` reads a source (the file on disk by
+    default) and `trees` is the trees there are (the suite's flavor_dirs by
+    default): seams the tests inject sources through."""
+    evidence = EVIDENCE if evidence is None else evidence
+    unmapped = UNMAPPED if unmapped is None else unmapped
+    read = _read_source if read is None else read
+    trees = frozenset(tree_suite().flavor_dirs() if trees is None else trees)
+    errors: list[str] = []
+    files_of: dict[str, frozenset | set[Path]] = {}
+    for tree, feat in sorted(set(unmapped) - set(evidence)):
+        errors.append(f"UNMAPPED lists ({tree!r}, {feat!r}), but EVIDENCE names no code it rests "
+                      f"on — add its (source path, needle) row, or map the claim (sweep C37)")
+    for tree, feat in sorted(set(evidence) - set(unmapped)):
+        errors.append(f"EVIDENCE has a row for ({tree!r}, {feat!r}), which UNMAPPED does not "
+                      f"list — drop the row (sweep C37)")
+    for (tree, feat), (rel, needle) in sorted(evidence.items()):
+        if (tree, feat) not in unmapped:
+            continue
+        where = f"EVIDENCE ({tree!r}, {feat!r})"
+        if tree not in trees:
+            errors.append(f"{where}: '{tree}' is not a flavors.json product, so it has no tree "
+                          f"to hold {rel} to — {lost_code(feat)}")
+            continue
+        path = (ROOT / rel).resolve()
+        if path.suffix not in _UNIT_SUFFIXES:
+            units = ", ".join(_UNIT_SUFFIXES)
+            errors.append(f"{where}: {rel} is not a translation unit ({units}): a header "
+                          f"compiles only where it is included, so name the source that "
+                          f"holds the code — {lost_code(feat)}")
+            continue
+        if tree not in files_of:
+            files_of[tree] = (_tree_paths(tree) if tree_files is None else
+                              {Path(p).resolve() for p in tree_files(tree)})
+        if path not in files_of[tree]:
+            errors.append(f"{where}: {rel} is not a source of the {tree} tree (its flavor dir, "
+                          f"the firmware/common files it includes, its build_src_filter) — "
+                          f"{lost_code(feat)}")
+            continue
+        good, why = needle_sites(read(path), needle)
+        if good:
+            continue
+        if why:
+            more = f"; and {len(why) - 3} more" if len(why) > 3 else ""
+            errors.append(f"{where}: {rel} has {needle!r} only where it is not unconditional "
+                          f"code ({'; '.join(why[:3])}{more}) — {lost_code(feat)}")
+        else:
+            errors.append(f"{where}: {rel} has no {needle!r} outside comments and string "
+                          f"literals — {lost_code(feat)}")
     return errors
 
 
@@ -382,8 +714,8 @@ def collect(root: Path = ROOT) -> list[str]:
         for f in feats:
             if f not in catalog:
                 err(f"{where}: feature '{f}' not in featureCatalog")
-        if "selftest" not in feats:
-            err(f"{where}: every build must include 'selftest' "
+        if ALWAYS_LISTED not in feats:
+            err(f"{where}: every build must include '{ALWAYS_LISTED}' "
                 "(FEATURE_DIAGNOSTICS is always on)")
 
     canary = None
@@ -440,6 +772,19 @@ def collect(root: Path = ROOT) -> list[str]:
     # being on, and a build profile a sketch header chooses (the canary-wap's
     # build_config.h) is not modeled: only an env's -D flags are.
     for e in feature_flag_errors(matrix, tree_suite().tree_facts, tree_suite().env_flags):
+        err(e)
+
+    # ── 2a-ter. an UNMAPPED claim still has the code it rests on (C37) ───────
+    # Each UNMAPPED claim names, in EVIDENCE, the code it rests on today, and
+    # that code must stay in its tree as unconditional compiled code. Deleting
+    # the canary-wap's csi_integration.h include, or wrapping it in an #if,
+    # used to leave the csi claim green; now it says to restore the code, or
+    # to drop or map the claim (a selftest claim may only be mapped: every
+    # build must list it). It holds presence only: whether that code earns
+    # the catalog's words (a wizard or OTA self-test as "Boot self-test", a
+    # GNSS UART for an optional module as "GPS fix") is the open copy
+    # question, not this.
+    for e in evidence_errors():
         err(e)
 
     # ── 2b. flasher deep-link can't rot: every product must resolve to a real

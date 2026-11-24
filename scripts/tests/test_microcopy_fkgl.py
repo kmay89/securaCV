@@ -17,7 +17,11 @@ What is pinned and why:
   • on the real dashboard the extracted list is exactly the string values
     JavaScript itself reads out of COPY (through node, which lint.yml's
     scripts job sets up), less the short and placeholder strings the
-    extractor drops on purpose.
+    extractor drops on purpose;
+  • the ceiling the gate's comments name: microcopy_lint.sh calls the
+    checker with no --max-grade, so DEFAULT_MAX_GRADE is the gate, and the
+    checker's docstring gives the why for the value the constant holds
+    (sweep CI28).
 
 Discovered by lint.yml's `unittest discover -s scripts/tests`.
 """
@@ -110,6 +114,33 @@ class FixtureList(unittest.TestCase):
 
     def test_no_copy_block_is_an_empty_list(self):
         self.assertEqual(fk.extract_copy_strings("const OTHER = { a: 'one two' };"), [])
+
+
+LINT = REPO / "firmware" / "scripts" / "microcopy_lint.sh"
+
+
+class TheCeilingTheCommentsName(unittest.TestCase):
+    """firmware.yml's microcopy-lint comment and microcopy_lint.sh's header
+    say the gate is DEFAULT_MAX_GRADE because the lint passes no
+    --max-grade, and point at the checker's docstring for why that value
+    (sweep CI28). These two pins keep both halves true."""
+
+    def test_the_lint_calls_the_checker_with_its_default_ceiling(self):
+        calls = [
+            ln.strip() for ln in LINT.read_text(encoding="utf-8").splitlines()
+            if "microcopy_fkgl.py" in ln and not ln.lstrip().startswith("#")
+        ]
+        self.assertEqual(len(calls), 1, calls)
+        self.assertNotIn("--max-grade", calls[0])
+        for passthrough in ('"$@"', "$@", "$*"):
+            self.assertNotIn(passthrough, calls[0])
+
+    def test_the_docstring_explains_the_value_in_force(self):
+        m = re.search(r"else DEFAULT_MAX_GRADE, the plan's\s+(\d+)th-grade target",
+                      fk.__doc__ or "")
+        self.assertIsNotNone(m, "the docstring no longer says why DEFAULT_MAX_GRADE")
+        self.assertEqual(float(m.group(1)), fk.DEFAULT_MAX_GRADE,
+                         "DEFAULT_MAX_GRADE moved: restate the docstring's why")
 
 
 class RealDashboard(unittest.TestCase):

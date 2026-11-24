@@ -1279,12 +1279,14 @@ struct Command {
   ChirpUrgency    urgency_filter;
 };
 
-// Why a CHIRP_CMD_SEND did not go out, checked in the order the send handler
-// has always named them: the channel off, the presence requirement, then
-// can_send_chirp()'s two (the cooldown, then a wall clock that has not
-// synced yet), then night mode. The clock had no refusal of its own: it was
-// answered as a cooldown with 0 seconds left, which told the owner to wait
-// for nothing (sweep F146).
+// Why a CHIRP_CMD_SEND did not go out. A TTL outside the spec's range is
+// refused first, before every gate (the request's own shape, as the handler
+// refuses an unknown template before it submits; sweep F412). Then the order
+// the send handler has always named them: the channel off, the presence
+// requirement, then can_send_chirp()'s two (the cooldown, then a wall clock
+// that has not synced yet), then night mode. The clock had no refusal of its
+// own: it was answered as a cooldown with 0 seconds left, which told the
+// owner to wait for nothing (sweep F146).
 enum SendRefusal : uint8_t {
   SEND_REFUSED_NONE = 0,  // it went out, or failed for a reason none of these names
   SEND_REFUSED_DISABLED,
@@ -1293,7 +1295,43 @@ enum SendRefusal : uint8_t {
   SEND_REFUSED_CLOCK_UNSYNCED,  // time() still below MIN_UNIX_TIME: the sketch's one clock
                                 // source, GPS (canary_wap.ino has no SNTP), has not set it
   SEND_REFUSED_NIGHT,
+  SEND_REFUSED_TTL,             // ttl_minutes outside WITNESS_TTL_MIN..MAX_MINUTES (checked first)
 };
+
+// A witness's ttl_minutes, as spec §3.3's CDDL bounds it: "how long to
+// display (5-60)". The send holds this device to it (send_chirp() refuses
+// any other with SEND_REFUSED_TTL, and POST /api/chirp/send answers the
+// refusal before it narrows the request to the uint8_t the frame carries,
+// sweep F412). No receiver reads it as a display time yet: every received
+// chirp lives DEFAULT_DISPLAY_MS, and a relay carries the byte its origin
+// signed, in range or not (sweep F306). Whether a receiver honors or
+// refuses it is the open half of F412.
+static const uint8_t WITNESS_TTL_MIN_MINUTES = 5;
+static const uint8_t WITNESS_TTL_MAX_MINUTES = 60;
+static const uint8_t WITNESS_TTL_DEFAULT_MINUTES = 15;   // a send that names none
+
+inline bool witness_ttl_in_range(int32_t minutes) {
+  return minutes >= WITNESS_TTL_MIN_MINUTES && minutes <= WITNESS_TTL_MAX_MINUTES;
+}
+
+// POST /api/chirp/send's ttl_minutes, as its handler reads it, into *out:
+// absent (or JSON null, `present` false) is WITNESS_TTL_DEFAULT_MINUTES;
+// a present value is sent only when it is an integer (`is_integer`,
+// ArduinoJson's is<int32_t>(): false for a float, a string, a bool or an
+// integer past int32_t) in range, and anything else is false, which the
+// handler answers as SEND_REFUSED_TTL. `value` (its as<int32_t>()) is read
+// only for an integer. The handler's old `input["ttl_minutes"] | 15` into a
+// uint8_t signed 300 as 44, 256 as 0 and -1 as 255, and a 15.5 or a "30" as
+// 15, without a word (sweep F412). *out is written only on true.
+inline bool ttl_from_request(bool present, bool is_integer, int32_t value, uint8_t* out) {
+  if (!present) {
+    *out = WITNESS_TTL_DEFAULT_MINUTES;
+    return true;
+  }
+  if (!is_integer || !witness_ttl_in_range(value)) return false;
+  *out = (uint8_t)value;
+  return true;
+}
 
 // POST /api/chirp/send's answer to a refusal: its "error" and "message"
 // (nullptr for SEND_REFUSED_NONE, which names no reason).
@@ -1304,6 +1342,7 @@ inline const char* send_refusal_error(SendRefusal why) {
     case SEND_REFUSED_COOLDOWN:       return "cooldown";
     case SEND_REFUSED_CLOCK_UNSYNCED: return "clock_unsynced";
     case SEND_REFUSED_NIGHT:          return "night_restricted";
+    case SEND_REFUSED_TTL:            return "invalid_ttl";
     case SEND_REFUSED_NONE:           break;
   }
   return nullptr;
@@ -1315,6 +1354,7 @@ inline const char* send_refusal_message(SendRefusal why) {
     case SEND_REFUSED_COOLDOWN:       return "Please wait before sending another chirp";
     case SEND_REFUSED_CLOCK_UNSYNCED: return "Waiting for the clock to be set from GPS time before sending";
     case SEND_REFUSED_NIGHT:          return "This template is not available during night hours (10pm-6am)";
+    case SEND_REFUSED_TTL:            return "ttl_minutes must be an integer from 5 to 60";
     case SEND_REFUSED_NONE:           break;
   }
   return nullptr;

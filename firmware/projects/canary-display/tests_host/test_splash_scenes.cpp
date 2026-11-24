@@ -47,6 +47,16 @@
 //  * the tallest bubble it drew is the tallest test_splash_layout measures
 //    for that pseudonym (the bubble's width, padding, border and label
 //    inset are the header's, read off what was drawn);
+//  * the wordmark is the one splash.cpp's ladder fits to the canvas (F373):
+//    at every refresh it shows, its box is the face and letter spacing
+//    splash_test_env.h's word_set() names for the canvas and the Character's
+//    title face, as wide as LVGL measures it (word_px, the letter spacing
+//    modeled by fake_lvgl), centered, with sl::kWordMargin of the canvas
+//    each side (pinned: only the 172 px S3 glass under Heirloom steps down,
+//    to Montserrat 28); and on every canvas width from 100 to 260 px, under
+//    every title face this build's ladders set, both splashes leave the
+//    wordmark word_set() names (a canvas narrower than any display's shows
+//    none at all, never a cut one);
 //  * the splash leaves the screen it found, behind its curtain, and
 //    splash_reveal() lifts the curtain.
 // The fake's anims are linear, so the hop's drawn apex is
@@ -113,8 +123,8 @@ int font_glyph(const lv_font_t* f, uint32_t a, uint32_t b) {
 }
 
 // The built-in Montserrat face of `size`, with LVGL's own metrics; null
-// when montserrat_metrics.h does not carry it (the wordmark's title face on
-// small glass: nothing here reads the wordmark's box).
+// when montserrat_metrics.h does not carry it (it carries every face the
+// Character ladders set but the hero's 48, which the splash never sets).
 const lv_font_t* font_or_null(int size) {
   for (int i = 0; i < g_font_n; ++i)
     if (((const Face*)g_fonts[i].dsc)->size == size) return &g_fonts[i];
@@ -131,7 +141,19 @@ const lv_font_t* role_or_null(int r) {
   return font_or_null(g_ladder[g_fam][g_which][r]);
 }
 
+lv_font_t carried_font(int size) {
+  lv_font_t out;
+  const Face* f = face_of(size);
+  out.line_height = f != nullptr ? f->line_height : size;
+  out.glyph_w = font_glyph;
+  out.dsc = f;
+  return out;
+}
+
 }  // namespace
+
+// The face splash.cpp's wordmark steps down to (F373), named directly.
+const lv_font_t lv_font_montserrat_28 = carried_font(28);
 
 namespace canary::ui {
 const lv_font_t* font_title() { return role_or_null(kTitle); }
@@ -183,6 +205,10 @@ struct Read {
   bool tail_styled;         // the tail's styles, read with the bubble up
   int tail_radius, tail_angle, tail_pivot_x, tail_pivot_y;
   bool word_shown;
+  // The wordmark as it showed (F373): its face's px size, letter spacing and
+  // box, the last refresh it was up; and the refreshes it was up somewhere
+  // else (it is placed once).
+  int word_face, word_spacing, word_x, word_w, word_moves;
   int placement_fails;      // refreshes whose bubble sat off its seat
   int off_canvas_fails;     // refreshes whose bubble left the canvas
   int overhang;             // how far the bubble's sides pass the canvas's
@@ -201,6 +227,7 @@ struct Read {
 
 Read g_read;
 int g_power_on_reads = 0;  // splashes read at power-on (main() needs one)
+std::set<std::string> g_stepped;  // canvases whose wordmark stepped down (F373)
 std::set<std::string> g_unclear;  // canvases whose bird seat() leaves unclear
 
 // The tail: the plain square splash.cpp turns under the bubble.
@@ -259,9 +286,19 @@ void refresh() {
   }
   for (size_t i = 0; i < scr->children.size(); ++i) {
     const lv_obj_t* c = scr->children[i];
-    if (c->kind == fake_lvgl::kLabel && c->text == "SecuraCV" &&
-        !lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN))
+    if (c->kind == fake_lvgl::kLabel && c->text == kWordmark &&
+        !lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN)) {
+      const lv_font_t* f = lv_obj_get_style_text_font(c, LV_PART_MAIN);
+      const int face = f != nullptr && f->dsc != nullptr ? ((const Face*)f->dsc)->size : -1;
+      if (R.word_shown && (face != R.word_face || c->letter_space != R.word_spacing ||
+                           c->x1 != R.word_x || c->w != R.word_w))
+        R.word_moves++;
       R.word_shown = true;
+      R.word_face = face;
+      R.word_spacing = c->letter_space;
+      R.word_x = c->x1;
+      R.word_w = c->w;
+    }
   }
 
   lv_obj_t* bub = find_bubble(scr);
@@ -453,6 +490,32 @@ void play(const Canvas& cv, int which, bool first, const std::string& subject) {
     std::printf("      at power-on the mark drew (ms into the splash):%s\n", seen.c_str());
   }
 
+  // F373: the wordmark word_set() names for this canvas and title face, as
+  // wide as LVGL measures it, centered, kWordMargin clear of each side, and
+  // placed once.
+  const int title = g_ladder[g_fam][which][kTitle];
+  const WordSet ws = word_set(cv.w, title);
+  CHECK(ws.shown, "%s: no rung of the wordmark's ladder fits the %d px canvas", n, cv.w);
+  if (R.word_shown) {
+    CHECK(R.word_face == ws.face && R.word_spacing == ws.spacing && R.word_w == ws.w,
+          "%s: the wordmark is montserrat_%d at %d px spacing, %d px wide; the ladder sets "
+          "montserrat_%d at %d (%d px) on this canvas", n, R.word_face, R.word_spacing,
+          R.word_w, ws.face, ws.spacing, ws.w);
+    CHECK(R.word_x == cv.w / 2 - R.word_w / 2 && R.word_x >= sl::kWordMargin &&
+              cv.w - (R.word_x + R.word_w) >= sl::kWordMargin,
+          "%s: the %d px wordmark is drawn at x %d..%d of 0..%d; centered, kWordMargin (%d) "
+          "clear of each side", n, R.word_w, R.word_x, R.word_x + R.word_w - 1, cv.w - 1,
+          sl::kWordMargin);
+    CHECK(R.word_moves == 0, "%s: the wordmark changed %d times while it showed", n,
+          R.word_moves);
+    if (R.word_face != title || R.word_spacing != sl::kWordSpacing)
+      g_stepped.insert(cv.what + " " + std::to_string(cv.w) + "x" + std::to_string(cv.h) +
+                       (which ? "/heirloom" : "/default"));
+  }
+  std::printf("      %s: the wordmark montserrat_%d at %d px spacing, %d px at x %d..%d of "
+              "0..%d\n", first ? "first meeting" : "hello again", R.word_face, R.word_spacing,
+              R.word_w, R.word_x, R.word_x + R.word_w - 1, cv.w - 1);
+
   char line[320];
   if (!first) {
     CHECK(R.bubble_frames == 0, "%s: the speech bubble showed", n);
@@ -555,6 +618,115 @@ void play(const Canvas& cv, int which, bool first, const std::string& subject) {
   std::printf("      %s\n", line);
 }
 
+// ── the wordmark on every canvas width (F373) ────────────────────────────
+// What a sweep splash showed of the wordmark: the refreshes it was up, and
+// its face, spacing and box when it was (and whether that ever changed).
+struct WordSeen {
+  bool found;
+  int frames_up, face, spacing, x, w;
+  bool changed;
+};
+WordSeen g_seen;
+lv_obj_t* g_sweep_home = nullptr;
+
+void sweep_refresh() {
+  lv_obj_t* scr = lv_scr_act();
+  if (scr == nullptr || scr == g_sweep_home) return;
+  lv_obj_update_layout(scr);
+  for (size_t i = 0; i < scr->children.size(); ++i) {
+    const lv_obj_t* c = scr->children[i];
+    if (c->kind != fake_lvgl::kLabel || c->text != kWordmark) continue;
+    g_seen.found = true;
+    if (lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN)) continue;
+    const lv_font_t* f = lv_obj_get_style_text_font(c, LV_PART_MAIN);
+    const int face = f != nullptr && f->dsc != nullptr ? ((const Face*)f->dsc)->size : -1;
+    if (g_seen.frames_up > 0 && (face != g_seen.face || c->letter_space != g_seen.spacing ||
+                                 c->x1 != g_seen.x || c->w != g_seen.w))
+      g_seen.changed = true;
+    g_seen.frames_up++;
+    g_seen.face = face;
+    g_seen.spacing = c->letter_space;
+    g_seen.x = c->x1;
+    g_seen.w = c->w;
+  }
+}
+
+// One splash on a canvas `cw` px wide, the ladder as set: what it showed of
+// the wordmark, held to word_set(). Returns false on a miss.
+bool sweep_one(int cw, int ch, bool first, int* hidden) {
+  fake_lvgl::disp_w() = cw;
+  fake_lvgl::disp_h() = ch;
+  g_fam_drawn = sized(kFam, cw);
+  fake_prefs::uchars().clear();
+  if (!first) fake_prefs::uchars()["scv-hello/met"] = 1;
+  g_seen = WordSeen();
+  g_sweep_home = lv_obj_create(nullptr);
+  lv_scr_load(g_sweep_home);
+  fake_lvgl::refresh_hook() = sweep_refresh;
+  canary::ui::splash_play(first ? 600 : 100);
+  fake_lvgl::refresh_hook() = nullptr;
+  canary::ui::splash_reveal();
+  lv_obj_del(g_sweep_home);
+  g_sweep_home = nullptr;
+  const int title = g_ladder[g_fam][g_which][kTitle];
+  const WordSet ws = word_set(cw, title);
+  if (!ws.shown) ++*hidden;
+  const bool ok = g_seen.found && !g_seen.changed &&
+                  (ws.shown ? g_seen.frames_up > 0 && g_seen.face == ws.face &&
+                                  g_seen.spacing == ws.spacing && g_seen.w == ws.w &&
+                                  g_seen.x == cw / 2 - ws.w / 2 && sl::word_fits(cw, g_seen.w)
+                            : g_seen.frames_up == 0);
+  CHECK(ok, "a %dx%d canvas, title montserrat_%d, %s: the wordmark %s (montserrat_%d at %d, "
+        "%d px at x %d, %d refreshes up%s); the ladder %s montserrat_%d at %d (%d px)", cw, ch,
+        title, first ? "first meeting" : "hello again",
+        !g_seen.found ? "was never made" : g_seen.frames_up > 0 ? "showed" : "never showed",
+        g_seen.face, g_seen.spacing, g_seen.w, g_seen.x, g_seen.frames_up,
+        g_seen.changed ? ", changing" : "", ws.shown ? "sets" : "shows none: not even",
+        ws.face, ws.spacing, ws.w);
+  return ok;
+}
+
+// Every canvas width from 100 to 260 px (the 172 px glass and the 137 px of
+// Montserrat 28 set tight inside it), under every type ladder this build's
+// canvases set: hello again on each, the first meeting too wherever a rung
+// of the ladder starts or stops fitting (and a px either side).
+void sweep_words(const std::vector<Canvas>& cs) {
+  std::set<std::pair<int, int>> ladders;  // (ladder family, Character)
+  int ch = 0;
+  for (const Canvas& cv : cs) {
+    if ((cv.wide ? 2 : cv.round ? 0 : 1) != kBuild) continue;
+    if (ch == 0) ch = cv.h;
+    for (int which = 0; which < 2; ++which) ladders.insert(std::make_pair(cv.fam, which));
+  }
+  int plays = 0, misses = 0, hidden = 0;
+  for (const std::pair<int, int>& l : ladders) {
+    g_fam = l.first;
+    g_which = l.second;
+    const int title = g_ladder[g_fam][g_which][kTitle];
+    std::set<int> edges;  // where a rung starts to fit
+    for (int cw = 100; cw <= 260; ++cw) {
+      const WordSet a = word_set(cw - 1, title), b = word_set(cw, title);
+      if (a.face != b.face || a.spacing != b.spacing || a.shown != b.shown)
+        for (int d = -1; d <= 1; ++d) edges.insert(cw + d);
+    }
+    for (int cw = 100; cw <= 260; ++cw) {
+      misses += sweep_one(cw, ch, false, &hidden) ? 0 : 1;
+      plays++;
+      if (edges.count(cw)) {
+        misses += sweep_one(cw, ch, true, &hidden) ? 0 : 1;
+        plays++;
+      }
+    }
+    std::printf("  the wordmark on canvases 100..260 px wide, title montserrat_%d: %d edge "
+                "widths played as first meetings too\n", title, (int)edges.size());
+  }
+  std::printf("  %d sweep splashes, %d of them with no wordmark (no rung fits), %d missed\n",
+              plays, hidden, misses);
+  CHECK(plays > 0 && hidden > 0 && hidden < plays,
+        "the sweep played %d splashes, %d with no wordmark: it must reach canvases both "
+        "with and without one", plays, hidden);
+}
+
 // splash.cpp may only branch on what these builds vary.
 void check_branches() {
   const std::vector<std::string> ls = lines_of(slurp(
@@ -619,6 +791,16 @@ int main() {
       moved += sl::seat(cv.h, kFam, true, worst).hang ? 1 : 0;
     }
   }
+  // Pinned (F373): the only canvas whose wordmark steps down from the
+  // Character's title face at kWordSpacing is the 172 px S3 glass under
+  // Heirloom (Montserrat 36, 191 px, to 28 at kWordSpacing, 151).
+  std::string stepped;
+  for (const std::string& u : g_stepped) stepped += (stepped.empty() ? "" : ", ") + u;
+  const char* const kStepped[3] = {"", "nightstand-s3 172x320/heirloom", ""};
+  std::printf("  the wordmark steps down on: %s\n", stepped.empty() ? "none" : stepped.c_str());
+  CHECK(stepped == kStepped[kBuild], "the wordmark steps down on \"%s\"; this build's only "
+        "one should be \"%s\"", stepped.c_str(), kStepped[kBuild]);
+  sweep_words(cs);
   // The dash, dash7 and nightstand7 share one 800x480 canvas (and its
   // turn); canvases() keeps one of each.
   CHECK(mine >= (kBuild == 0 ? 1 : kBuild == 1 ? 6 : 2),

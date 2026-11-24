@@ -40,6 +40,15 @@
 //    bubble was drawn for the round watch's 240 px disc, and on the 172 and
 //    180 px wide portrait glass its sides ran 12 and 8 px past the canvas's,
 //    border and rounded corners off the glass.
+//  * The wordmark keeps kWordMargin a side (word_fits, F373). splash.cpp
+//    sets it in the Character's title face at kWordSpacing and nothing
+//    fitted it: under Heirloom (Montserrat 36, 191 px at 2 px spacing and
+//    177 at 0, as LVGL lays it out) it ran past both sides of the 172 px
+//    glass, its ink from the canvas's first column to its last. splash.cpp
+//    measures the laid-out label and, where it does not fit, steps down:
+//    Montserrat 28 (every build carries it), then that face set tight, and
+//    on a canvas too narrow for even that it shows no wordmark rather than
+//    a cut one.
 //
 // C++11 and constexpr-free functions, like onboard_layout.h: the Arduino
 // parity sketch compiles it on esp32 core 2.0.17 (gnu++11). Pure integer
@@ -86,6 +95,27 @@ constexpr int kBubbleMargin = 4;
 inline int bubble_w(int canvas_w, const Family& f) {
   const int room = canvas_w - 2 * kBubbleMargin;
   return f.bubble_w < room ? f.bubble_w : room;
+}
+
+// The wordmark's letter spacing as it is set; its last rung sets it to 0.
+constexpr int kWordSpacing = 2;
+
+// The least black kept between the wordmark's box and the canvas's sides
+// (F373): a wordmark set on the glass, not run into its edge. The 172 px
+// glass keeps 11 and 10 once Heirloom's wordmark steps to Montserrat 28
+// (151 px), the rest more. The native LVGL 8.4 and 9.5 renders hold the
+// drawn ink this far in too (a label's ink stands inside its laid-out box
+// for these faces; they read and hold that as well).
+constexpr int kWordMargin = 8;
+
+// Whether a wordmark laid out `word_w` px wide fits a canvas `canvas_w` px
+// wide: the canvas less kWordMargin a side holds it. Exactly when it does,
+// the box LVGL centers on the canvas (LV_ALIGN_CENTER: half the canvas less
+// half the box, each halved alone) leaves at least kWordMargin columns of
+// the canvas on each side of it; the host test proves the two the same for
+// every canvas and box up to 1000 px.
+inline bool word_fits(int canvas_w, int word_w) {
+  return word_w >= 0 && word_w + 2 * kWordMargin <= canvas_w;
 }
 
 // The tail (splash.cpp): a 12 px square turned 45 degrees about its center,

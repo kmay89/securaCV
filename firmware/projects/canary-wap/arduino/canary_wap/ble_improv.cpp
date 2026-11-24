@@ -366,11 +366,16 @@ void handle_command(uint32_t now_ms) {
       improv::wipe(&cmd.wifi, sizeof(cmd.wifi));
       publish_error();
       publish_state();
-      log_health(s_session.state == State::Provisioning ? SCV_LOG_INFO : SCV_LOG_WARNING,
-                 SCV_CAT_BLUETOOTH,
-                 s_session.state == State::Provisioning
-                     ? "Setup door: Wi-Fi settings accepted, joining"
-                     : "Setup door: Wi-Fi settings refused", nullptr);
+      // The level and the words are this write's verdict, not the session's
+      // state: a second write mid-join is refused (and counted in s_refused)
+      // while the first one's join keeps the session Provisioning; an
+      // accepted write the sketch refused has left it
+      // (session_on_join_result(false)). The common glue, improv_ble.cpp,
+      // picks its word the same way.
+      const bool joining = e == Error::None && s_session.state == State::Provisioning;
+      log_health(joining ? SCV_LOG_INFO : SCV_LOG_WARNING, SCV_CAT_BLUETOOTH,
+                 joining ? "Setup door: Wi-Fi settings accepted, joining"
+                         : "Setup door: Wi-Fi settings refused", nullptr);
       break;
     }
     case Command::Identify:

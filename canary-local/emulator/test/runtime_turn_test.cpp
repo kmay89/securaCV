@@ -57,8 +57,19 @@
 //   runtime_turn_test            every case, prints a line per case, exit 1 on a failure
 //   runtime_turn_test -v         the same with the firmware's serial log on stderr
 //
+// One more boot runs the 10 s hold's erase (sweep A127): a provisioned
+// nightlight that also holds its setup network's key (ap_pass) runs
+// canary::cfg::forget_wifi_credentials() at 7 s, and the page must hear
+// js_nvs_remove for exactly the four keys it erases (wifi_ssid, wifi_pass,
+// the saved-network ring wifi_nets, ap_pass) and nothing else, none for a
+// second forget that finds nothing to erase, and one per key for a
+// Preferences::clear() of a namespace (and none for the namespace whose name
+// it prefixes). Before A127 an erase never reached the page, whose copy of
+// the flash restarted the twin on the network it had just forgotten.
+//
 // This proves the sources build.sh hands em++, built with g++ (64-bit), not
 // the dist's bytes.
+#include <Preferences.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -78,6 +89,9 @@
 namespace canary {
 namespace care {
 void nightlight_request_rotation(uint8_t rot);
+}
+namespace cfg {
+bool forget_wifi_credentials();
 }
 namespace ui {
 int16_t lvgl_port_width();
@@ -114,7 +128,10 @@ struct Case {
   int from;  // rotation worn from power-on
   int to;    // rotation asked for at kTurnAt; -1: a reference boot that never turns
   int seat_y = 0;  // a turned boot: the bird's y offset at rest on the new glass
+  bool forget = false;  // the erase boot (A127): forget at kTurnAt, turn nothing
 };
+
+constexpr int kRemoved = 12;  // erases the erase boot keeps, by name
 
 // What one boot saw, written by the child to the parent through a pipe.
 struct Seen {
@@ -140,6 +157,12 @@ struct Seen {
   int hop_on_glass;   // hop frames whose drawn box lies wholly on the glass
   int orient_lines;   // "[orient]" lines on serial (F285)
   char orient[2][96]; // the first two of them
+  // The erase boot (A127): every js_nvs_remove the page heard, in order.
+  int removes;
+  char removed[kRemoved][48];
+  int removes_at_boot;  // ...before the forget (the boot's own)
+  int forgot, forgot_again;      // forget_wifi_credentials()'s answers
+  int removes_by_forget, removes_by_again, removes_by_clear;
 };
 
 bool g_verbose = false;
@@ -230,8 +253,46 @@ void finish() {
   _exit(n == (ssize_t)sizeof(g_seen) ? 0 : 5);
 }
 
+// The erase boot's one beat (A127), at kTurnAt: the 10 s hold's erase, a
+// second one with nothing left to erase, then a namespace cleared beside one
+// whose name it prefixes.
+void erase_beat() {
+  g_seen.removes_at_boot = g_seen.removes;
+  g_seen.forgot = canary::cfg::forget_wifi_credentials() ? 1 : 0;
+  g_seen.removes_by_forget = g_seen.removes - g_seen.removes_at_boot;
+  int at = g_seen.removes;
+  g_seen.forgot_again = canary::cfg::forget_wifi_credentials() ? 1 : 0;
+  g_seen.removes_by_again = g_seen.removes - at;
+  {
+    Preferences p;
+    p.begin("scv-a127", false);
+    p.putUChar("one", 1);
+    p.putUChar("two", 2);
+    p.end();
+    p.begin("scv-a127x", false);
+    p.putUChar("kept", 3);
+    p.end();
+  }
+  at = g_seen.removes;
+  {
+    Preferences p;
+    p.begin("scv-a127", false);
+    p.clear();
+    p.end();
+  }
+  g_seen.removes_by_clear = g_seen.removes - at;
+  finish();
+}
+
 // Every 5 ms of virtual time.
 void beat() {
+  if (g_case.forget) {
+    if (!g_asked && g_wall >= kTurnAt) {
+      g_asked = true;
+      erase_beat();
+    }
+    return;
+  }
   if (!g_asked && g_wall >= kTurnAt) {
     g_asked = true;
     g_seen.shapes_at_ask = g_seen.shapes;
@@ -322,6 +383,9 @@ void preseed(const char* ns, const char* key, const std::string& v) {
   preseed("securacv", "mqtt_user", "fleet");
   preseed("securacv", "mqtt_pass", "fleet");
   preseed("scv-hello", "met", std::string("\x01", 1));
+  // The erase boot's unit has walked its setup portal once: its setup
+  // network's key is in the flash too (provision.cpp's ap_pass).
+  if (c.forget) preseed("securacv", "ap_pass", "setup-key-1");
   if (!emu_preset_rotation(c.from)) {
     fprintf(stderr, "emu_preset_rotation(%d) refused\n", c.from);
     _exit(4);
@@ -417,6 +481,12 @@ void js_serial_write(const char* s) {
 void js_backlight(int, int, int) {}
 void js_tone(int, int) {}
 void js_nvs_write(const char*, const char*, const char*) {}
+// The erase the page hears (A127), kept by name for the erase boot.
+void js_nvs_remove(const char* ns, const char* key) {
+  if (g_seen.removes < kRemoved)
+    snprintf(g_seen.removed[g_seen.removes], sizeof g_seen.removed[0], "%s/%s", ns, key);
+  g_seen.removes++;
+}
 void js_reboot_request(void) {
   fprintf(stderr, "the firmware asked for a reboot\n");
   _exit(3);
@@ -594,6 +664,45 @@ int main(int argc, char** argv) {
       CHECK(s.orient_lines == 1 && strcmp(s.orient[0], want) == 0,
             "turned %d -> %d: want one line \"%s\", got %d (\"%s\")", from, to, want,
             s.orient_lines, s.orient_lines ? s.orient[0] : "");
+    }
+  }
+
+  // The 10 s hold's erase reaches the page (A127), key by key.
+  {
+    Case c = {0, -1};
+    c.forget = true;
+    Seen s;
+    if (!run_case(c, &s)) {
+      g_fail++;
+    } else {
+      std::string by_forget, all;
+      for (int i = 0; i < s.removes && i < kRemoved; ++i) {
+        all += (i ? " " : "") + std::string(s.removed[i]);
+        if (i >= s.removes_at_boot && i < s.removes_at_boot + s.removes_by_forget)
+          by_forget += (by_forget.empty() ? "" : " ") + std::string(s.removed[i]);
+      }
+      printf("the 10 s hold's erase: forget %s, the page heard %d erase(s) at boot, then \"%s\"; "
+             "a second forget %s with %d; a clear of scv-a127 %d\n",
+             s.forgot ? "true" : "false", s.removes_at_boot, by_forget.c_str(),
+             s.forgot_again ? "true" : "false", s.removes_by_again, s.removes_by_clear);
+      CHECK(s.forgot == 1, "forget_wifi_credentials() refused: the keys did not leave the flash");
+      CHECK(s.removes_by_forget == 4 &&
+                by_forget == "securacv/wifi_ssid securacv/wifi_pass securacv/wifi_nets securacv/ap_pass",
+            "the forget: the page heard %d erase(s) \"%s\"; want exactly securacv/wifi_ssid, "
+            "securacv/wifi_pass, securacv/wifi_nets and securacv/ap_pass",
+            s.removes_by_forget, by_forget.c_str());
+      CHECK(s.forgot_again == 1 && s.removes_by_again == 0,
+            "a forget with nothing left to erase: answered %d, the page heard %d erase(s); want "
+            "true and none (a remove of a missing key is not an erase)",
+            s.forgot_again, s.removes_by_again);
+      const int c0 = s.removes_at_boot + s.removes_by_forget + s.removes_by_again;
+      const bool cleared = s.removes_by_clear == 2 && s.removes >= c0 + 2 && c0 + 2 <= kRemoved &&
+                           strcmp(s.removed[c0], "scv-a127/one") == 0 &&
+                           strcmp(s.removed[c0 + 1], "scv-a127/two") == 0;
+      CHECK(cleared && s.removes == c0 + 2,
+            "a clear of scv-a127 beside scv-a127x: the page heard %d erase(s) (all: \"%s\"); want "
+            "scv-a127/one and scv-a127/two, and nothing of scv-a127x",
+            s.removes_by_clear, all.c_str());
     }
   }
 

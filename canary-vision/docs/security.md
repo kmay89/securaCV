@@ -183,8 +183,9 @@ The SPA enforces additional client-side security constraints, verified by tests:
 - No inline `<script>` tags or `on*` event handler attributes in HTML
 - No `eval()`, `new Function()`, or `document.write` in JavaScript
 - No `.innerHTML` usage (prevents DOM XSS)
+- No inline `style` attributes: the `style-src 'self'` above refuses them (a browser drops each and logs a `style-src-attr` violation), so a view's layout is a class in `spa/styles.css`, and `el()` throws on a `style` key. Setting one property through the CSSOM (`node.style.color = ...`) is not an attribute, and the CSP does not govern it: headless Chromium, under the header above as the device-api serves it, logged no violation for the views that do (the fleet card, the Events view; sweep F474)
 - No third-party tracking or analytics libraries
-- Tokens stored per-device in `localStorage` under the `canary_devices` key
+- Tokens held per device in `sessionStorage` under `canary_token:<device id>`, cleared when the tab closes or the session expires (8 hours by default). `localStorage` keeps the device list (`canary_devices`), rebuilt from an allowlist of fields with no token among them, and two view preferences, neither a credential: the notification settings (`canary_notif_prefs`) and whether the fleet's coverage hint was dismissed (`cv_coverage_hint_dismissed`)
 - All API requests validated as private-network URLs before sending, and an IP that is not the SPA's own origin (which the `connect-src` above refuses) answered with "enter its `.local` name" instead of a request
 
 **Tests:** `tests/spa/csp-compliance.test.js`, `tests/spa/token-storage.test.js`, `tests/spa/peer-discovery.test.js`

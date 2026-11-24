@@ -107,11 +107,14 @@ for (const [dev, d] of Object.entries(asm.devices)) {
 // with the reason. Shrink-only: a listed part that compares now, or that is
 // gone, fails until its entry goes.
 const NOT_COMPARED = new Map([
-  // bom_canary_vision.csv's SCR5 (x 18) bills the Vision case's screws and the
-  // doorbell's in one quantity, so no single product's count can equal it.
-  // Splitting that row per product is the BOM owner's call (C12); the CAD leg
-  // below still holds these four to the case's HARDWARE echo.
+  // bom_canary_vision.csv's SCR5 is one row for two products: its x 18 is the
+  // doorbell's count (4 + 2 + 12), and the same row describes the Vision
+  // case's own (on the preset the tab shows, four plate screws and four camera
+  // screws), so neither Vision part can be held to it. Splitting that row per
+  // product is the BOM owner's call (C12), and both entries go when it splits;
+  // the CAD leg below still holds all eight to the case's HARDWARE echo.
   ["canary-vision/screws", "SCR5 bills two products in one quantity"],
+  ["canary-vision/cam_screws", "SCR5 bills two products in one quantity"],
 ]);
 
 // The disagreements between a device's counted parts and its BOM, as
@@ -286,10 +289,6 @@ function fastenerGaps(dev, scad, parts, sets) {
 // listed, not edited, on either side. A new one fails; so does a listed one
 // that stops happening (it was fixed: shrink the list).
 const FASTENER_GAPS = new Set([
-  // the tab seats the OV5647 on the front's posts but draws none of the four
-  // screws the case echoes for it (x 4 since the cross-family review, #1856:
-  // cam_scr_len is the longest standard length the pillar takes)
-  "canary-vision|unchoreographed 4x M2 pan x 4 self-tap (OV5647 to the front posts)",
   // canary_dash_display.scad prints no HARDWARE line, so nothing counts the
   // four back-to-frame screws (D-SCR1) the tab drives
   "canary-display-dash|no hardware set for canary_dash_display.scad",
@@ -588,4 +587,76 @@ test("canary-wap: the sun shield stands on its posts above the lid", () => {
   const ss = a.parts.find((p) => p.id === "shield_screws");
   for (const [, , z] of ss.instances) assert.ok(Math.abs(z - shield.seated.pos[2]) < 0.01, "shield screws flush in its top");
   assert.ok(ss.step >= shield.step, "the shield's screws drive once it is on");
+});
+
+// ── the Vision's camera screws: on the front's posts, in before it closes ──
+// The case echoes four "OV5647 to the front posts" screws and the tab draws
+// them, posed from cam_post_xy() by gen_assembly_poses.py. That expression
+// names the posts in the case's assembled frame; the page reaches them through
+// the front STL's print turn and its seat. So hold the screws to the printed
+// mesh itself, seated as the page seats it: under every screw the front's post
+// end (the post's circle around its pilot's) is centered on the screw's axis,
+// the shank stands up into the pilot and stops short of its blind end, and the
+// head bears on the camera's back face. A frame slip (a y flip through the
+// turned front, a post grid off the hole grid) lands a screw on no post; a
+// screw longer than the pilot takes (the ledger's old "x 6") runs past its end.
+test("canary-vision: the camera screws land on the front STL's camera posts", async () => {
+  const { parseSTL } = await import("../assets/stl.js");
+  const { M } = await import("../assets/assembly.js");
+  const by = Object.fromEntries(asm.devices["canary-vision"].parts.map((p) => [p.id, p]));
+  const { front, cam, cam_screws: cs } = by;
+  assert.ok(cs, "the tab draws the camera's screws");
+  const buf = readFileSync(join(REPO, "docs/hardware/enclosure", front.file));
+  const { mesh } = parseSTL(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+  const W = M.compose(front.seated), P = mesh.pos, verts = [];
+  for (let i = 0; i < P.length; i += 3) {
+    verts.push([0, 1, 2].map((k) => W[k] * P[i] + W[4 + k] * P[i + 1] + W[8 + k] * P[i + 2] + W[12 + k]));
+  }
+  // the builder draws a screw's shank down -Z from its head; turned over, it drives up
+  assert.deepStrictEqual(cs.irot, [180, 0, 0], "the camera screws drive up into the front's posts");
+  const len = cs.params.len;
+  for (const [x, y, z] of cs.instances) {
+    const at = `the screw at (${x}, ${y})`;
+    const r = (v) => Math.hypot(v[0] - x, v[1] - y);
+    const near = verts.filter((v) => r(v) < 2.5);
+    assert.ok(near.length, `${at}: no front geometry within 2.5 mm of its axis`);
+    // the post end is the lowest of the front within reach of the axis
+    const end = Math.min(...near.map((v) => v[2]));
+    const ring = near.filter((v) => Math.abs(v[2] - end) < 1e-3);
+    for (const [what, pts] of [["post", ring.filter((v) => r(v) > 1.2)], ["pilot", ring.filter((v) => r(v) <= 1.2)]]) {
+      assert.ok(pts.length >= 6, `${at}: no ${what} circle at the post end`);
+      const rs = pts.map(r);
+      assert.ok(Math.max(...rs) - Math.min(...rs) < 0.1,
+        `${at}: the ${what} circle is off its axis (radii ${Math.min(...rs).toFixed(2)}..${Math.max(...rs).toFixed(2)})`);
+    }
+    // the pilot's blind end: the highest point of the front inside the pilot
+    const top = Math.max(...near.filter((v) => r(v) < 0.9 && v[2] > end + 1e-3).map((v) => v[2]));
+    assert.ok(z < end && z + len > end, `${at}: the shank (z ${z}..${z + len}) does not reach the post end at ${end.toFixed(2)}`);
+    assert.ok(z + len < top, `${at}: the shank's tip at ${z + len} runs past the pilot's blind end at ${top.toFixed(2)}`);
+    // the cam is posed at its back face (gen_assembly_poses.py VISION_CAM_BACK)
+    assert.strictEqual(z, cam.seated.pos[2], `${at}: the head bears on the camera's back face`);
+  }
+});
+
+// assets/assembly-rules.js holds a fastener to drive after every shell and to
+// sit outermost in the explode: the rule for the screws that close a case.
+// The camera's four are inside it. The catalog's first step drives them into
+// the front before the shell is lowered over the plate, and the tab drives
+// them with the camera, so they are declared internal hardware (`class`), held
+// to the internal rule instead: in before the shell closes. The fastener
+// comparison above still counts them; it reads what is drawn (`part`). In the
+// exploded drawing they hang on their own axis between the back and the
+// camera they fix, short of it; +6 keeps their item balloon off the camera's
+// in the tab's opening view (at +20 it covered it).
+test("canary-vision: the camera screws go in with the camera, before the front closes", async () => {
+  const { classifyPart } = await import("../assets/assembly-rules.js");
+  const by = Object.fromEntries(asm.devices["canary-vision"].parts.map((p) => [p.id, p]));
+  assert.strictEqual(by.cam_screws.step, by.cam.step, "the camera screws drive in the camera's own step");
+  assert.ok(by.cam_screws.step < by.front.step, "the camera screws are in before the front closes over them");
+  assert.strictEqual(classifyPart(by.cam_screws), "internal", "the camera screws are held to the internal rule");
+  assert.strictEqual(by.cam_screws.part, "screw", "the fastener comparison counts them as screws");
+  assert.strictEqual(classifyPart(by.screws), "fastener", "the plate screws still close the build, last and outermost");
+  const [ex, ey, ez] = by.cam_screws.explode;
+  assert.ok(ex === 0 && ey === 0 && ez > 0 && ez < by.cam.explode[2],
+    "the camera screws explode along the assembly axis, toward the camera and short of it");
 });

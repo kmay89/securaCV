@@ -149,10 +149,14 @@ int capped_level(uint8_t level) {
 // has the board's steps (32 duties apart, cap + 1 of them), a glow asked
 // under 32 glows at the first step rather than dimmer, a duty on a step
 // passes as asked, and one the board clips is held at the cap's byte — 4064
-// for the nightlight's 127, 8160 with no cap. A board without the expander
-// is passed on as asked, as before.
+// for the nightlight's 127, 8160 with no cap. The AMOLED 2.41
+// (CD_AMOLED_GLASS, sweep A100) makes the same byte: display_amoled241.cpp's
+// backlight_night_set() clamps, shifts and raises it the same way and writes
+// it as the RM690B0's one brightness command (0x51), with no ceiling, so its
+// twin has the same 256 steps, the top one 8160. A board with neither (the
+// LEDC glasses) is passed on as asked, as before.
 int capped_night(uint16_t duty13) {
-#if defined(TFT_USE_EXIO) && TFT_USE_EXIO
+#if (defined(TFT_USE_EXIO) && TFT_USE_EXIO) || (defined(CD_AMOLED_GLASS) && CD_AMOLED_GLASS)
   const int duty = duty13 > 8191 ? 8191 : duty13;  // NIGHT_DUTY_MAX
   int byte = duty >> 5;
   if (byte == 0 && duty > 0) byte = 1;

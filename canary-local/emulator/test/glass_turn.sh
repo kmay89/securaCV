@@ -6,7 +6,9 @@
 # nightlight config (the panel's hardware turn). Beside each run,
 # backlight_cap_test.cpp holds the same HAL object's backlight to the board's
 # ceiling (sweep A61: clipped as the C3-LCD-1.47 clips it in the nightlight
-# config, passed through as asked in the dash's). Then it builds
+# config, passed through as asked in the dash's), and a third run holds the
+# HAL built in the AMOLED 2.41's config to its panel's one-byte night floor
+# (sweep A100). Then it builds
 # glass_splash_test.cpp (F185, F159) in the config of every display env that
 # builds LVGL 8.4, and in the dash's (the emulator's dash flavor is 8.4 too),
 # against the same LVGL objects: the REAL splash.cpp plays the first meeting,
@@ -132,6 +134,23 @@ g++ -o "$OUT/nl_backlight_cap_test" "$OUT/nl_backlight_cap_test.o" "$OUT/nl_emu_
   "$OUT"/lvgl/*.o -lm
 "$OUT/nl_backlight_cap_test"
 "$OUT/nl_glass_turn_test"
+
+# The AMOLED 2.41's backlight (sweep A100), as build.sh wires its flavor: no
+# ceiling, but its night floor is the RM690B0's one brightness byte
+# (display_amoled241.cpp), so the twin's HAL, built in this config
+# (CD_AMOLED_GLASS), must step every night duty to that byte's step and pass
+# every day level as asked.
+AM_CFG="$FW/configs/canary-display/amoled241"
+AM_PINS="$FW/boards/waveshare-esp32s3-amoled241/pins"
+AM_INC=(-I "$HERE/native" -I "$EMU/shim" -I "$EMU/src" -I "$PROJ/include"
+        -I "$AM_CFG" -I "$AM_PINS" -I "$FW/common" -I "$LVGL")
+AM_CXX=(g++ -std=gnu++17 -O1 -fno-exceptions -fno-rtti -Wall -Wno-unused-parameter
+        "${DEFS[@]}" "${AM_INC[@]}")
+"${AM_CXX[@]}" -c "$EMU/src/emu_hal_display.cpp" -o "$OUT/am_emu_hal_display.o"
+"${AM_CXX[@]}" -c "$HERE/backlight_cap_test.cpp" -o "$OUT/am_backlight_cap_test.o"
+g++ -o "$OUT/am_backlight_cap_test" "$OUT/am_backlight_cap_test.o" "$OUT/am_emu_hal_display.o" \
+  "$OUT"/lvgl/*.o -lm
+"$OUT/am_backlight_cap_test"
 
 # The boot splash's speech-bubble tail and the bird's seat over it on LVGL
 # 8.4 (F185, F159): glass_splash_test.cpp links the REAL splash.cpp,

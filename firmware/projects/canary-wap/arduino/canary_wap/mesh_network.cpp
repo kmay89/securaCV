@@ -13,6 +13,7 @@
 #include "mesh_network.h"
 #include "mesh_pair_frame.h"       // F14: [type][payload] pairing framing + classifier
 #include "mesh_pair_crypto.h"      // F33: clamped X25519 pairing keys, session key, 6-digit code
+#include "ct_compare.h"           // the CONFIRM hash is compared in constant time (staged from firmware/common/core)
 #include "mesh_revocation.h"       // F33: spec §5.6 REVOCATION_GRACE_MS deny-list (staged, shared)
 #include "mesh_channel_policy.h"
 #include "loop_snapshot.h"        // F110: what the status routes read
@@ -1584,8 +1585,15 @@ static void handle_pair_offer(const uint8_t* mac, const uint8_t* payload) {
     return;
   }
 
-  // Compute confirmation code
-  g_pairing.confirmation_code = mesh_pair_crypto::confirmation_code(g_pairing.session_key);
+  // Compute confirmation code. One whose hash failed is no code (sweep
+  // F364): it read 000000 whatever the session key, so two sides whose
+  // hashes both failed showed matching codes over any two keys. The
+  // pairing ends here, before the ACCEPT, so neither side shows a code.
+  if (!mesh_pair_crypto::confirmation_code(g_pairing.session_key, &g_pairing.confirmation_code)) {
+    health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO, "opera: pairing ended: the code did not hash");
+    cancel_pairing();
+    return;
+  }
 
   // Send accept with our ephemeral key
   PairOfferPayload accept;  // Reuse structure
@@ -1630,8 +1638,14 @@ static void handle_pair_accept(const uint8_t* mac, const uint8_t* payload) {
     return;
   }
 
-  // Compute confirmation code (matches the joiner's: same session key)
-  g_pairing.confirmation_code = mesh_pair_crypto::confirmation_code(g_pairing.session_key);
+  // Compute confirmation code (matches the joiner's: same session key).
+  // One whose hash failed ends the pairing before a code is shown (sweep
+  // F364; handle_pair_offer says why).
+  if (!mesh_pair_crypto::confirmation_code(g_pairing.session_key, &g_pairing.confirmation_code)) {
+    health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO, "opera: pairing ended: the code did not hash");
+    cancel_pairing();
+    return;
+  }
   g_pairing.peer_confirmed = false;   // only a CONFIRM under this key counts
 
   g_mesh_state = MESH_PAIRING_CONFIRM;
@@ -1780,13 +1794,26 @@ static void handle_pair_confirm(const uint8_t* mac, const uint8_t* payload) {
 
   const PairConfirmPayload* confirm = (const PairConfirmPayload*)payload;
 
-  // Verify the confirmation hash, for the partner's role.
+  // Verify the confirmation hash, for the partner's role. An expected hash
+  // this side could not compute ends the pairing (sweep F364): it was
+  // compared as 32 zero bytes, which a partner whose own hash failed sent,
+  // and the pairing completed with neither CONFIRM checked.
   uint8_t expected_hash[32];
-  mesh_pair_crypto::confirm_hash(mesh_pair_crypto::partner_of(confirm_sender(g_pairing.role)),
-                                 g_pairing.session_key, g_pairing.confirmation_code,
-                                 expected_hash);
+  if (!mesh_pair_crypto::confirm_hash(mesh_pair_crypto::partner_of(confirm_sender(g_pairing.role)),
+                                      g_pairing.session_key, g_pairing.confirmation_code,
+                                      expected_hash)) {
+    health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
+               "opera: pairing ended: the partner's CONFIRM could not be checked");
+    cancel_pairing();
+    return;
+  }
 
-  if (memcmp(confirm->confirmation_hash, expected_hash, 32) != 0) {
+  // In constant time (ct_compare.h): the expected hash is derived from the
+  // session key, and memcmp() would refuse a forged CONFIRM sooner the fewer
+  // of its leading bytes were right. The canary (PIO) twin uses ct_equal().
+  static_assert(sizeof(confirm->confirmation_hash) == sizeof(expected_hash),
+                "the CONFIRM carries a whole 32-byte hash");
+  if (!ct_compare::equal(confirm->confirmation_hash, expected_hash, sizeof(expected_hash))) {
     // Confirmation failed: a tampered exchange (possible MITM), this side's
     // own CONFIRM reflected, or a partner on firmware before F94. Logged,
     // since the owner otherwise sees only a pairing that ended.
@@ -3189,9 +3216,19 @@ static bool confirm_pairing() {
   }
 
   // Send confirmation message: the hash for this side's own role (F94).
+  // One that did not hash is not sent (sweep F364): 32 zero bytes went out
+  // as this side's CONFIRM, and a partner whose own hash failed took them.
+  // The pairing ends, as a refused partner's does (end_refused_pairing:
+  // the owner's callback told), and the owner's confirm is answered
+  // refused.
   PairConfirmPayload confirm;
-  mesh_pair_crypto::confirm_hash(confirm_sender(g_pairing.role), g_pairing.session_key,
-                                 g_pairing.confirmation_code, confirm.confirmation_hash);
+  if (!mesh_pair_crypto::confirm_hash(confirm_sender(g_pairing.role), g_pairing.session_key,
+                                      g_pairing.confirmation_code, confirm.confirmation_hash)) {
+    health_log(SCV_LOG_ALERT, SCV_CAT_CRYPTO,
+               "opera: pairing ended: this side's CONFIRM did not hash");
+    end_refused_pairing();
+    return false;
+  }
 
   send_pair_frame(g_pairing.peer_mac, MSG_PAIR_CONFIRM, &confirm, sizeof(confirm));
 

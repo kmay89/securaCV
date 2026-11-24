@@ -416,16 +416,18 @@ def test_the_health_sensor_shows_no_charge_for_a_present_battery_with_no_number(
     with no reading, since #1971: a mains unit (battery_present false, even
     beside the placeholder 100 the canary-wap sends), a health that does not
     say whether it has a battery, and one whose battery_present is not a
-    JSON true, the gate battery_percent() itself reads. Unknown, never 100.
-    No reading is not a low battery: the Health state is healthy for every
-    body here, as it was."""
+    JSON true. Unknown, never 100. Only a JSON true is a present battery, the
+    gate battery_percent() itself reads before it trusts battery_soc, so the
+    last rows carry a battery_soc that only that gate keeps out. No reading
+    is not a low battery: the Health state is healthy for every body here,
+    as it was. Each body follows a real charge, so the None it shows is its
+    own."""
     stubs = _platform()
     health = stubs._entity(stubs.sensor_platform.SecuraCVCanaryHealthSensor, hass=stubs._hass({}))
     value = json.loads(raw)
+    charge = {"battery_present": True, "battery": 37}
     cases = [
-        ({"battery_present": True, "battery": 37}, 37),
         ({"battery_present": True, "battery": value}, None),
-        ({"battery_present": True, "battery": 61}, 61),
         ({"battery_present": False, "battery": 100}, None),
         ({"battery_present": True, "battery_soc": value}, None),
         ({"battery": value}, None),
@@ -433,10 +435,11 @@ def test_the_health_sensor_shows_no_charge_for_a_present_battery_with_no_number(
         ({"battery_present": False, "battery": value}, None),
         ({"battery_present": True, "battery": value, "battery_soc": value}, None),
         ({}, None),
-        ({"battery_present": 1, "battery": value}, None),
-        ({"battery_present": "true", "battery": value}, None),
+        ({"battery_present": True, "battery": value, "battery_soc": 40}, 40),
+        ({"battery_present": 1, "battery": value, "battery_soc": 40}, None),
+        ({"battery_present": "true", "battery": value, "battery_soc": 40}, None),
     ]
-    for body, attribute in cases:
+    for body, attribute in [(charge, 37)] + [row for case in cases for row in (case, (charge, 37))]:
         health._handle_message(stubs._msg(json.dumps({**body, "memory_free": 182000})))
         assert health._attr_native_value == "healthy", body
         attrs = health._attr_extra_state_attributes
@@ -475,11 +478,13 @@ def _sd_wear(created: list, device_id: str) -> list:
 
 # The health body each Canary but the canary base publishes, by its fields
 # (canary-wap: csi_mqtt.cpp; the others: their mqtt_mgr.cpp
-# publish_health_retained). None carries the `sd` object.
-_MAINS = {"battery": 100, "battery_present": False, "memory_free": 182000, "uptime": 5, "firmware_version": "2.4.16"}
+# publish_health_retained). None carries the `sd` object. The canary-wap and
+# the display still send `battery: 100` beside `battery_present: false`; the
+# Sense and Vision send no `battery` since #1971.
+_MAINS = {"battery_present": False, "memory_free": 182000, "uptime": 5, "firmware_version": "2.4.16"}
 _NO_SD_OBJECT = {
-    "wap01": {**_MAINS, "public_key": "11" * 32, "sd_mounted": True, "enclosure_open": False},
-    "display01": {**_MAINS, "power_loss_detected": False, "unexpected_reboot": False},
+    "wap01": {**_MAINS, "battery": 100, "public_key": "11" * 32, "sd_mounted": True, "enclosure_open": False},
+    "display01": {**_MAINS, "battery": 100, "power_loss_detected": False, "unexpected_reboot": False},
     "sense01": {**_MAINS, "public_key": "11" * 32, "radar": {"link_ok": True, "last_frame_age_ms": 40, "frame_errors": 0}},
     "vision01": {**_MAINS, "public_key": "11" * 32},
 }

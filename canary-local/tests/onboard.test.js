@@ -1387,66 +1387,101 @@ function bashWords(entries, vars) {
   return r.stdout.split("\0").slice(0, -1);
 }
 
-test("runtime turn (F222): runtime_turn.sh boots build.sh's nightlight natively, turns it through the app's mailbox, and runs in CI", () => {
-  const buildSh = read(join(ROOT, "emulator/build.sh"));
-  const rt = read(join(ROOT, "emulator/test/runtime_turn.sh"));
-  // The TUs: build.sh's base list and every block guarded for the nightlight,
-  // in order; build.sh's Crypto list by file; its emulator globs.
-  const forNightlight = guardTakes("nightlight");
-  const want = bashArrays(buildSh, "FIRMWARE_SRCS", forNightlight);
-  assert.ok(want.includes('"$PROJ/src/main.cpp"') && want.includes('"$FW/common/color/look_engine.cpp"'),
-    "build.sh's nightlight list was read (main.cpp and the color TUs)");
-  assert.ok(!want.includes('"$PROJ/src/io/rtc.cpp"'), "...without the touch169/AMOLED-only RTC block");
-  assert.deepStrictEqual(bashArrays(rt, "FIRMWARE_SRCS"), want,
-    "runtime_turn.sh compiles exactly build.sh's nightlight FIRMWARE_SRCS");
-  const file = (e) => e.replace(/^"[^"]*\/|"$/g, "").replace(/^.*\//, "");
-  assert.deepStrictEqual(bashArrays(rt, "CRYPTO_SRCS").map(file), bashArrays(buildSh, "CRYPTO_SRCS").map(file),
-    "...and build.sh's Crypto TUs");
-  assert.deepStrictEqual(bashArrays(buildSh, "EMU_SRCS"), ['"$EMU_DIR"/src/*.cpp']);
-  assert.ok(rt.includes('EMU_SRCS=("$EMU"/src/*.cpp)') && rt.includes('EMU_C_SRCS=("$EMU"/src/*.c)'),
-    "...and every emulator source build.sh globs");
-  // The nightlight's wiring, as build.sh hands it to em++.
-  assert.ok(buildSh.includes('PINS_DIR="$FW/boards/waveshare-esp32c3-lcd147/pins"') &&
-    buildSh.includes('CFG_DIR="$FW/configs/canary-display/nightlight"'));
-  assert.ok(rt.includes('PINS="$FW/boards/waveshare-esp32c3-lcd147/pins"') &&
-    rt.includes('CFG="$FW/configs/canary-display/nightlight"'),
-  "runtime_turn.sh builds the nightlight's pin map and config");
+// runtime_turn.sh's two native boots, each held to build.sh's flavor (F222
+// the nightlight, F370 the dash): its TU list, its pin map and config, its
+// defines word for word, and the language flags, on the arrays and compile
+// lines named with the pass's prefix ("" for the nightlight, DASH_ for the
+// dash), and each pass's compile loop, link and run.
+const RUNTIME_PASSES = [
+  { flavor: "nightlight", prefix: "", pins: "waveshare-esp32c3-lcd147", cfg: "nightlight",
+    lvgl: "lvgl", objs: "fw", list: "objs", driver: "runtime_turn_test" },
+  { flavor: "dash", prefix: "DASH_", pins: "waveshare-esp32s3-lcd43", cfg: "dash",
+    lvgl: "lvgl_dash", objs: "dash", list: "dash_objs", driver: "dash_sheet_turn_test" },
+];
+function holdRuntimePass(buildSh, rt, pass) {
+  const { flavor, prefix: P } = pass;
+  const forFlavor = guardTakes(flavor);
+  const want = bashArrays(buildSh, "FIRMWARE_SRCS", forFlavor);
+  assert.ok(want.includes('"$PROJ/src/main.cpp"'), `build.sh's ${flavor} list was read`);
+  assert.ok(!want.includes('"$PROJ/src/io/rtc.cpp"'), `...without the touch169/AMOLED-only RTC block (${flavor})`);
+  assert.strictEqual(want.includes('"$FW/common/color/look_engine.cpp"'), flavor === "nightlight",
+    `...with the portrait flavors' color TUs exactly where build.sh adds them (${flavor})`);
+  assert.deepStrictEqual(bashArrays(rt, `${P}FIRMWARE_SRCS`), want,
+    `runtime_turn.sh's ${P}FIRMWARE_SRCS is exactly build.sh's ${flavor} FIRMWARE_SRCS`);
+  // The flavor's wiring, as build.sh hands it to em++ (the dash is build.sh's
+  // else branch).
+  const pinsDir = `"$FW/boards/${pass.pins}/pins"`;
+  const cfgDir = `"$FW/configs/canary-display/${pass.cfg}"`;
+  assert.ok(buildSh.includes(`PINS_DIR=${pinsDir}`) && buildSh.includes(`CFG_DIR=${cfgDir}`), `build.sh's ${flavor} wiring`);
+  assert.ok(rt.includes(`${P}PINS=${pinsDir}`) && rt.includes(`${P}CFG=${cfgDir}`),
+    `runtime_turn.sh builds the ${flavor}'s pin map and config`);
+  const inc = bashAssignments(rt, `${P}INC`);
+  assert.ok(inc.length === 1 && inc[0].guard === "" && inc[0].entries.join(" ").includes(`-I "$${P}CFG" -I "$${P}PINS"`),
+    `runtime_turn.sh's ${P}INC puts the ${flavor}'s config and pins on the path`);
   // Its defines: build.sh's DEFINES block and every addition guarded for the
-  // nightlight, as bash expands them for that flavor, less the words that only
-  // keep the dist's bytes reproducible (the date and time stand-ins and the
-  // source-path maps; a native boot ships no bytes). runtime_turn.sh's DEFS
-  // must be exactly those words, in build.sh's order (a later -D of the same
-  // macro wins), and every compile it runs must be handed them.
+  // flavor, as bash expands them for it, less the words that only keep the
+  // dist's bytes reproducible (the date and time stand-ins and the
+  // source-path maps; a native boot ships no bytes). The pass's DEFS must be
+  // exactly those words, in build.sh's order (a later -D of the same macro
+  // wins), and every compile it runs must be handed them.
   const defines = bashAssignments(buildSh, "DEFINES");
   assert.strictEqual(defines.length, (buildSh.match(/\bDEFINES\+?=/g) || []).length,
     "every DEFINES assignment in build.sh has a form this test reads");
-  const paths = { FLAVOR: "nightlight", REPO_ROOT: "/repo", EMU_DIR: "/emu", PROJ: "/proj", FW: "/fw", TP: "/tp" };
+  const paths = { FLAVOR: flavor, REPO_ROOT: "/repo", EMU_DIR: "/emu", PROJ: "/proj", FW: "/fw", TP: "/tp" };
   const reproducible = (w) => w === "-Wno-builtin-macro-redefined" || /^-D__(?:DATE|TIME)__=/.test(w) ||
     w.startsWith("-ffile-prefix-map=");
-  const wantDefs = bashWords(defines.filter((a) => forNightlight(a.guard)).flatMap((a) => a.entries), paths)
+  const wantDefs = bashWords(defines.filter((a) => forFlavor(a.guard)).flatMap((a) => a.entries), paths)
     .filter((w) => !reproducible(w));
-  assert.ok(wantDefs.includes('-DEMU_BUILD_FLAVOR="nightlight"') && wantDefs.includes("-DCD_LEAN_BUILD=1") &&
-    wantDefs.includes("-DARDUINOJSON_ENABLE_ARDUINO_PRINT=0"),
-  "build.sh's nightlight defines were read (the common block, the flavor's name, its lean budget)");
-  const rtDefs = bashAssignments(rt, "DEFS");
-  assert.ok(rtDefs.length === 1 && rtDefs[0].guard === "", "runtime_turn.sh sets DEFS once, unguarded");
+  assert.ok(wantDefs.includes(`-DEMU_BUILD_FLAVOR="${flavor}"`) && wantDefs.includes("-DARDUINOJSON_ENABLE_ARDUINO_PRINT=0"),
+    `build.sh's ${flavor} defines were read (the common block, the flavor's name)`);
+  assert.strictEqual(wantDefs.includes("-DCD_LEAN_BUILD=1"), flavor === "nightlight", `...and its budget (${flavor})`);
+  const rtDefs = bashAssignments(rt, `${P}DEFS`);
+  assert.ok(rtDefs.length === 1 && rtDefs[0].guard === "", `runtime_turn.sh sets ${P}DEFS once, unguarded`);
   assert.deepStrictEqual(bashWords(rtDefs[0].entries, {}), wantDefs,
-    "runtime_turn.sh's DEFS are exactly the defines build.sh hands em++ for the nightlight");
+    `runtime_turn.sh's ${P}DEFS are exactly the defines build.sh hands em++ for the ${flavor}`);
   // ...and the language flags build.sh's CFLAGS / CXXFLAGS name (its -O level
   // and warnings are not mirrored: the native build is -O1 -w).
   const literal = (n) => bashArrays(buildSh, n).join(" ").split(/\s+/).filter((w) => w && !w.startsWith('"$'));
-  const cxx = /^CXX=\(g\+\+ .*\)$/m.exec(rt)?.[0] || "";
-  const lvgl = /^export LVGL_FLAGS=".*"$/m.exec(rt)?.[0] || "";
-  const cc = /^\s*gcc -std=.* -c "\$src" -o "\$obj"$/m.exec(rt)?.[0] || "";
-  assert.ok(cxx.includes('"${DEFS[@]}"') && lvgl.includes("${DEFS[*]}") && cc.includes('"${DEFS[@]}"'),
-    "runtime_turn.sh hands DEFS to its C++, LVGL and C compiles");
+  const cxx = new RegExp(`^${P}CXX=\\(g\\+\\+ .*\\)$`, "m").exec(rt)?.[0] || "";
+  const lvgl = new RegExp(`^export ${P}LVGL_FLAGS=".*"$`, "m").exec(rt)?.[0] || "";
+  const cc = new RegExp(`^\\s*gcc -std=.* "\\$\\{${P}DEFS\\[@\\]\\}" .* -c "\\$src" -o "\\$obj"$`, "m").exec(rt)?.[0] || "";
+  assert.ok(cxx.includes(`"\${${P}DEFS[@]}"`) && cxx.includes(`"\${${P}INC[@]}"`) && lvgl.includes(`\${${P}DEFS[*]}`) &&
+    lvgl.includes(`\${${P}INC[*]}`) && cc.includes(`"\${${P}INC[@]}"`),
+  `runtime_turn.sh hands ${P}DEFS and ${P}INC to the ${flavor}'s C++, LVGL and C compiles`);
   assert.ok(literal("CXXFLAGS").includes("-std=gnu++17") && literal("CFLAGS").includes("-std=gnu11"),
     "build.sh's CXXFLAGS and CFLAGS were read");
-  for (const w of literal("CXXFLAGS")) assert.ok(cxx.split(/\s+/).includes(w), `runtime_turn.sh's C++ compile passes ${w}`);
+  for (const w of literal("CXXFLAGS")) assert.ok(cxx.split(/\s+/).includes(w), `the ${flavor}'s C++ compile passes ${w}`);
   for (const w of literal("CFLAGS")) {
-    assert.ok(lvgl.split(/[\s"]+/).includes(w) && cc.split(/\s+/).includes(w), `runtime_turn.sh's C compiles pass ${w}`);
+    assert.ok(lvgl.split(/[\s"]+/).includes(w) && cc.split(/\s+/).includes(w), `the ${flavor}'s C compiles pass ${w}`);
   }
-  assert.ok(buildSh.includes("-Wl,--wrap=time") && rt.includes("-Wl,--wrap=time"), "both builds link the time() wrap");
+  // Its LVGL objects in a directory of its own, built with its flags; its
+  // TUs (the flavor's list, the Crypto and emulator sources, its driver)
+  // compiled with its C++ into its own; the link; the run, whose failure
+  // the script reports at its end instead of stopping before the other pass.
+  assert.ok(rt.includes(`obj="$OUT/${pass.lvgl}/$(echo "\${src#$LVGL/}" | tr "/." "__").o"`) &&
+    rt.includes(`gcc $${P}LVGL_FLAGS -c "$src" -o "$obj"`), `the ${flavor}'s LVGL objects go to $OUT/${pass.lvgl}, built with ${P}LVGL_FLAGS`);
+  assert.ok(rt.includes(`for src in "\${${P}FIRMWARE_SRCS[@]}" "\${CRYPTO_SRCS[@]}" "\${EMU_SRCS[@]}" "$HERE/${pass.driver}.cpp"; do\n  obj="$OUT/${pass.objs}/`),
+    `the ${flavor}'s compile loop builds its list, the Crypto and emulator TUs and ${pass.driver}.cpp into $OUT/${pass.objs}`);
+  assert.ok(rt.includes(`  "\${${P}CXX[@]}" "\${extra[@]}" -c "$src" -o "$obj" &`), `...with ${P}CXX`);
+  assert.ok(rt.includes(`g++ -o "$OUT/${pass.driver}" "\${${pass.list}[@]}" "$OUT"/${pass.lvgl}/*.o -Wl,--wrap=time -lm`),
+    `the ${flavor}'s link takes its own objects and LVGL, with the time() wrap build.sh links`);
+  assert.ok(rt.includes(`"$OUT/${pass.driver}" || failed+=(${flavor})`), `the ${flavor}'s driver runs, and a failure is kept for the end`);
+}
+
+test("runtime turn (F222, F370): runtime_turn.sh boots build.sh's nightlight and dash natively, turns each, and runs in CI", () => {
+  const buildSh = read(join(ROOT, "emulator/build.sh"));
+  const rt = read(join(ROOT, "emulator/test/runtime_turn.sh"));
+  for (const pass of RUNTIME_PASSES) holdRuntimePass(buildSh, rt, pass);
+  // Shared by both passes: build.sh's Crypto list by file, its emulator globs.
+  const file = (e) => e.replace(/^"[^"]*\/|"$/g, "").replace(/^.*\//, "");
+  assert.deepStrictEqual(bashArrays(rt, "CRYPTO_SRCS").map(file), bashArrays(buildSh, "CRYPTO_SRCS").map(file),
+    "runtime_turn.sh compiles build.sh's Crypto TUs");
+  assert.deepStrictEqual(bashArrays(buildSh, "EMU_SRCS"), ['"$EMU_DIR"/src/*.cpp']);
+  assert.ok(rt.includes('EMU_SRCS=("$EMU"/src/*.cpp)') && rt.includes('EMU_C_SRCS=("$EMU"/src/*.c)'),
+    "...and every emulator source build.sh globs");
+  assert.ok(buildSh.includes("-Wl,--wrap=time"), "build.sh links the time() wrap");
+  assert.match(rt, /\nif \(\(\$\{#failed\[@\]\}\)\); then\n {2}echo "runtime_turn: FAILED in: \$\{failed\[\*\]\}" >&2\n {2}exit 1\nfi\n$/,
+    "the script ends red when either pass failed");
   // Third-party: build.sh's own pins, fetched where build.sh will find them.
   for (const pin of ["LVGL_TAG", "ARDUINOJSON_VER", "ARDUINOLIBS_COMMIT"]) {
     assert.match(buildSh, new RegExp(`^${pin}="[^"]+"$`, "m"));
@@ -1454,8 +1489,9 @@ test("runtime turn (F222): runtime_turn.sh boots build.sh's nightlight natively,
   }
   assert.ok(rt.includes('"$TP/lvgl"') && rt.includes('"$TP/ArduinoJson"') && rt.includes('"$TP/arduinolibs"') &&
     rt.includes('TP="$EMU/third_party"'), "...into build.sh's third_party checkouts");
-  // The driver: reference boots at each rotation, turned boots through the
-  // mailbox the app's picker writes (glass_web.cpp), which main.cpp drains.
+  // The nightlight's driver: reference boots at each rotation, turned boots
+  // through the mailbox the app's picker writes (glass_web.cpp), which
+  // main.cpp drains.
   const drv = read(join(ROOT, "emulator/test/runtime_turn_test.cpp"));
   assert.ok(drv.includes("canary::care::nightlight_request_rotation((uint8_t)g_case.to);") &&
     drv.includes("emu_preset_rotation(c.from)") && drv.includes("emu_mark_box()"));
@@ -1477,6 +1513,26 @@ test("runtime turn (F222): runtime_turn.sh boots build.sh's nightlight natively,
   const turned = triple.indexOf("nightlight_apply_orientation(");
   assert.ok(pressed >= 0 && turned > pressed && /now,\s*"triple-press"\);/.test(triple.slice(turned)),
     "the triple-press logs its [input] line, then turns the face naming itself");
+  // The dash's driver (F370): the phone's turn as the dash's /api/set makes
+  // it (the stored rotation and its commit; main.cpp's render wears it), under
+  // a sheet the driver opened, with a finger down in one case, and the sheet
+  // held to the frame the glass then wears.
+  const dash = read(join(ROOT, "emulator/test/dash_sheet_turn_test.cpp"));
+  assert.ok(dash.includes("canary::glass::settings_mut().rotation = 1;\n  canary::glass::settings_mark_dirty();") &&
+    dash.includes("canary::ui::settings_ui_open();") && dash.includes("emu_touch(1, 20, 60);"),
+  "the dash driver opens the sheet, turns the glass as /api/set does, and drags a finger over one turn");
+  assert.ok(dash.includes("s.after.host_w == 480 && s.after.host_h == 800") && dash.includes('strcmp(s.after.checked, "Portrait") == 0') &&
+    dash.includes('strcmp(s.after.value, "Portrait") == 0') && dash.includes("s.held.host_w == 620 && s.held.host_h == 440"),
+  "...and holds the sheet to the 480x800 column and the turn worn, and to the old sheet while the finger is down");
+  assert.ok(/else if \(k == "orientation" && v >= 0 && v <= 3\)\n\s*gs\.rotation = \(uint8_t\)v;/.test(web) &&
+    web.includes("canary::glass::settings_mut() = gs;\n    canary::glass::settings_mark_dirty();"),
+  "the dash's /api/set stores the rotation and commits it, as the driver does");
+  assert.ok(mainCpp.includes("if (gs.rotation != s_applied_rot) {\n      s_applied_rot = gs.rotation;\n      canary::ui::lvgl_port_set_rotation(gs.rotation);"),
+    "main.cpp's render hands a stored rotation to the port, open sheet or not");
+  const sheet = read(join(REPO, "firmware/projects/canary-display/src/ui/settings_ui.cpp"));
+  assert.ok(sheet.includes("#ifdef CD_FLAVOR_DASH\n  s_laid_rot = lvgl_port_rotation();\n#endif") &&
+    sheet.includes("  if (!s_down && lvgl_port_rotation() != s_laid_rot) {\n    const int y = s_list ? lv_obj_get_scroll_y(s_list) : 0;\n    layout_host();"),
+  "settings_ui.cpp records the turn it laid the sheet out at, and lays it out again for another one, never under a finger");
   // CI: beside glass_turn.sh — after the third-party cache, before every step
   // that reads the committed dist — unconditional and bounded.
   const wf = read(join(REPO, ".github/workflows/canary-local.yml"));
@@ -1536,6 +1592,7 @@ test("A81: every native driver defines each page call it links with the EM_JS's 
     "the HAL announces width, height, round mask and turn (A56)");
   for (const [driver, links] of [
     ["emulator/test/runtime_turn_test.cpp", all],   // runtime_turn.sh links every emulator source
+    ["emulator/test/dash_sheet_turn_test.cpp", all], // ...in its dash pass too (F370)
     ["emulator/test/glass_turn_test.cpp", hal],     // glass_turn.sh links the display HAL alone
     ["emulator/test/backlight_cap_test.cpp", hal],
   ]) {

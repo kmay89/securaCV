@@ -451,6 +451,10 @@ std::string error_of(cc::SendRefusal why) {
   const char* e = cc::send_refusal_error(why);
   return e != nullptr ? e : "(none)";
 }
+std::string message_of(cc::SendRefusal why) {
+  const char* m = cc::send_refusal_message(why);
+  return m != nullptr ? m : "(none)";
+}
 
 // A send that does not go out names why, read on the loop task right after
 // the attempt, in the order the send handler always checked: the channel
@@ -554,6 +558,239 @@ void test_a_send_carries_the_owners_fields() {
   CHECK(p.ttl_minutes == 30);
   CHECK(host_sim::httpd_side_effects == 0);
   std::printf("PASS a_send_carries_the_owners_fields\n");
+}
+
+// ── A send holds its TTL to the spec's 5 to 60 minutes (sweep F412) ──────
+
+// Everything a send reads or writes on this device, so a refused one can be
+// shown to have touched none of it: the cooldown tiers and their timer, the
+// last-send time, the recent table, the nonce filter (a send puts its own
+// nonce in), the fixed-seed generator (a send draws its frame's nonce from
+// it, so an unchanged state is a frame never built, never signed), the
+// ESP-NOW sends, the NVS writes and the health log.
+struct SendState {
+  cc::CooldownState cooldown;
+  uint32_t last_sent_ms;
+  size_t recent_count;
+  std::vector<uint8_t> recent;
+  std::vector<uint8_t> bloom;
+  uint8_t bloom_current;
+  uint32_t bloom_turned_ms;
+  uint64_t rng;
+  size_t sent;
+  std::map<std::string, unsigned> nvs_writes;
+  size_t health;
+};
+
+SendState send_state() {
+  SendState s;
+  s.cooldown = cc::g_cooldown;
+  s.last_sent_ms = cc::g_last_chirp_sent_ms;
+  s.recent_count = cc::g_recent_chirp_count;
+  const uint8_t* r = reinterpret_cast<const uint8_t*>(cc::g_recent_chirps);
+  s.recent.assign(r, r + sizeof(cc::g_recent_chirps));
+  CHECK(cc::g_bloom != nullptr);
+  s.bloom.assign(cc::g_bloom, cc::g_bloom + 2 * cc::BLOOM_BYTES);
+  s.bloom_current = cc::g_bloom_current;
+  s.bloom_turned_ms = cc::g_bloom_turned_ms;
+  s.rng = host_sim::rng_state;
+  s.sent = host_sim::espnow->sent.size();
+  s.nvs_writes = host_sim::nvs_writes;
+  s.health = g_health.size();
+  return s;
+}
+
+bool same_state(const SendState& a, const SendState& b) {
+  return memcmp(&a.cooldown, &b.cooldown, sizeof a.cooldown) == 0 && a.last_sent_ms == b.last_sent_ms &&
+         a.recent_count == b.recent_count && a.recent == b.recent && a.bloom == b.bloom &&
+         a.bloom_current == b.bloom_current && a.bloom_turned_ms == b.bloom_turned_ms && a.rng == b.rng &&
+         a.sent == b.sent && a.nvs_writes == b.nvs_writes && a.health == b.health;
+}
+
+// The witness frame sent at `index`: its payload, read whole.
+cc::ChirpWitnessPayload witness_at(size_t index) {
+  const std::vector<uint8_t>& f = host_sim::espnow->sent.at(index).bytes;
+  CHECK(f.size() >= sizeof(cc::ChirpHeader) + sizeof(cc::ChirpWitnessPayload));
+  CHECK(reinterpret_cast<const cc::ChirpHeader*>(f.data())->msg_type == cc::CHIRP_MSG_WITNESS);
+  cc::ChirpWitnessPayload p;
+  memcpy(&p, f.data() + sizeof(cc::ChirpHeader), sizeof p);
+  return p;
+}
+
+// A send whose TTL is outside 5..60 is refused on the loop task, first,
+// as invalid_ttl: no gate is asked (a TTL of 4 on a channel that is off,
+// or in its cooldown, is still named for the TTL), no cooldown slot is
+// spent, nothing is signed or sent and nothing else changes, so the next
+// send in range goes out at once, at tier 1. The bounds themselves go out,
+// each carried in the frame as sent. It signed every byte it was handed.
+void test_a_send_outside_5_to_60_minutes_is_refused() {
+  boot();
+  cc::Command c = send_of(cc::TPL_INFRA_POWER_OUT);
+  c.ttl_minutes = 4;
+  Rest r = rest(c);                                     // the channel off: the TTL is named first
+  CHECK(r.wait == lcr::Wait::kDone && !r.r.ok && r.r.refusal == cc::SEND_REFUSED_TTL);
+  CHECK(cc::g_state == cc::CHIRP_DISABLED && host_sim::espnow->sent.empty());
+
+  enabled_channel();
+  host_sim::espnow->sent.clear();
+  g_health.clear();
+  host_sim::nvs_writes.clear();
+  for (uint8_t ttl : {uint8_t{0}, uint8_t{4}, uint8_t{61}, uint8_t{255}}) {
+    const SendState before = send_state();
+    c.ttl_minutes = ttl;
+    r = rest(c);
+    CHECK(r.wait == lcr::Wait::kDone && r.loop_turns == 1);
+    const bool refused = !r.r.ok && r.r.refusal == cc::SEND_REFUSED_TTL;
+    if (!refused) std::fprintf(stderr, "ttl_minutes %u was not refused\n", (unsigned)ttl);
+    CHECK(refused);
+    CHECK(error_of(r.r.refusal) == "invalid_ttl");
+    CHECK(r.r.cooldown_tier == 0 && r.r.cooldown_remaining_ms == 0);
+    CHECK(same_state(before, send_state()));              // nothing spent, signed, sent or stored
+    CHECK(cc::get_cooldown_remaining_ms() == 0 && cc::get_cooldown_tier() == 0);
+  }
+  CHECK(host_sim::espnow->sent.empty());
+
+  // The next send in range goes out at once, at the first tier, and each
+  // bound is carried in the frame as it was sent.
+  c.ttl_minutes = 5;
+  r = rest(c);
+  CHECK(r.r.ok && r.r.refusal == cc::SEND_REFUSED_NONE && r.r.cooldown_tier == 1);
+  CHECK(sent_types() == std::vector<uint8_t>{cc::CHIRP_MSG_WITNESS});
+  CHECK(witness_at(0).ttl_minutes == 5);
+
+  // In the cooldown: a TTL out of range is still named for itself, and
+  // leaves the cooldown's timer where it was.
+  host_sim::now_ms += 1000;
+  const uint32_t left = cc::get_cooldown_remaining_ms();
+  CHECK(left > 0);
+  c.ttl_minutes = 61;
+  r = rest(c);
+  CHECK(!r.r.ok && r.r.refusal == cc::SEND_REFUSED_TTL && r.r.cooldown_remaining_ms == 0);
+  CHECK(cc::get_cooldown_remaining_ms() == left - r.waited_ms);   // the handler's wait, nothing more
+  CHECK(cc::get_cooldown_tier() == 1);
+  host_sim::now_ms += cc::COOLDOWN_TIER_1_MS;
+  const size_t before_60 = host_sim::espnow->sent.size();
+  c.ttl_minutes = 60;
+  r = rest(c);
+  CHECK(r.r.ok && r.r.cooldown_tier == 2);
+  CHECK(r.sent_before_turn == before_60 && host_sim::espnow->sent.size() >= before_60 + 1);
+  size_t witnesses = 0;
+  for (uint8_t t : sent_types()) witnesses += t == cc::CHIRP_MSG_WITNESS ? 1 : 0;
+  CHECK(witnesses == 2);                                // the 5 and the 60, nothing refused
+  CHECK(witness_at(before_60).ttl_minutes == 60);       // its frame comes first in the pass
+
+  // The answer the handler sends for it, short of every buffer it is
+  // serialized into (chirp_api.h's 256-byte refusal and 384-byte answer).
+  CHECK(message_of(cc::SEND_REFUSED_TTL) == "ttl_minutes must be an integer from 5 to 60");
+  const std::string answer = std::string("{\"success\":false,\"error\":\"") + error_of(cc::SEND_REFUSED_TTL) +
+                             "\",\"message\":\"" + message_of(cc::SEND_REFUSED_TTL) + "\"}";
+  CHECK(answer.size() < 256);
+  CHECK(host_sim::httpd_side_effects == 0);
+  std::printf("PASS a_send_outside_5_to_60_minutes_is_refused\n");
+}
+
+// POST /api/chirp/send's ttl_minutes, read as its handler reads it
+// (ttl_from_request(), with ArduinoJson's isNull(), is<int32_t>() and
+// as<int32_t>() of the request's value; check_wap_loop_commands.py holds
+// the handler to that call): absent or null is 15; a present value is sent
+// only when it is an integer from 5 to 60, and anything else is refused
+// before it is narrowed to the frame's byte. The old `| 15` into a uint8_t
+// sent 300 as 44, 256 as 0 and -1 as 255, all three signed and broadcast,
+// and a 15.5 or a "30" as 15.
+//
+// No ArduinoJson is compiled here: each row's present / is_integer / value
+// columns are ArduinoJson 7.4.1's readings of that request (the version
+// the Lab emulator pins), taken by a scratch harness outside this suite
+// that ran the handler's own three calls over each JSON value. The suite
+// holds what ttl_from_request() does with those readings, and
+// check_wap_loop_commands.py holds the handler to the call; a later
+// ArduinoJson that read a value differently would not fail here (CI's
+// Arduino build installs the library unpinned).
+void test_the_send_handler_reads_ttl_minutes() {
+  struct Row {
+    const char* json;   // the request's value, as it is written
+    bool present;       // !isNull()
+    bool is_integer;    // is<int32_t>()
+    int32_t value;      // as<int32_t>()
+    bool sent;
+    uint8_t ttl;        // what goes in the frame, when sent
+  };
+  const Row rows[] = {
+      {"(absent)", false, false, 0, true, 15},
+      {"null", false, false, 0, true, 15},
+      {"15", true, true, 15, true, 15},
+      {"5", true, true, 5, true, 5},
+      {"60", true, true, 60, true, 60},
+      {"4", true, true, 4, false, 0},
+      {"61", true, true, 61, false, 0},
+      {"0", true, true, 0, false, 0},
+      {"255", true, true, 255, false, 0},
+      {"256", true, true, 256, false, 0},
+      {"300", true, true, 300, false, 0},
+      {"-1", true, true, -1, false, 0},
+      {"15.5", true, false, 15, false, 0},   // a float: is<int32_t>() is false
+      {"30.0", true, false, 30, false, 0},   // a float too, whatever its value
+      {"\"30\"", true, false, 30, false, 0}, // a string: is<int32_t>() is false
+      {"true", true, false, 1, false, 0},
+      {"4294967326", true, false, 0, false, 0},   // past int32_t: is<int32_t>() is false
+  };
+  for (const Row& row : rows) {
+    uint8_t ttl = 0xEE;
+    const bool sent = cc::ttl_from_request(row.present, row.is_integer, row.value, &ttl);
+    if (sent != row.sent) std::fprintf(stderr, "ttl_minutes %s\n", row.json);
+    CHECK(sent == row.sent);
+    CHECK(ttl == (row.sent ? row.ttl : 0xEE));          // written only for a send
+  }
+  CHECK(cc::WITNESS_TTL_MIN_MINUTES == 5 && cc::WITNESS_TTL_MAX_MINUTES == 60);
+  CHECK(cc::WITNESS_TTL_DEFAULT_MINUTES == 15);
+  for (int32_t v = -300; v <= 300; ++v) {
+    uint8_t ttl = 0;
+    CHECK(cc::ttl_from_request(true, true, v, &ttl) == (v >= 5 && v <= 60));
+    CHECK(cc::witness_ttl_in_range(v) == (v >= 5 && v <= 60));
+  }
+  // What the handler hands the loop task is always in range, so the loop
+  // task's own refusal (the test above) is the second line, for a caller
+  // that is not this handler.
+  for (const Row& row : rows) {
+    uint8_t ttl = 0;
+    if (cc::ttl_from_request(row.present, row.is_integer, row.value, &ttl)) CHECK(cc::witness_ttl_in_range(ttl));
+  }
+  std::printf("PASS the_send_handler_reads_ttl_minutes\n");
+}
+
+// The dashboard's Send (web_ui.h's sendChirp()) names a TTL of 15: it is
+// read from the page, passes the handler's reading, and goes out as 15.
+void test_the_dashboards_ttl_still_sends() {
+  std::string dir = CHIRP_CHANNEL_CPP;
+  dir.erase(dir.rfind('/') + 1);
+  std::FILE* f = std::fopen((dir + "web_ui.h").c_str(), "rb");
+  CHECK(f != nullptr);
+  std::string page;
+  char buf[65536];
+  for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) page.append(buf, n);
+  std::fclose(f);
+  const std::string call = "api('/api/chirp/send', 'POST', {";
+  const size_t at = page.find(call);
+  CHECK(at != std::string::npos && page.find(call, at + 1) == std::string::npos);   // the one send
+  const size_t end = page.find('}', at + call.size());
+  const std::string body = page.substr(at + call.size(), end - at - call.size());
+  const std::string key = "ttl_minutes: ";
+  const size_t k = body.find(key);
+  CHECK(k != std::string::npos && body.find(key, k + 1) == std::string::npos);
+  const int32_t named = (int32_t)std::strtol(body.c_str() + k + key.size(), nullptr, 10);
+  CHECK(named == 15);
+
+  uint8_t ttl = 0;
+  CHECK(cc::ttl_from_request(true, true, named, &ttl) && ttl == 15);
+  boot();
+  enabled_channel();
+  const size_t before = host_sim::espnow->sent.size();
+  cc::Command c = send_of(cc::TPL_INFRA_POWER_OUT);
+  c.ttl_minutes = ttl;
+  const Rest r = rest(c);
+  CHECK(r.r.ok && r.r.refusal == cc::SEND_REFUSED_NONE);
+  CHECK(witness_at(before).ttl_minutes == 15);
+  std::printf("PASS the_dashboards_ttl_still_sends\n");
 }
 
 // POST /api/chirp/settings changes only the fields it names: the filter
@@ -2481,6 +2718,48 @@ void test_a_send_that_ends_a_quiet_day_counts_from_tier_1() {
   std::printf("PASS a_send_that_ends_a_quiet_day_counts_from_tier_1\n");
 }
 
+// A TTL refused in that same drain (sweep F412) is refused before
+// send_chirp() reads the channel at all: the tiers are not expired by the
+// refusal, only by update()'s own reset later in the pass, so the next send
+// in range counts from tier 1 just the same. The drain alone is the
+// refusal's whole effect: a whole pass expires the tiers right after it, so
+// only a drain-only turn can tell a send that expired them from one that
+// did not.
+void test_a_ttl_refusal_expires_no_tier() {
+  const uint32_t clock_was = host_sim::now_ms;
+  host_sim::now_ms = 1000;
+  boot();
+  enabled_channel();
+  CHECK(send_when_due().cooldown_tier == 1);
+  CHECK(send_when_due().cooldown_tier == 2);
+  const uint32_t last = cc::g_cooldown.last_chirp_ms;
+  host_sim::now_ms = last + 1000;
+  cc::update();                                     // a pass well inside the day
+  host_sim::now_ms = last + cc::COOLDOWN_RESET_MS + 1 - cc::COMMAND_POLL_MS;
+  cc::Command c = send_of(cc::TPL_INFRA_POWER_OUT);
+  for (uint8_t ttl : {uint8_t{4}, uint8_t{61}}) {
+    const SendState before = send_state();
+    c.ttl_minutes = ttl;
+    const Rest r = rest(c, 1, Turn::kDrain);
+    CHECK(r.wait == lcr::Wait::kDone && r.loop_turns == 1);
+    CHECK(!r.r.ok && r.r.refusal == cc::SEND_REFUSED_TTL);
+    // Past 24 quiet hours and still at tier 2 (the tier the result reads
+    // after the send): the refusal expired nothing.
+    CHECK(r.r.cooldown_tier == 2);
+    CHECK(host_sim::now_ms - cc::g_cooldown.last_chirp_ms > cc::COOLDOWN_RESET_MS);
+    CHECK(cc::g_cooldown.chirps_sent_today == 2 && cc::g_cooldown.last_chirp_ms == last);
+    CHECK(same_state(before, send_state()));
+  }
+  cc::update();                                     // update()'s own reset
+  CHECK(cc::g_cooldown.chirps_sent_today == 0 && cc::g_cooldown.last_chirp_ms == 0);
+  c.ttl_minutes = 30;
+  const Rest r = rest(c);
+  CHECK(r.r.ok && r.r.refusal == cc::SEND_REFUSED_NONE && r.r.cooldown_tier == 1);
+  CHECK(host_sim::httpd_side_effects == 0);
+  host_sim::now_ms = clock_was;
+  std::printf("PASS a_ttl_refusal_expires_no_tier\n");
+}
+
 // A disable and an enable keep the tiers: the new session (a new key,
 // session id and emoji, spec 2.3) waits out the presence requirement, and
 // then the cooldown's rest. enable() zeroed them, so the send 10 minutes
@@ -3149,6 +3428,7 @@ const Test kTests[] = {
     {"the_tiers_reset_24_quiet_hours_after_the_last_send",
      test_the_tiers_reset_24_quiet_hours_after_the_last_send},
     {"a_send_that_ends_a_quiet_day_counts_from_tier_1", test_a_send_that_ends_a_quiet_day_counts_from_tier_1},
+    {"a_ttl_refusal_expires_no_tier", test_a_ttl_refusal_expires_no_tier},
     {"a_disable_keeps_the_tiers", test_a_disable_keeps_the_tiers},
     {"a_new_session_beacons_no_last_send", test_a_new_session_beacons_no_last_send},
     {"the_beacon_age_stops_at_254_across_the_wrap", test_the_beacon_age_stops_at_254_across_the_wrap},
@@ -3162,6 +3442,9 @@ const Test kTests[] = {
     {"a_dismiss_says_whether_its_vote_went", test_a_dismiss_says_whether_its_vote_went},
     {"a_dismissed_chirp_is_not_confirmed", test_a_dismissed_chirp_is_not_confirmed},
     {"a_send_carries_the_owners_fields", test_a_send_carries_the_owners_fields},
+    {"a_send_outside_5_to_60_minutes_is_refused", test_a_send_outside_5_to_60_minutes_is_refused},
+    {"the_send_handler_reads_ttl_minutes", test_the_send_handler_reads_ttl_minutes},
+    {"the_dashboards_ttl_still_sends", test_the_dashboards_ttl_still_sends},
     {"a_settings_post_changes_only_what_it_names", test_a_settings_post_changes_only_what_it_names},
     {"a_command_the_loop_never_reaches_is_withdrawn", test_a_command_the_loop_never_reaches_is_withdrawn},
     {"a_full_ring_answers_busy", test_a_full_ring_answers_busy},

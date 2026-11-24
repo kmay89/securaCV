@@ -104,7 +104,12 @@ bool revoke_beacon_set_entry(const uint8_t* fingerprint);
 // queue model).
 bool on_peer_tampered(const uint8_t* device_pubkey);
 
-// Pairing flow.
+// Pairing flow. Not built (spec §3.3, sweep F30): start_pair_init(),
+// start_pair_join() and confirm_pair() return false and touch no state, and
+// cancel_pair() changes the state only out of a pairing state, which
+// nothing enters. Nothing in the sketch calls them (the four
+// /api/beacon/pair/* routes answer pairing_not_built instead), and
+// tests_host/test_beacon_cancel_origination.cpp holds both.
 bool start_pair_init();
 bool start_pair_join();
 bool confirm_pair();

@@ -30,10 +30,18 @@ bool hash_beacon_id(const uint8_t per_device_key[PER_DEVICE_KEY_LEN],
   memcpy(buf,                       per_device_key, PER_DEVICE_KEY_LEN);
   memcpy(buf + PER_DEVICE_KEY_LEN,  mac,            MAC_LEN);
 
+  /* A hash that failed gives no id (sweep F364): its zeroed digest would
+   * be the same "id" for every beacon, so the Scout would pair, track and
+   * list each one as the one before. `out` is zeroed and false answered,
+   * and both Scout callers (ble_scout_pair, ble_scout_on_advert) drop the
+   * advert on false. */
   uint8_t hash[mesh_crypto::SHA256_OUT_LEN];
-  mesh_crypto::sha256_domain(DOMAIN_HASHED_ID, buf, sizeof(buf), hash);
-
-  memcpy(out, hash, HASHED_ID_LEN);
+  const bool hashed = mesh_crypto::sha256_domain(DOMAIN_HASHED_ID, buf, sizeof(buf), hash);
+  if (hashed) {
+    memcpy(out, hash, HASHED_ID_LEN);
+  } else {
+    memset(out, 0, HASHED_ID_LEN);
+  }
 
   /* Wipe the scratch buffer; key bytes lived briefly in it. */
   volatile uint8_t* p = (volatile uint8_t*)buf;
@@ -41,7 +49,7 @@ bool hash_beacon_id(const uint8_t per_device_key[PER_DEVICE_KEY_LEN],
 #if defined(__GNUC__) || defined(__clang__)
   asm volatile("" ::: "memory");
 #endif
-  return true;
+  return hashed;
 }
 
 bool hashed_id_equal(const uint8_t a[HASHED_ID_LEN],

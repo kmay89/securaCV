@@ -76,10 +76,12 @@ by ID; the wave that closed F1-F5 and F33 left the rows below open.
 | FW12 | **The 23-item hardware verification checklist has never been run**, 12 board pin maps say "NOT yet validated on bench", seven capabilities are "Built, bench-gated", and the enclosure caliper and print passes (C6, C7) are pending. This is the single largest unlock. | bench | sweep U1, C6, C7; `docs/audit/hardware_verification_checklist.md` | ledger |
 | FW13 | **canary-wap enterprise readiness**: the two unmet acceptance criteria (unbox in under 10 minutes; Docker + Frigate end-to-end on a real Docker host), plus the core-pin box. `integrations/ha_frigate_mqtt/up.sh` is written and shellcheck-clean but has never had a real run. | bench + human decision | `ENTERPRISE_READINESS_TODO.md` section 6 | re-read (up.sh and checklist wording) |
 
-**Parity plan.** `PARITY_PLAN.md`'s eight Group-A rows (Web UI, camera peek, mesh,
+**Parity plan.** The eight Group-A rows this pass found in `PARITY_PLAN.md` (Web UI, camera peek, mesh,
 mesh RSSI, BLE discovery, RF presence, hub failover, chirp) all still read partial or
 missing for the canary PIO column in `FEATURES.md`, and all but the web UI are bench
-or multi-board-bench gated: code + bench.
+or multi-board-bench gated: code + bench. (Sweep D23 restated the plan's section 1
+from the dashboard: Group A also carries the SD storage, export, Bluetooth setup door,
+mDNS advert, remote identify and provisioning gate rows now; see R2.)
 
 ---
 
@@ -155,7 +157,7 @@ The store rows (W1, W2, W5) are launch gates. The store is in preview on purpose
 | ID | Disagreement | Fix | Checked |
 |---|---|---|---|
 | R1 | `ESP32S3_OPTIMIZATION_ROADMAP.md` row 13 lists "SD SPI 4 to 20 MHz" as open with a stale anchor. In the PlatformIO tree `canary_config.h:480` already defines `SD_SPI_FAST` as 20 MHz (unbenched, per its own comment) while the roadmap's section 3.5 still says 4 MHz; canary-wap's `sd_storage.h:45` really is still 4 MHz. | Mark 13 landed for the PIO tree, keep the bench caveat, scope the WAP separately. | re-read |
-| R2 | `PARITY_PLAN.md` section 1 Group B and the section 4 scorecard still show OTA A/B rollback, acoustic T3/T4 and WiFi auto-reconnect as missing in the Arduino tree, while the `FEATURES.md` dashboard (which the plan names as its source of truth) shows them present for canary-wap. | Refresh the scorecard from the dashboard. | re-read |
+| R2 | `PARITY_PLAN.md` section 1 Group B and the section 4 scorecard showed OTA A/B rollback and acoustic T3/T4 as missing in the Arduino tree, while the `FEATURES.md` dashboard (which the plan names as its source of truth) shows them present for canary-wap. WiFi auto-reconnect, which this row also named, was not: the dashboard's row read canary-wap ❌ when this row was written and still does, as the plan says. **Restated by sweep D23**: section 1 now lists the dashboard rows where the two trees differ, held there by `scripts/tests/test_parity_plan.py`; OTA A/B and acoustic left Group B, and their scorecard rows read the dashboard's ✅ with the bench column open. | done | re-read; `test_parity_plan.py` |
 | R3 | `FEATURES.md` shows "OTA A/B with rollback safety" as present for the shipping canary and canary-wap columns. FW1 could not confirm that from the tree alone; #1746's reading of the core's prebuilt sdkconfig says the row is right, and its `#error` makes CI prove it. Bench Track E decides. | Bench (Track E), then correct whichever is wrong. | re-read (config search); dashboard cell read |
 | R4 | The sweep's U2 says the release key is the all-zero placeholder; the tree carries a non-zero key (A3). | Re-word U2 after a human confirms the secret state. | re-read |
 | R5 | `integrations/ha_frigate_mqtt/up.sh:21` cited `ENTERPRISE_READINESS_TODO.md` with no path. The file exists only at `firmware/projects/canary-wap/ENTERPRISE_READINESS_TODO.md` (section 6, "Make integration runnable in one command", line 242), so the bare name did not resolve from the repo root. **Fixed in this pass**: the comment now carries the full path. | done | re-read |

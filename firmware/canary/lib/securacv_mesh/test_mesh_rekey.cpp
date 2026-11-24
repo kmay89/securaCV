@@ -45,6 +45,9 @@
  *      lost the first OFFER, and a second removal refused mid-rotation and
  *      retried. Plus the settle window, the yield, the survivor switch and
  *      drop_survivor() on their own.
+ *  12. A KDF hash that fails gives no key (sweep F364): the initiator sends
+ *      no SECRET and a survivor installs nothing; with the hash running
+ *      again, both carry on.
  *
  * Build:
  *   g++ -std=c++17 -DCSI_TEST_HOST_BUILD \
@@ -56,6 +59,7 @@
  */
 
 #include "mesh_rekey.h"
+#include "mesh_crypto.h"
 #include "mesh_revocation.h"
 
 #include <array>
@@ -822,6 +826,47 @@ void test_settle_yield_switch_drop() {
 
 }  /* namespace */
 
+/* Sweep F364: a KDF hash that fails gives no key. The per-survivor AEAD
+ * key is SHA-256(DOMAIN_REKEY_KEY || ...); on a failed hash it was the
+ * zeroed digest, the same for every rotation and survivor, so a SECRET went
+ * out sealed under a key anyone could name, and a survivor whose own hash
+ * failed opened it. Now the initiator sends no SECRET (the survivor's next
+ * ACCEPT, or the timeout, carries on) and a survivor installs nothing and
+ * keeps waiting. mesh_crypto::test::fail_sha256_domain() fails the hash. */
+void test_a_key_that_does_not_hash_seals_and_opens_nothing() {
+  namespace t = mesh_crypto::test;
+  Context ci, ca, cb;
+  mesh_rekey::context_init(ci);
+  mesh_rekey::context_init(ca);
+  mesh_rekey::context_init(cb);
+  Action offer = start_ab(ci, 0x5EC0FFEEu, 1000);
+  Action acc_a = rx(ca, FP_A, MsgType::OFFER, FP_I, offer, 1010);
+  assert(acc_a.type == ActionType::SEND_ACCEPT);
+
+  /* The initiator's key for A does not hash: no SECRET. */
+  t::fail_sha256_domain(mesh_rekey::DOMAIN_REKEY_KEY, 1);
+  Action sec = rx(ci, FP_I, MsgType::ACCEPT, FP_A, acc_a, 1000 + SET + 20);
+  assert(t::sha256_domain_failures() == 1);
+  assert(sec.type == ActionType::NONE);
+  assert(mesh_rekey::in_progress(ci));
+  /* A's ACCEPT again, the hash running: the SECRET goes out. */
+  sec = rx(ci, FP_I, MsgType::ACCEPT, FP_A, acc_a, 1000 + SET + 30);
+  assert(sec.type == ActionType::SEND_SECRET);
+
+  /* A's own key does not hash: nothing installed, A still waiting. */
+  t::fail_sha256_domain(mesh_rekey::DOMAIN_REKEY_KEY, 1);
+  Action inst = rx(ca, FP_A, MsgType::SECRET, FP_I, sec, 1000 + SET + 40);
+  assert(t::sha256_domain_failures() == 1);
+  assert(inst.type == ActionType::NONE);
+  assert(all_zero(inst.new_secret, sizeof(inst.new_secret)));
+  assert(mesh_rekey::in_progress(ca));
+  /* The same SECRET, A's hash running: installed. */
+  t::fail_sha256_domain(nullptr, 0);
+  inst = rx(ca, FP_A, MsgType::SECRET, FP_I, sec, 1000 + SET + 50);
+  assert(inst.type == ActionType::ACK_AND_INSTALL);
+  std::printf("PASS test_a_key_that_does_not_hash_seals_and_opens_nothing\n");
+}
+
 int main() {
   std::srand(0x5EC5E7);
   test_payload_sizes_pinned();
@@ -836,6 +881,7 @@ int main() {
   test_bad_inputs();
   test_settle_yield_switch_drop();
   test_two_removals_converge();
+  test_a_key_that_does_not_hash_seals_and_opens_nothing();
   std::printf("\nALL MESH_REKEY TESTS PASSED\n");
   return 0;
 }

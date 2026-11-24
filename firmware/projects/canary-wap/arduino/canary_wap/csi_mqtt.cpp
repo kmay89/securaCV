@@ -72,6 +72,7 @@
 #include "csi_module_settings_nvs.h" /* staged copy — begin_read_only(), the quiet read-only open (F150) */
 #include "wap_json_writer.h"         /* GET /api/mqtt/config's answer, escaped and measured (sweep F227) */
 #include "http_body_reader.h"        /* POST /api/mqtt/config's body, read whole or refused (sweep F266) */
+#include "json_member.h"             /* its keys, each a member of the body's own object (sweep F469) */
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -2235,11 +2236,10 @@ esp_err_t handle_config_get(httpd_req_t* req) {
  * username / password / prefix could legally carry. \uXXXX is
  * intentionally NOT decoded: those fields are ASCII in practice
  * and adding UTF-16 surrogate handling for one corner case isn't
- * worth the parser surface (PR #394 review r3213674569). An
- * unrecognized escape passes the next char through literally —
- * matches how the existing /api/settings POST parser handles
- * nonsense, and avoids a silent reject for marginally-malformed
- * input. */
+ * worth the parser surface (PR #394 review r3213674569): \u0041 is kept
+ * as the five characters u0041. An escape JSON does not have (\q) never
+ * reaches it since sweep F469: json_object_find() refuses the body that
+ * holds one, and handle_config_post() answers it "body is not JSON". */
 static char json_next_char(const char*& p) {
   if (*p == '\\' && p[1]) {
     const char esc = p[1];
@@ -2256,31 +2256,64 @@ static char json_next_char(const char*& p) {
   return *p++;
 }
 
-/* Find a JSON string field's value into out (NUL-terminated, truncated to
- * out_cap-1). Returns true if the key was present (even if empty).
- * Hand-rolled to keep ArduinoJson out of this TU — same shape the
- * existing /api/settings POST parser uses. With `cut`, says whether the
- * value did not fit and what was dropped holds more than whitespace (space,
- * tab, CR, LF): the TLS CA's refusal (sweep F241) reads it, so a PEM that
- * fits but for the newline after its END line is taken, and one that does
- * not fit is refused instead of stored cut. */
-static bool json_extract_string(const char* body, const char* key,
+/* The keys POST /api/mqtt/config reads (sweep F469), each a member of the
+ * body's own object, found by json_member.h's json_object_find() over all
+ * `got` bytes. They were found by strstr() of the quoted key anywhere in the
+ * body and read after the next ':' anywhere after it, so a value spelled
+ * like a key was read as the key ({"note":"host","x":"evil.example"} saved
+ * the host evil.example, {"label":"port","x":1} the port 1), a nested
+ * object's member was the body's ({"x":{"host":"inner"},"host":"outer"}
+ * saved inner), and the first of two was taken. A raw control byte in a
+ * string is taken as it is (raw_controls), as the route always stored one:
+ * it moves no quote or backslash. */
+static const char* const kConfigKeys[] = {
+    "enabled", "discovery", "tls", "tls_mode", "ca", "port", "host", "user", "prefix", "password",
+};
+
+/* What config_body_check() says of a body. */
+enum class ConfigBody : uint8_t { kOk, kNotJson, kTwice };
+
+/* A body the reader does not take, or one that names a key above more than
+ * once, is refused before any field is applied: read as naming no key, it
+ * would be answered saved with the stored host, password or CA kept, which
+ * it asked to change (parsers disagree on which of two wins, so neither
+ * does). */
+static ConfigBody config_body_check(const char* body, size_t len) {
+  for (const char* key : kConfigKeys) {
+    JsonMember m = {nullptr, nullptr, 0};
+    const JsonFind f = json_object_find(body, len, key, &m, /*raw_controls=*/true);
+    if (f == JsonFind::kUnreadable) return ConfigBody::kNotJson;
+    if (f == JsonFind::kTwice) return ConfigBody::kTwice;
+  }
+  return ConfigBody::kOk;
+}
+
+/* The body's own member `key`, or false when it has none. */
+static bool config_member(const char* body, size_t len, const char* key, JsonMember* m) {
+  return json_object_find(body, len, key, m, /*raw_controls=*/true) == JsonFind::kFound;
+}
+
+/* A JSON string field's value into out (NUL-terminated, truncated to
+ * out_cap-1), decoded by json_next_char() up to the member's closing quote.
+ * Returns true if the key was present with a string value (even if empty).
+ * Hand-rolled to keep ArduinoJson out of this TU. With `cut`, says whether
+ * the value did not fit and what was dropped holds more than whitespace
+ * (space, tab, CR, LF): the TLS CA's refusal (sweep F241) reads it, so a PEM
+ * that fits but for the newline after its END line is taken, and one that
+ * does not fit is refused instead of stored cut. */
+static bool json_extract_string(const char* body, size_t len, const char* key,
                                 char* out, size_t out_cap, bool* cut = nullptr) {
   if (cut) *cut = false;
   if (!body || !key || !out || out_cap == 0) return false;
-  const char* k = strstr(body, key);
-  if (!k) return false;
-  const char* colon = strchr(k, ':');
-  if (!colon) return false;
-  const char* p = colon + 1;
-  while (*p == ' ' || *p == '\t') p++;
-  if (*p != '"') return false;
-  p++;  /* past opening quote */
+  JsonMember m = {nullptr, nullptr, 0};
+  if (!config_member(body, len, key, &m) || m.value[0] != '"') return false;
+  const char* p = m.value + 1;                          /* past the opening quote */
+  const char* const end = m.value + m.value_len - 1;    /* the closing quote */
   size_t i = 0;
-  while (*p && *p != '"' && i < out_cap - 1) out[i++] = json_next_char(p);
+  while (p < end && i < out_cap - 1) out[i++] = json_next_char(p);
   out[i] = '\0';
   if (cut) {
-    while (*p && *p != '"' && !*cut) {
+    while (p < end && !*cut) {
       const char ch = json_next_char(p);
       *cut = ch != ' ' && ch != '\t' && ch != '\r' && ch != '\n';
     }
@@ -2288,30 +2321,36 @@ static bool json_extract_string(const char* body, const char* key,
   return true;
 }
 
-static bool json_extract_bool(const char* body, const char* key, bool* out) {
-  const char* k = strstr(body, key);
-  if (!k) return false;
-  const char* colon = strchr(k, ':');
-  if (!colon) return false;
-  const char* p = colon + 1;
-  while (*p == ' ' || *p == '\t') p++;
-  if (strncmp(p, "true",  4) == 0) { *out = true;  return true; }
-  if (strncmp(p, "false", 5) == 0) { *out = false; return true; }
+/* A bare true or false (a quoted one is not read, as before). */
+static bool json_extract_bool(const char* body, size_t len, const char* key, bool* out) {
+  JsonMember m = {nullptr, nullptr, 0};
+  if (!config_member(body, len, key, &m)) return false;
+  if (m.value_len == 4 && memcmp(m.value, "true", 4) == 0) { *out = true;  return true; }
+  if (m.value_len == 5 && memcmp(m.value, "false", 5) == 0) { *out = false; return true; }
   return false;
 }
 
-static bool json_extract_int(const char* body, const char* key, long* out) {
-  const char* k = strstr(body, key);
-  if (!k) return false;
-  const char* colon = strchr(k, ':');
-  if (!colon) return false;
-  const char* p = colon + 1;
-  while (*p == ' ' || *p == '\t' || *p == '"') p++;
-  char* end = nullptr;
-  long n = strtol(p, &end, 10);
-  if (end == p) return false;
+/* What json_extract_int() read of a key. */
+enum class ConfigInt : uint8_t {
+  kAbsent,      /* the body has no member of that name */
+  kNumber,      /* *out is its value */
+  kUnreadable,  /* it has one, and json_member_int() cannot read it */
+};
+
+/* An integer, bare or in quotes ("port":"8883" reads as 8883, as before),
+ * by json_member_int(): no fraction or exponent, saturated at
+ * kJsonIntMax, far past every range the handler checks. A member it cannot
+ * read (1.0, 1e0, null, true, "x") is kUnreadable, not kAbsent, so the
+ * handler refuses it by name (the F469 review): read as absent, a body
+ * asking for {"tls_mode":1.0} was answered saved with the stored mode, plain
+ * text, kept, where strtol() had read it as 1. */
+static ConfigInt json_extract_int(const char* body, size_t len, const char* key, long* out) {
+  JsonMember m = {nullptr, nullptr, 0};
+  if (!config_member(body, len, key, &m)) return ConfigInt::kAbsent;
+  int32_t n = 0;
+  if (!json_member_int(m, &n)) return ConfigInt::kUnreadable;
   *out = n;
-  return true;
+  return ConfigInt::kNumber;
 }
 
 /* Answer a setting longer than the device keeps (sweep F241), or a body
@@ -2473,6 +2512,21 @@ esp_err_t handle_config_post(httpd_req_t* req) {
     return ESP_OK;
   }
 
+  /* Every key is a member of the body's own object (sweep F469,
+   * config_body_check() above): a body the reader does not take, or one
+   * that names a key twice, is refused here, before any field is applied. */
+  const ConfigBody shape = config_body_check(body, got);
+  if (shape == ConfigBody::kNotJson) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"body is not JSON\"}", -1);
+    return ESP_OK;
+  }
+  if (shape != ConfigBody::kOk) {
+    httpd_resp_set_status(req, "400 Bad Request");
+    httpd_resp_send(req, "{\"ok\":false,\"reason\":\"a setting is named more than once\"}", -1);
+    return ESP_OK;
+  }
+
   /* Start from current NVS so PATCH-style requests (just toggling
    * enabled, leaving everything else alone) work. */
   Config c;
@@ -2488,8 +2542,8 @@ esp_err_t handle_config_post(httpd_req_t* req) {
    * reader of this device's memory or flash would take. */
   const Config before = c;
 
-  json_extract_bool  (body, "\"enabled\"",   &c.enabled);
-  json_extract_bool  (body, "\"discovery\"", &c.discovery);
+  json_extract_bool  (body, got, "enabled",   &c.enabled);
+  json_extract_bool  (body, got, "discovery", &c.discovery);
   /* Broker TLS mode. The numeric mode is the contract
    * (mqtt_transport_logic.h); the legacy "tls" bool is still accepted
    * from older pages as on→CA / off→plain. Fingerprint pinning (2) is
@@ -2497,18 +2551,22 @@ esp_err_t handle_config_post(httpd_req_t* req) {
    * honor it and a silent save would only surface as "won't connect". */
   {
     bool legacy_tls = c.tls;
-    if (json_extract_bool(body, "\"tls\"", &legacy_tls)) {
+    if (json_extract_bool(body, got, "tls", &legacy_tls)) {
       c.tls_mode = legacy_tls ? (uint8_t)canary::net::mqtt_tls::Mode::Ca : 0;
     }
     long mode_l = -1;
-    if (json_extract_int(body, "\"tls_mode\"", &mode_l)) {
-      if (mode_l == (long)canary::net::mqtt_tls::Mode::Fingerprint) {
+    const ConfigInt mode_read = json_extract_int(body, got, "tls_mode", &mode_l);
+    if (mode_read != ConfigInt::kAbsent) {
+      /* A tls_mode it cannot read (1.0, 2.0, null) is refused below with the
+       * modes it takes: never read as absent, the stored mode kept. */
+      const bool number = mode_read == ConfigInt::kNumber;
+      if (number && mode_l == (long)canary::net::mqtt_tls::Mode::Fingerprint) {
         httpd_resp_set_status(req, "400 Bad Request");
         httpd_resp_send(req,
           "{\"ok\":false,\"reason\":\"fingerprint pinning is not available on this device - use the CA mode\"}", -1);
         return ESP_OK;
       }
-      if (mode_l == (long)canary::net::mqtt_tls::Mode::InsecureLab) {
+      if (number && mode_l == (long)canary::net::mqtt_tls::Mode::InsecureLab) {
         /* Same reason init() would refuse it (caps.insecure = false): the
          * core's esp-tls cannot skip verification, so saving the mode would
          * only surface later as "won't connect". */
@@ -2518,8 +2576,8 @@ esp_err_t handle_config_post(httpd_req_t* req) {
         return ESP_OK;
       }
       bool known = false;
-      (void)canary::net::mqtt_tls::mode_from_u8((uint8_t)(mode_l & 0xFF), &known);
-      if (mode_l < 0 || mode_l > 255 || !known) {
+      if (number) (void)canary::net::mqtt_tls::mode_from_u8((uint8_t)(mode_l & 0xFF), &known);
+      if (!number || mode_l < 0 || mode_l > 255 || !known) {
         httpd_resp_set_status(req, "400 Bad Request");
         httpd_resp_send(req, "{\"ok\":false,\"reason\":\"tls_mode must be 0 (off) or 1 (CA)\"}", -1);
         return ESP_OK;
@@ -2533,7 +2591,7 @@ esp_err_t handle_config_post(httpd_req_t* req) {
    * fingerprint or a half-copied PEM is a 400 here, not a -0x2180 later. */
   bool ca_changed = false;
   bool ca_cut = false;
-  if (json_extract_string(body, "\"ca\"", cabuf.p, MAX_CA_LEN + 1, &ca_cut)) {
+  if (json_extract_string(body, got, "ca", cabuf.p, MAX_CA_LEN + 1, &ca_cut)) {
     /* A CA longer than MAX_CA_LEN bytes is refused, never stored cut (sweep
      * F241): a cut chain still has a BEGIN and an END line, so it passed the
      * shape check and reached NVS ending mid-certificate. Whitespace past
@@ -2552,8 +2610,18 @@ esp_err_t handle_config_post(httpd_req_t* req) {
     }
     ca_changed = true;
   }
+  /* A port it cannot read (8883.0, null) or cannot use (0, 70000, -1) is
+   * refused by name (the F469 review). It was read as absent and answered
+   * saved with the stored port kept: a fraction since F469 (strtol() read
+   * 8883.0 as 8883), a number out of range always. */
   long port_l = c.port;
-  if (json_extract_int(body, "\"port\"", &port_l) && port_l > 0 && port_l <= 65535) {
+  const ConfigInt port_read = json_extract_int(body, got, "port", &port_l);
+  if (port_read != ConfigInt::kAbsent) {
+    if (port_read != ConfigInt::kNumber || port_l < 1 || port_l > 65535) {
+      httpd_resp_set_status(req, "400 Bad Request");
+      httpd_resp_send(req, "{\"ok\":false,\"reason\":\"port must be a whole number from 1 to 65535\"}", -1);
+      return ESP_OK;
+    }
     c.port = (uint16_t)port_l;
   }
   /* Empty string in any field clears it; missing field leaves it as-is.
@@ -2568,15 +2636,15 @@ esp_err_t handle_config_post(httpd_req_t* req) {
   static_assert(MAX_USER_LEN <= kLongestSetting && MAX_PREFIX_LEN <= kLongestSetting,
                 "buf must hold one byte past every string setting");
   char buf[kLongestSetting + 2] = {};
-  if (json_extract_string(body, "\"host\"",   buf, sizeof(buf))) {
+  if (json_extract_string(body, got, "host",   buf, sizeof(buf))) {
     if (refuse_too_long(req, "host", buf, MAX_HOST_LEN)) return ESP_OK;
     strncpy(c.host,   buf, MAX_HOST_LEN);   c.host  [MAX_HOST_LEN]   = '\0';
   }
-  if (json_extract_string(body, "\"user\"",   buf, sizeof(buf))) {
+  if (json_extract_string(body, got, "user",   buf, sizeof(buf))) {
     if (refuse_too_long(req, "user", buf, MAX_USER_LEN)) return ESP_OK;
     strncpy(c.user,   buf, MAX_USER_LEN);   c.user  [MAX_USER_LEN]   = '\0';
   }
-  if (json_extract_string(body, "\"prefix\"", buf, sizeof(buf))) {
+  if (json_extract_string(body, got, "prefix", buf, sizeof(buf))) {
     /* Restrict prefix to a safe character set so we can splat it into
      * the discovery JSON's stat_t / avty_t fields via %s without an
      * escaper. JSON-unsafe (", \, control chars) would corrupt the
@@ -2604,7 +2672,7 @@ esp_err_t handle_config_post(httpd_req_t* req) {
     strncpy(c.prefix, buf, MAX_PREFIX_LEN); c.prefix[MAX_PREFIX_LEN] = '\0';
   }
   bool password_in_body = false;
-  if (json_extract_string(body, "\"password\"", buf, sizeof(buf))) {
+  if (json_extract_string(body, got, "password", buf, sizeof(buf))) {
     if (refuse_too_long(req, "password", buf, MAX_PASS_LEN)) return ESP_OK;
     strncpy(c.pass,   buf, MAX_PASS_LEN);   c.pass  [MAX_PASS_LEN]   = '\0';
     password_in_body = true;

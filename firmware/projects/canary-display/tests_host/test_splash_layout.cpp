@@ -45,6 +45,19 @@
 //    6 under Heirloom, the tail 10 px above that), and the landscape
 //    nightlight, whose hung bubble keeps kGap under the bird and stands its
 //    tail in the foot of the bird's box.
+//  * the wordmark fits its canvas (F373): word_fits() holds exactly when the
+//    box LVGL centers on the canvas leaves sl::kWordMargin columns a side,
+//    for every canvas and box width up to 1000 px; LVGL's measure of the
+//    wordmark (its font data, the letter spacing after each glyph but the
+//    last) is the 8.4 lv_txt_get_size the native renders read (Montserrat
+//    36: 191 px at kWordSpacing, 177 at 0; 28: 151 and 137; 24, the lean
+//    builds' default title: 132 and 118); on every
+//    canvas and ladder splash.cpp's ladder keeps the title face at
+//    kWordSpacing but on the 172 px S3 glass under Heirloom, where it steps
+//    to 28 (pinned), and the box keeps its margin; and for every canvas up
+//    to 1000 px and every title face the ladders set, the ladder leaves a
+//    wordmark that fits or none at all (a canvas narrower than the narrower
+//    face set tight, plus the margins: no display's).
 //
 // This test holds the header. test_splash_scenes.cpp holds splash.cpp to it:
 // it compiles the real splash.cpp against fake_lvgl and reads where the bird
@@ -56,7 +69,9 @@
 // the core-2.0.17 sketch compiles it there. Prints "ALL SPLASH LAYOUT TESTS
 // PASSED" on success.
 
+#include <algorithm>
 #include <cmath>
+#include <set>
 
 #include "splash_test_env.h"
 
@@ -345,6 +360,105 @@ void check_canvas(const Canvas& c, int which, int hop_reach,
   std::printf("  %-26s %s\n", who, summary.c_str());
 }
 
+// The wordmark (F373): word_fits() against LVGL's centering, LVGL's measure
+// against the native renders', the ladder on every canvas, and the ladder
+// total on every canvas width.
+void check_wordmark(const std::vector<Canvas>& cs) {
+  std::printf("the wordmark (F373):\n");
+  CHECK(sl::kWordSpacing == 2, "splash_layout.h's kWordSpacing is %d; the native renders "
+        "measured the wordmark at 2", sl::kWordSpacing);
+  // word_fits() is LV_ALIGN_CENTER's margin: half the canvas less half the
+  // box (each halved alone, lv_obj_pos.c) on the left, the rest on the right.
+  int mismatched = 0;
+  for (int cw = 0; cw <= 1000; ++cw) {
+    for (int w = 0; w <= 1000; ++w) {
+      const int left = cw / 2 - w / 2;
+      const int right = cw - (left + w);
+      const bool clear = left >= sl::kWordMargin && right >= sl::kWordMargin;
+      if (sl::word_fits(cw, w) != clear && mismatched++ == 0)
+        CHECK(false, "word_fits(%d, %d) is %d; the centered box leaves %d and %d columns "
+              "(kWordMargin %d)", cw, w, sl::word_fits(cw, w), left, right, sl::kWordMargin);
+    }
+  }
+  CHECK(mismatched == 0, "word_fits() and LVGL's centering disagree %d times", mismatched);
+  // LVGL's measure, from its font data, against LVGL 8.4's lv_txt_get_size
+  // in the native renders (glass_splash_test.cpp prints and holds the same).
+  struct Pin {
+    int face, spacing, px;
+  };
+  const Pin pins[] = {{36, 2, 191}, {36, 0, 177}, {28, 2, 151}, {28, 0, 137},
+                      {24, 2, 132}, {24, 0, 118}};
+  for (const Pin& p : pins) {
+    const Face* f = face_of(p.face);
+    CHECK(f != nullptr, "montserrat_%d is not carried", p.face);
+    if (f == nullptr) continue;
+    const int w = word_px(*f, p.spacing);
+    CHECK(w == p.px, "\"%s\" in montserrat_%d at %d px spacing measures %d px; LVGL 8.4's "
+          "lv_txt_get_size gave %d", kWordmark, p.face, p.spacing, w, p.px);
+    std::printf("  montserrat_%d at %d px spacing: %d px\n", p.face, p.spacing, w);
+  }
+  // The ladder on every canvas and type ladder: where it steps, and the box
+  // on the canvas with kWordMargin a side.
+  std::string stepped;
+  for (const Canvas& c : cs) {
+    for (int which = 0; which < 2; ++which) {
+      const int title = g_ladder[c.fam][which][kTitle];
+      const WordSet s = word_set(c.w, title);
+      const int x = c.w / 2 - s.w / 2;
+      CHECK(s.shown && x >= sl::kWordMargin && c.w - (x + s.w) >= sl::kWordMargin,
+            "%s %dx%d/%s: the wordmark (montserrat_%d at %d, %d px) is %s at x %d..%d",
+            c.what.c_str(), c.w, c.h, which ? "heirloom" : "default", s.face, s.spacing, s.w,
+            s.shown ? "drawn" : "not shown", x, x + s.w - 1);
+      std::printf("  %s %dx%d/%s: montserrat_%d at %d px spacing, %d px at x %d..%d of 0..%d\n",
+                  c.what.c_str(), c.w, c.h, which ? "heirloom" : "default", s.face, s.spacing,
+                  s.w, x, x + s.w - 1, c.w - 1);
+      if (s.face == title && s.spacing == sl::kWordSpacing) continue;
+      char one[96];
+      std::snprintf(one, sizeof(one), "%s%s %dx%d/%s:%d@%d", stepped.empty() ? "" : ", ",
+                    c.what.c_str(), c.w, c.h, which ? "heirloom" : "default", s.face,
+                    s.spacing);
+      stepped += one;
+    }
+  }
+  std::printf("  the wordmark steps down on: %s\n", stepped.empty() ? "none" : stepped.c_str());
+  CHECK(stepped == "nightstand-s3 172x320/heirloom:28@2",
+        "the wordmark steps down on \"%s\"; only the 172 px S3 glass under Heirloom should "
+        "(to montserrat_28 at %d)", stepped.c_str(), sl::kWordSpacing);
+  // Total: on every canvas width, under every title face a ladder sets, the
+  // wordmark the ladder leaves fits, or none is shown, and none is shown only
+  // where the narrower face set tight overflows too.
+  std::set<int> titles;
+  for (int fam = 0; fam < 3; ++fam)
+    for (int which = 0; which < 2; ++which) titles.insert(g_ladder[fam][which][kTitle]);
+  for (int title : titles) {
+    const Face* t = face_of(title);
+    CHECK(t != nullptr, "the title face montserrat_%d is not carried", title);
+    if (t == nullptr) continue;
+    const int narrowest = std::min(word_px(*t, 0), word_px(*face_of(28), 0));
+    int first_shown = -1, bad = 0;
+    for (int cw = 0; cw <= 1000; ++cw) {
+      const WordSet s = word_set(cw, title);
+      const bool ok = s.shown ? sl::word_fits(cw, s.w) && s.w <= cw - 2 * sl::kWordMargin
+                              : !sl::word_fits(cw, narrowest);
+      if (!ok && bad++ == 0)
+        CHECK(false, "title montserrat_%d on a %d px canvas: the ladder leaves montserrat_%d "
+              "at %d (%d px), %s", title, cw, s.face, s.spacing, s.w,
+              s.shown ? "wider than the canvas less its margins" : "hidden though it fits");
+      if (s.shown && first_shown < 0) first_shown = cw;
+      if (first_shown >= 0 && !s.shown && bad++ == 0)
+        CHECK(false, "title montserrat_%d: shown from %d px, hidden again at %d", title,
+              first_shown, cw);
+    }
+    CHECK(bad == 0, "title montserrat_%d: %d canvas widths the ladder leaves wrong", title, bad);
+    CHECK(first_shown == narrowest + 2 * sl::kWordMargin,
+          "title montserrat_%d: the wordmark shows from a %d px canvas; the narrower face set "
+          "tight (%d px) and the margins need %d", title, first_shown, narrowest,
+          narrowest + 2 * sl::kWordMargin);
+    std::printf("  title montserrat_%d: a wordmark that fits on every canvas from %d px "
+                "(narrower than that, none)\n", title, first_shown);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -442,6 +556,7 @@ int main() {
   CHECK(grew == "172x320/heirloom:94->112",
         "the narrowed bubble's tallest grew on \"%s\"; only the 172 px "
         "glass under Heirloom should (94 to 112 px)", grew.c_str());
+  check_wordmark(cs);
   if (g_fail == 0) {
     std::printf("ALL SPLASH LAYOUT TESTS PASSED\n");
     return 0;

@@ -148,12 +148,23 @@ inline bool derive_session_key(const uint8_t local_priv[KEY_LEN],
 }
 
 /* The 6-digit code both screens show: top 24 bits of
- * SHA-256(DOMAIN_PAIR_CONFIRM || session_key), mod 10^6. */
-inline uint32_t confirmation_code(const uint8_t session_key[KEY_LEN]) {
+ * SHA-256(DOMAIN_PAIR_CONFIRM || session_key), mod 10^6. False, with
+ * *code_out 0, for a null argument or a hash that failed (sweep F364): the
+ * failed hash's zeroed digest gave the code 0 for every session key, so two
+ * sides whose hashes both failed showed the same 000000 over any two keys,
+ * a man in the middle's included, and the comparison the code exists for
+ * checked nothing. mesh_network.cpp's handlers end the pairing on false,
+ * before an ACCEPT goes out or a code is shown. */
+[[nodiscard]] inline bool confirmation_code(const uint8_t session_key[KEY_LEN],
+                                            uint32_t* code_out) {
+  if (code_out == nullptr) return false;
+  *code_out = 0;
+  if (session_key == nullptr) return false;
   uint8_t h[mesh_crypto::SHA256_OUT_LEN];
-  mesh_crypto::sha256_domain(DOMAIN_PAIR_CONFIRM, session_key, KEY_LEN, h);
+  if (!mesh_crypto::sha256_domain(DOMAIN_PAIR_CONFIRM, session_key, KEY_LEN, h)) return false;
   const uint32_t top24 = ((uint32_t)h[0] << 16) | ((uint32_t)h[1] << 8) | (uint32_t)h[2];
-  return top24 % CODE_MODULUS;
+  *code_out = top24 % CODE_MODULUS;
+  return true;
 }
 
 /* Whose CONFIRM a hash is (F94). */
@@ -176,19 +187,33 @@ inline ConfirmSender partner_of(ConfirmSender s) {
  * (host-probed in F75's review). A device on firmware before F94 sends the
  * role-free hash, so between it and an updated device whichever reads the
  * other's CONFIRM first refuses it, the other waits out the pairing
- * timeout, and neither completes. */
-inline void confirm_hash(ConfirmSender sender, const uint8_t session_key[KEY_LEN], uint32_t code,
-                         uint8_t out[mesh_crypto::SHA256_OUT_LEN]) {
+ * timeout, and neither completes.
+ *
+ * False, with `out` zeroed, for a null argument or a hash that failed
+ * (sweep F364). It returned nothing, so a side whose hash failed sent 32
+ * zero bytes as its CONFIRM, a side whose hash failed compared against 32
+ * zero bytes, and two sides that both failed completed the pairing with
+ * neither CONFIRM checked. mesh_network.cpp ends the pairing on false: no
+ * CONFIRM is sent, and none is matched. */
+[[nodiscard]] inline bool confirm_hash(ConfirmSender sender, const uint8_t session_key[KEY_LEN],
+                                       uint32_t code, uint8_t out[mesh_crypto::SHA256_OUT_LEN]) {
+  if (out == nullptr) return false;
+  if (session_key == nullptr) {
+    secure_wipe(out, mesh_crypto::SHA256_OUT_LEN);
+    return false;
+  }
   uint8_t in[KEY_LEN + 4];
   memcpy(in, session_key, KEY_LEN);
   in[KEY_LEN + 0] = (uint8_t)(code & 0xFF);
   in[KEY_LEN + 1] = (uint8_t)((code >> 8) & 0xFF);
   in[KEY_LEN + 2] = (uint8_t)((code >> 16) & 0xFF);
   in[KEY_LEN + 3] = (uint8_t)((code >> 24) & 0xFF);
-  mesh_crypto::sha256_domain(sender == ConfirmSender::INITIATOR ? DOMAIN_PAIR_CONFIRM_INIT
-                                                               : DOMAIN_PAIR_CONFIRM_JOIN,
-                             in, sizeof(in), out);
+  const bool hashed =
+      mesh_crypto::sha256_domain(sender == ConfirmSender::INITIATOR ? DOMAIN_PAIR_CONFIRM_INIT
+                                                                   : DOMAIN_PAIR_CONFIRM_JOIN,
+                                 in, sizeof(in), out);
   secure_wipe(in, sizeof(in));
+  return hashed;
 }
 
 }  /* namespace mesh_pair_crypto */

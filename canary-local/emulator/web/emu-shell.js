@@ -157,6 +157,9 @@ export class CanaryEmulator {
    *                      note's envelope/volume gain, updated per control tick.
    *                      Web Audio synthesis lives outside (freq 0 = silence).
    * @param opts.onReboot () — module needs a fresh boot (ESP.restart)
+   * @param opts.onNvsWrite (ns, key, hex) — the firmware wrote a flash key
+   * @param opts.onNvsRemove (ns, key) — the firmware erased one (a dist
+   *                      built since sweep A127; an older one never calls it)
    */
   constructor(moduleFactory, opts) {
     this.factory = moduleFactory;
@@ -174,10 +177,11 @@ export class CanaryEmulator {
     this.lan = demoLan();
     this._http = new Map(); // request id → resolve
     this._udp = new Map();  // phone source port → resolve
+    this._erased = new Set(); // flash keys start() must not seed (sweep A127)
   }
 
   async start({ provisioned = true, firstMeeting = false, seed = null,
-                nvsImage = null, rotation = null, timeScale = null } = {}) {
+                nvsImage = null, erased = null, rotation = null, timeScale = null } = {}) {
     const shell = this;
     this.module = await this.factory({
       onSerial: (t) => shell.opts.onSerial?.(t),
@@ -198,6 +202,7 @@ export class CanaryEmulator {
         }),
       onNetEvent: (kind, detail) => shell.opts.onNetEvent?.(kind, detail),
       onNvsWrite: (ns, key, hexVal) => shell.opts.onNvsWrite?.(ns, key, hexVal),
+      onNvsRemove: (ns, key) => shell.opts.onNvsRemove?.(ns, key),
       onReboot: () => shell.opts.onReboot?.(),
       // The first-boot portal's sockets (emu_webserver.cpp, emu_radio.cpp):
       // the firmware's answers to requests the page's phone made.
@@ -295,7 +300,14 @@ export class CanaryEmulator {
     // factory-fresh unit: it has never been told a Wi-Fi network, so the
     // firmware's own provision_needed() is true and it raises its setup
     // portal. The broker stays preseeded either way — this household's hub
-    // is part of the scenery, not something the portal asks about.
+    // is part of the scenery, not something the portal asks about. A default
+    // the firmware has since erased is not seeded again (sweep A127): `erased`
+    // holds the "ns/key" names the page heard it erase (onNvsRemove) and has
+    // not heard it write since, and _nvsPut skips each of them, so a factory
+    // reset's networks stay gone across the restart and the unit boots into
+    // its setup portal, as the board does. Every other default is seeded as
+    // before.
+    this._erased = new Set(erased || []);
     if (provisioned && !firstMeeting) {
       this._nvsPut("securacv", "wifi_ssid", HOME_LAN.ssid);
       this._nvsPut("securacv", "wifi_pass", HOME_LAN.pass);
@@ -333,7 +345,10 @@ export class CanaryEmulator {
     this.booted = true;
   }
 
+  // Stage one of start()'s defaults, unless the firmware erased that key
+  // (start's `erased`, sweep A127): an erased default stays erased.
   _nvsPut(ns, key, str) {
+    if (this._erased?.has(`${ns}/${key}`)) return;
     this.c.nvsPreseed(ns, key, hexEncode(te.encode(str)));
   }
 

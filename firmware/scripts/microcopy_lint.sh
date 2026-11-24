@@ -30,9 +30,10 @@ set -euo pipefail
 #
 #   4. Reading-grade FKGL      — aggregate Flesch-Kincaid across the
 #      (headline dashboard)      headline COPY corpus stays at or below
-#                                7th grade. The plan's target is 6th;
-#                                one grade of slack absorbs noisy short
-#                                strings.
+#                                microcopy_fkgl.py's DEFAULT_MAX_GRADE:
+#                                check 4 below passes no --max-grade, so
+#                                the checker's default is the ceiling
+#                                (its docstring says why that value).
 #
 # Each check is independent. A failure in any one fails the whole job.
 # Failures print a clear message describing what to fix.

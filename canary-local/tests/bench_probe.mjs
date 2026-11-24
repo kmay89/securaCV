@@ -16,7 +16,9 @@
 // another tab replacing the bench mid-press, the window left, the page
 // hidden, RESET mid-press, a double press, touch then mouse, the keyboard;
 // held past 10 s the firmware's factory reset runs and the bench restarts
-// the twin on its home network, as the control's title says; no press
+// the twin into its setup portal, as the control's title says, and a bench
+// RESET after it raises the portal again (sweep A127), as one after a "meet
+// again" does (A127 review); no press
 // reaches a ROM in download mode, the dash (whose firmware never reads BOOT)
 // offers none, and a dist without emu_button offers one that cannot press.
 // The Nightlight's screen-dark flow stages its download-mode guess in the
@@ -118,11 +120,14 @@ page.on("pageerror", (e) => errors.push(String(e)));
 // [module, level], recorded by wrapping each display factory the registry
 // names before the page's scripts run (the bundle's top-level var assigns
 // through the setter). sessionStorage "probe:noButton" serves a module with
-// no _emu_button, as a dist built before it would be.
+// no _emu_button, as a dist built before it would be. Sweep A127: every
+// erase a twin reports to the page (onNvsRemove), as [module, "ns/key"],
+// recorded the same way, on its way to the page's own handler.
 const REGISTRY = JSON.parse(await readFile(join(ROOT, "canary-local/devices/registry.json"), "utf8"));
 const FACTORIES = [...new Set(REGISTRY.devices.filter((d) => d.emulator).map((d) => d.emulator.factory))];
 await page.addInitScript((names) => {
   window.__emuButton = [];
+  window.__nvsRemoved = [];
   let modules = 0;
   for (const name of names) {
     let real;
@@ -131,8 +136,13 @@ await page.addInitScript((names) => {
       get: () => real,
       set: (f) => {
         real = typeof f !== "function" ? f : async (...args) => {
-          const M = await f(...args);
           const id = ++modules;
+          const imports = args[0];
+          if (imports && typeof imports.onNvsRemove === "function") {
+            const page = imports.onNvsRemove;
+            imports.onNvsRemove = (ns, key) => { window.__nvsRemoved.push([id, `${ns}/${key}`]); return page(ns, key); };
+          }
+          const M = await f(...args);
           if (sessionStorage.getItem("probe:noButton") === "1") delete M._emu_button;
           const cwrap = M.cwrap;
           M.cwrap = (sym, ...rest) => {
@@ -146,6 +156,7 @@ await page.addInitScript((names) => {
   }
 }, FACTORIES);
 const buttonLog = () => page.evaluate(() => window.__emuButton.slice());
+const removedLog = () => page.evaluate(() => window.__nvsRemoved.slice());
 // Every module's calls alternate press, release, starting with a press and
 // ending released: no press without its release, none doubled.
 const allReleased = (log) => {
@@ -228,6 +239,17 @@ await openTab("Wire");
 await waitSerial("The canary is singing");
 if (!(await serial()).includes("ESP-ROM:esp32s3-20210327"))
   await fail("power-on ROM banner missing before the app's own boot log");
+// The boot log's Button line names the gestures this glass's BOOT answers
+// (sweep F413): the watch builds no lantern, so its line offers no double
+// press for one. On a dist built before F413 this fails by construction: that
+// watch twin printed "double = lantern" for a press its firmware ignores.
+const buttonLine = async () => (await serial()).split("\n").find((l) => /^\s*Button\s+BOOT:/.test(l)) || "";
+{
+  const line = await buttonLine();
+  if (!line.includes("BOOT: tap = peek, hold = acknowledge, keep holding 10 s = factory reset (identity kept)") || /lantern/.test(line))
+    await fail(`the watch's Button boot line should offer tap, hold and the reset hold, and no lantern: ${JSON.stringify(line)}`);
+  console.log(`bench_probe: the watch's boot log offers ${JSON.stringify(line.trim())}`);
+}
 
 // ── The Bench tab: lights on, app running ───────────────────────────────
 await openTab("Bench");
@@ -532,19 +554,26 @@ await waitSings(watchBoots2);
   console.log(`bench_probe: ${log.length / 2} presses on the watch's bench, each released on the twin it pressed`);
 }
 // held past 10 s: the firmware runs its factory reset and restarts, and the
-// bench restarts it from the page's copy of its flash (no erase reaches it),
-// so it comes back on its home network: what the control's title says
-// (review of A99: the title promised a lasting erase)
+// erase reaches the page's copy of its flash the bench restarts it from
+// (sweep A127: emu_support.cpp's js_nvs_remove -> onNvsRemove), so it comes
+// back without a network and raises its setup portal, provision.cpp's
+// "First boot - onboarding AP" line, as a board does: what the control's
+// title says. Before A127 it came back on its home network (A99's title said
+// so). On a dist built before A127 this fails by construction: such a twin
+// never reports an erase.
 const RESET_LINE = "[input] BOOT held 10 s -> factory reset (credentials + settings, identity kept)";
 const FORGOT = "[CFG] WiFi credentials forgotten - setup opens on next boot.";
+const PORTAL = 'First boot - onboarding AP "SecuraCV-';
+const JOINED = "[WiFi] Connected (emulated).";
 const resets0 = await serialCount(RESET_LINE);
 await openTab("Bench");
 await page.waitForFunction(() => !document.querySelector(".bench-press")?.disabled, null, { timeout: 10000 }).catch(() => fail("the press control is not live again"));
 {
   const title = (await pressCtl().getAttribute("title")) || "";
-  if (!title.includes("this bench restarts it from the page's copy of its flash, which no erase reaches, so it comes back on its home network"))
+  if (!title.includes("and the erase lasts: this bench restarts it from the page's copy of its flash, which the erase reached, so it comes back without a network and raises its setup portal"))
     await fail(`the press's title does not say what the bench does after the 10 s hold: ${title}`);
 }
+const removed0 = (await removedLog()).length;
 await step("a hold past 10 s", async () => {
   await page.mouse.move(on.x, on.y);
   await page.mouse.down();
@@ -552,19 +581,80 @@ await step("a hold past 10 s", async () => {
   await page.mouse.up();
 }, [1, 0]);
 await openTab("Wire");
-await page
-  .waitForFunction(([reset, forgot]) => {
+// the portal after the forget, and no join to the home network after it
+const portalAfter = (mark) => page
+  .waitForFunction(([mark, portal]) => {
     const t = document.querySelector("pre.log")?.textContent || "";
-    const at = t.lastIndexOf(forgot);
-    return t.includes(reset) && at >= 0 && t.indexOf("[WiFi] Connected (emulated).", at) > at && t.indexOf("The canary is singing", at) > at;
-  }, [RESET_LINE, FORGOT], { timeout: 90000 })
-  .catch(async () => fail(`held past 10 s, the serial never said the factory reset and then the twin back on its home network: ${(await serial()).slice(-1500)}`));
+    const at = t.lastIndexOf(mark);
+    return at >= 0 && t.indexOf(portal, at) > at;
+  }, [mark, PORTAL], { timeout: 90000 });
+await portalAfter(FORGOT)
+  .catch(async () => fail(`held past 10 s, the serial never said the factory reset and then the twin's setup portal (a dist built before A127 brings it back on its home network): ${(await serial()).slice(-1500)}`));
+{
+  const t = await serial();
+  if (!t.includes(RESET_LINE)) await fail("held past 10 s, the firmware never said its factory reset");
+  if (t.indexOf(JOINED, t.lastIndexOf(FORGOT)) >= 0) await fail("held past 10 s, the twin came back on its home network: the erase did not last");
+}
 if ((await serialCount(RESET_LINE)) !== resets0 + 1) await fail("held past 10 s, the firmware's factory reset did not run once");
-console.log("bench_probe: held 11 s, the watch's firmware ran its factory reset and the bench restarted it on its home network, as the press's title says");
+{
+  // the page heard the erase, key by key, from the twin that ran it: the
+  // network pair the bench seeded and the ring the boot wrote (this unit
+  // never walked its portal, so it holds no ap_pass to erase)
+  const heard = (await removedLog()).slice(removed0).map(([, k]) => k);
+  const want = ["securacv/wifi_ssid", "securacv/wifi_pass", "securacv/wifi_nets"];
+  if (JSON.stringify(heard) !== JSON.stringify(want)) await fail(`held past 10 s, the page heard the erases ${JSON.stringify(heard)}, not ${JSON.stringify(want)}`);
+}
+console.log("bench_probe: held 11 s, the watch's firmware ran its factory reset, the page heard it erase its network, and the bench restarted it into its setup portal, as the press's title says");
 {
   const bad = allReleased(await buttonLog());
   if (bad) await fail(`a twin was left with BOOT pressed after the 10 s hold: ${bad}`);
 }
+// ...and the erase outlasts a bench reset too: RESET boots the twin from the
+// same copy, into the portal again, not onto the home network
+await openTab("Bench");
+await chip("RESET").click();
+await openTab("Wire");
+await portalAfter("※ ── reset ── ※")
+  .catch(async () => fail(`after the factory reset, a bench RESET never raised the setup portal again: ${(await serial()).slice(-1500)}`));
+{
+  const t = await serial();
+  if (t.indexOf(JOINED, t.lastIndexOf("※ ── reset ── ※")) >= 0) await fail("after the factory reset, a bench RESET brought the twin back on its home network");
+}
+console.log("bench_probe: a bench RESET after the factory reset boots the watch into its setup portal again: the erase lasts");
+// ...and so does a "meet again" (sweep A127, review): the page takes the
+// hello and the network out of its copy of the flash and marks them erased
+// (app.js stageFlash), so a bench RESET of a met-again watch that has not
+// walked its portal raises the portal again. Before, the RESET seeded the
+// home network back and the twin joined it. The forget is the page's, not
+// the firmware's, so this holds on any dist. Which line comes first after
+// the newest `mark`, the portal's or a join's, so a join fails at once.
+const portalOrJoin = (mark) => page
+  .waitForFunction(([mark, portal, joined]) => {
+    const t = document.querySelector("pre.log")?.textContent || "";
+    const at = t.lastIndexOf(mark);
+    if (at < 0) return null;
+    const p = t.indexOf(portal, at);
+    const j = t.indexOf(joined, at);
+    if (p < 0 && j < 0) return null;
+    return p >= 0 && (j < 0 || p < j) ? "portal" : "joined";
+  }, [mark, PORTAL, JOINED], { timeout: 90000 })
+  .then((h) => h.jsonValue(), () => "neither");
+await openTab("Try it");
+await page.locator("button", { hasText: "meet the bird again" }).first().click();
+await openTab("Wire");
+{
+  const met = await portalOrJoin("※ ── power cycle (first meeting) ── ※");
+  if (met !== "portal") await fail(`"meet the bird again" did not raise the watch's setup portal (${met}): ${(await serial()).slice(-1500)}`);
+}
+await openTab("Bench");
+await chip("RESET").click();
+await openTab("Wire");
+{
+  const after = await portalOrJoin("※ ── reset ── ※");
+  if (after === "joined") await fail("a bench RESET of a met-again watch that never walked its portal brought it back on its home network: the meet again's forget did not last");
+  if (after !== "portal") await fail(`a bench RESET of a met-again watch raised no setup portal: ${(await serial()).slice(-1500)}`);
+}
+console.log("bench_probe: a bench RESET of a met-again watch that has not walked its portal raises the portal again: the meet again's forget lasts");
 await openTab("Bench");
 
 if (SHOTS) await page.screenshot({ path: `${SHOTS}/bench_ok.png` });
@@ -591,6 +681,10 @@ await openTab("Wire");
 const nlBoots0 = await sings();
 await waitSerial("The canary is singing");
 await waitSerial("backlight duty capped at 50%");   // the firmware's own boot line, on the twin
+// ...and the Nightlight builds the lantern, so its Button line offers the
+// double press (F413's other branch, on any dist)
+if (!(await buttonLine()).includes("BOOT: tap = peek, double = lantern, hold = acknowledge"))
+  await fail(`the Nightlight's Button boot line should offer the lantern: ${JSON.stringify(await buttonLine())}`);
 if (!(await serial()).includes("ESP-ROM:esp32c3-api1-20210207\nBuild:Feb  7 2021\nrst:0x1 (POWERON)"))
   await fail("the Nightlight's power-on banner is not the ESP32-C3's");
 await openTab("Try it");

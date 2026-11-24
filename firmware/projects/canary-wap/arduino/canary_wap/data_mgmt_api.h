@@ -32,6 +32,7 @@
 #include "log_level.h"
 #include "health_log.h"
 #include "hardware_state.h"
+#include "ct_compare.h"   // the backup HMAC is compared in constant time (staged from firmware/common/core)
 #include <mbedtls/md.h>
 
 // Forward declaration — defined in canary_wap.ino. True when the HMAC ran;
@@ -356,7 +357,12 @@ inline bool restore_chain(uint8_t* chain_head_out, uint32_t* seq_out,
                  "Chain restore: HMAC compute failed", nullptr);
       return false;
     }
-    if (memcmp(buf + BACKUP_PAYLOAD, calc_hmac, 32) != 0) {
+    // In constant time (ct_compare.h): the tag is keyed by the device
+    // private key, and memcmp() would refuse a forged backup sooner the
+    // fewer of its leading HMAC bytes were right.
+    static_assert(BACKUP_PAYLOAD + sizeof(calc_hmac) == BACKUP_SIZE,
+                  "the backup's HMAC field is the 32 bytes after its payload");
+    if (!ct_compare::equal(buf + BACKUP_PAYLOAD, calc_hmac, sizeof(calc_hmac))) {
       log_health(SCV_LOG_ERROR, SCV_CAT_STORAGE,
                  "Chain restore: HMAC mismatch (tampered?)", nullptr);
       return false;
