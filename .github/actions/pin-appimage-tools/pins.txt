@@ -5,7 +5,7 @@
 # prepare_tools() looks for in its tools directory and skips downloading when
 # present: crates/tauri-bundler/src/bundle/linux/appimage/linuxdeploy.rs, read
 # at the CLI versions on the line below (the file is byte-identical, 9048 bytes,
-# at both tags). The bundler fetches the third from linuxdeploy-plugin-appimage's
+# at every tag listed). The bundler fetches the third from linuxdeploy-plugin-appimage's
 # moving `continuous` release; it is pinned here to the dated release
 # 1-alpha-20250213-1. The fourth is the AppImage runtime, the program at the
 # front of every shipped .AppImage that runs when a person opens it. The
@@ -16,7 +16,7 @@
 # A CLI bump fails .github/scripts/test_pin_appimage_tools.py until someone
 # re-reads linuxdeploy.rs at the new tag and adds the version here (and moves
 # any name or URL that changed).
-# tauri-cli-read-at: 2.12.3 2.12.4
+# tauri-cli-read-at: 2.12.3 2.12.4 2.12.5
 #
 # Columns: the name placed in the tools directory; the sha256 of the download;
 # the sha256 the file has after a bundle ran (`=` when the bundler leaves it
