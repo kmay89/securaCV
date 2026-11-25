@@ -1812,8 +1812,8 @@ def _shell_go2rtc_rows(payload):
     return json.loads(out.stdout)
 
 
-# The add-on runs Alpine 3.22's jq, 1.8.2 (the release the Dockerfile pins,
-# held to this workflow pin by test_base_image_pins.py; aports 3.22-stable
+# The add-on runs Alpine 3.24's jq, 1.8.2 (the release the Dockerfile pins,
+# held to this workflow pin by test_base_image_pins.py; aports 3.24-stable
 # builds the 1.8.2 release source); the runner's is 1.7.
 # pwk-wizard-tests.yml puts the jq-1.8.2 release binary, pinned by sha256,
 # first on PATH and names the version it must report in
@@ -1864,8 +1864,9 @@ _PICK_START = "    GO2RTC_DISCOVERY=$(bashio::config 'go2rtc_discovery')\n"
 _PICK_END = "    # Build configuration file\n"
 _PICK_DISCOVER = '/usr/local/bin/discover_cameras.sh "$GO2RTC_URL"'
 # bashio::config and bashio::config.has_value as bashio v0.19.0 writes them
-# (the version the app's 3.22 base image carries; the bashio::config query
-# in lib/config.sh is unchanged from v0.15.0, the 3.18 base's), reading the
+# (the version the app's 3.24 base image carries, as its 3.22 one did; the
+# bashio::config query in lib/config.sh is unchanged from v0.15.0, the 3.18
+# base's), reading the
 # options from $TEST_OPTIONS instead of the Supervisor. The part that
 # matters: an array option is printed one compact element per line
 # (`.key[]` through `jq --raw-output -c -M`), never as a JSON array, and an

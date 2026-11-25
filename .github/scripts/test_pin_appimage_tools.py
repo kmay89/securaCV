@@ -168,9 +168,9 @@ class TheCliIsOneTheNamesWereReadAt(unittest.TestCase):
 
     def test_an_unread_version_fails_and_a_read_one_passes(self):
         with tempfile.TemporaryDirectory() as d:
-            for v in ("2.12.3", "2.12.4"):
+            for v in ("2.12.3", "2.12.4", "2.12.5"):
                 self.assertEqual(unread_cli(self._lock(d, v), self.read_at), [], v)
-            for v in ("2.12.5", "2.13.0", "2.12.2"):
+            for v in ("2.12.6", "2.13.0", "2.12.2"):
                 probs = unread_cli(self._lock(d, v), self.read_at)
                 self.assertEqual(len(probs), 2, (v, probs))
                 self.assertIn(f"@tauri-apps/cli-v{v}", probs[0])

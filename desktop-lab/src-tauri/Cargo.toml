@@ -72,7 +72,7 @@ tauri-plugin-shell = "2"
 # The OS resolver alone can find `.local` HOSTNAMES but cannot enumerate a
 # service, and vision/sense announce mDNS-only. Desktop only: an iOS browse
 # needs the multicast entitlement + NSBonjourServices (MOBILE.md).
-mdns-sd = "0.21"
+mdns-sd = "0.22"
 # The menubar fleet companion's notifications (src/companion.rs), posted from
 # RUST — no notification grant in the webview's capabilities. The same plugin
 # the Flasher carries (desktop/src-tauri/Cargo.toml): notify-rust over zbus on

@@ -347,7 +347,7 @@ export WITNESS_API_FLEET_ROLLCALL="$FLEET_ROLLCALL"
 
 # The Supervisor-internal hostname the discovery payload and the MQTT
 # announce carry (contract C1/C6). Not a LAN address. bashio 0.19.0 (the
-# 3.22 base) names the getter bashio::app.hostname and keeps the addon
+# 3.24 base, as on 3.22) names the getter bashio::app.hostname and keeps the addon
 # spelling only as an alias that logs a deprecation warning on each
 # start; the fallback is unchanged.
 ADDON_HOST=$(bashio::app.hostname 2>/dev/null || hostname)

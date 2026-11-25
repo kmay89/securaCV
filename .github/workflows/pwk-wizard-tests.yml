@@ -54,12 +54,12 @@ jobs:
       - name: Set up Python
         # The app runs the panel (serve_wizard.py, integration_carry.py) on
         # the image's `apk add python3`, not on pyproject.toml's range. The
-        # runtime base is ghcr.io/home-assistant/<arch>-base:3.22 (Alpine
-        # 3.22), whose python3 is 3.12 (aports 3.22-stable). Test on what
+        # runtime base is ghcr.io/home-assistant/<arch>-base:3.24 (Alpine
+        # 3.24), whose python3 is 3.14 (aports 3.24-stable). Test on what
         # ships; move this pin when the base tag moves in the Dockerfile.
         uses: actions/setup-python@v7
         with:
-          python-version: '3.12'
+          python-version: '3.14'
 
       - name: Install pytest (and PyYAML for the store-presentation checks)
         # PyYAML is a TEST dependency only: the app itself parses the two YAML
@@ -69,7 +69,7 @@ jobs:
 
       - name: Put the app's jq (1.8.2) first on PATH
         # The app runs discover_cameras.sh, run.sh and run_lib.sh on the
-        # image's jq: Alpine 3.22's jq 1.8.2 (aports 3.22-stable builds the
+        # image's jq: Alpine 3.24's jq 1.8.2 (aports 3.24-stable builds the
         # unpatched 1.8.2 release source), while the runner ships 1.7. So the
         # rest of this job runs on the jq-1.8.2 release binary, fetched by URL
         # and pinned by sha256 (the digest the release's own sha256sum.txt
