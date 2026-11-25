@@ -61,11 +61,13 @@ visible artifact adopts a ratified format rather than a bespoke one.
 
 ### 2.1 Key hierarchy
 
-v2 introduces a **vault KEK** between trustee custody and per-envelope DEKs:
+v2 introduces a **vault KEK** between trustee custody and the existing
+master key, which still wraps the per-envelope DEKs:
 
 ```
-trustee shares (n-of-m, VSS)  ──reconstruct──►  KEK
-KEK ──unwraps──► per-envelope DEK ──decrypts──► envelope payload
+trustee shares (n-of-m, Pedersen VSS)  ──reconstruct──►  KEK (k, r)
+KEK ──opens──► MKC1 custody container ──► master key + ML-KEM-768 decapsulation key
+master key / ML-KEM key ──unwrap / decapsulate (unchanged)──► per-envelope DEK ──decrypts──► envelope payload
 ```
 
 - The KEK is split n-of-m with **Shamir secret sharing hardened by
@@ -73,16 +75,24 @@ KEK ──unwraps──► per-envelope DEK ──decrypts──► envelope pay
   is rejected: its silent-wrong-reconstruction failure mode is an
   operational hazard the VSS commitments eliminate (any share is provably
   valid or invalid against the public commitments, at issuance and at every
-  unseal).
+  unseal). This design uses **Pedersen** commitments over ristretto255.
+  Feldman's public `k·G` would give a quantum adversary the KEK from the
+  policy alone. The KEK is a fresh scalar pair `(k, r)` that wraps the
+  existing master key and the ML-KEM-768 decapsulation key, so every sealed
+  envelope stays byte-identical.
 - VSS commitments are recorded in the receipt chain at the issuance
-  ceremony.
+  ceremony (in the quorum-approved, device-signed policy history:
+  `custody.kek`).
 - Every share lives in a **self-describing envelope** (split UUID, n, m,
   share index, checksum, digest of the master secret — the SLIP-0039
   lesson): a share found in a drawer years later identifies itself and its
-  quorum.
-- Shares are **encrypted at rest to their trustee's key** (baseline: the
-  trustee's Ed25519-derived key; with credential hardening, the trustee's
-  hardware token).
+  quorum. The digest of the master secret is the share's KEK commitment
+  `C_0 = k·G + r·H` (perfectly hiding; it costs no entropy).
+- Shares are **encrypted at rest to a separate recipient key that the
+  trustee binds to their signing key by signature, or wrapped at rest under
+  the trustee's passphrase**. An Ed25519-derived key is rejected: FIDO2
+  signing credentials cannot perform ECDH, and conversion cannot carry
+  ML-KEM.
 - Reconstruction happens **only in memory inside the unseal gate**, after
   quorum authorization, and is zeroized immediately after DEK unwrap — the
   KSK storage-master-key model; "split knowledge" in the FIPS 140-3 /
@@ -91,12 +101,12 @@ KEK ──unwraps──► per-envelope DEK ──decrypts──► envelope pay
 
 ### 2.2 Post-quantum layer
 
-The ML-KEM-768 decapsulation key is regenerated from its seed, and the seed
-receives the **identical VSS split**. Both layers of the hybrid wrap are then
-under quorum custody today, without waiting for threshold ML-KEM (research
-grade as of 2026). The design leaves a clean seam: when a standardized
-threshold KEM exists, it replaces the seed split without changing the
-envelope format.
+The ML-KEM-768 decapsulation key is **wrapped under the vault KEK** inside
+the custody container (`MKC1`), so it is under the identical n-of-m custody
+as the classical layer. A seed split was rejected: the decapsulation keys of
+existing vaults have no recorded seed, and the Rust binding in use exposes no
+seed-based key generation. When a standardized threshold KEM exists, it
+replaces this wrap without changing the envelope format.
 
 ### 2.3 Two quorums
 
@@ -364,7 +374,8 @@ carry the owner's **declared** `context.operator`.)*
 3. Merkle tree, checkpoints, fleet witnessing, tlog-policy, `log_review`.
 4. Token delay/veto (§3.5) + trustee-credential hardening (§3.7).
 5. VSS-Shamir threshold wrap with resharing (§2) — the one large build;
-   everything before it makes it meaningful.
+   everything before it makes it meaningful (in progress: the core, share
+   envelope and KATs — PR S; nothing is wired).
 6. C2PA profile (§5).
 7. Enterprise-tier projections (FHIR AuditEvent, CAWG, conformance-program
    and qualified-ledger tracking). *(In part: compliance and tracking maps,

@@ -366,6 +366,20 @@ enum Command {
         #[command(subcommand)]
         command: TrusteeCommand,
     },
+
+    /// Threshold custody, holder side (`recipient keygen`, `rehearse`). No
+    /// command here puts a vault under custody.
+    Custody {
+        #[command(subcommand)]
+        command: super::custody_cli::CustodyCommand,
+    },
+
+    /// A custody holder's share file (`inspect`, `verify`, `protect`), on
+    /// the holder's own machine
+    Share {
+        #[command(subcommand)]
+        command: super::custody_cli::ShareCommand,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -885,6 +899,8 @@ pub fn run() -> Result<()> {
                 draft.as_deref(),
             )
         }
+        Command::Custody { command } => super::custody_cli::run_custody(command),
+        Command::Share { command } => super::custody_cli::run_share(command),
         Command::Trustee { command } => match command {
             TrusteeCommand::Keygen {
                 id,
@@ -2849,7 +2865,7 @@ fn write_secret_file(path: &str, bytes: &[u8]) -> Result<()> {
 /// Write a NEW secret file, mode 0600: refuses an existing path (including a
 /// symlink, dangling or not) instead of truncating it, so a key file is
 /// never overwritten. Errors name no path.
-fn write_new_secret_file(path: &str, bytes: &[u8]) -> Result<()> {
+pub(super) fn write_new_secret_file(path: &str, bytes: &[u8]) -> Result<()> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -2991,7 +3007,8 @@ const NO_NEW_PASSPHRASE_SOURCE: &str =
     "a new trustee key needs a passphrase: run on a terminal or pass --passphrase-fd";
 
 /// The refusal when `--output` names an existing file.
-const OUTPUT_EXISTS: &str = "the output file already exists; this tool never overwrites a key file";
+pub(super) const OUTPUT_EXISTS: &str =
+    "the output file already exists; this tool never overwrites a key file";
 
 /// The public-key block every trustee key command prints: the full key
 /// (what the operator enrolls) and the fingerprint (what is read back).

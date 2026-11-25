@@ -60,9 +60,19 @@ to run alongside a plaintext key so an operator must migrate deliberately).
    *Design now specified:* `spec/quorum_unseal_v2.md` §2 — a vault KEK split
    n-of-m with VSS-hardened Shamir (commitments in the receipt chain,
    self-describing share envelopes, in-memory reconstruction at the unseal
-   gate), the identical split applied to the ML-KEM-768 seed, a two-quorum
-   operational/recovery structure, and proactive resharing as a first-class
-   ceremony. The standards research behind it: `PROVENANCE_INTEROP.md` §1.4.
+   gate), the ML-KEM-768 decapsulation key wrapped under the same KEK inside
+   the custody container (spec §2.2; a seed split was rejected), a
+   two-quorum operational/recovery structure, and proactive resharing as a
+   first-class ceremony. The standards research behind it:
+   `PROVENANCE_INTEROP.md` §1.4.
+   *Primitive shipped (PR S):* the Pedersen-VSS core over ristretto255, the
+   self-describing `SHR1` share envelope, the `MKC1` custody-container
+   format, and cross-implementation known-answer tests (a stdlib-only Python
+   generator against the Rust code). Trustees can rehearse and check shares
+   (`break_glass custody rehearse`, `share verify`). **Not wired:** the
+   quorum is still authorization, not the lock, until the retirement PR; the
+   risk statement above stands. The design as built and to come:
+   [`docs/design/threshold_custody.md`](../design/threshold_custody.md).
 2. **Hardware KEK for `master.keyguard`.** Seal the KEK in an HSM / TPM /
    PKCS#11 token (a new `MKG1` kind) so even the passphrase (now shipped, above)
    is not enough without the hardware. Feasible in code; needs hardware to test,

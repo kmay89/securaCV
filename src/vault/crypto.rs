@@ -269,7 +269,9 @@ pub fn decrypt_v2(
     Err(anyhow!("vault envelope decryption failed"))
 }
 
-fn encrypt_payload(
+/// ChaCha20-Poly1305 in place with a detached tag: the AEAD every vault
+/// container uses (envelopes, keyguards, and the custody formats).
+pub(crate) fn encrypt_payload(
     dek: &[u8; 32],
     nonce: &[u8],
     aad: &[u8],
@@ -283,7 +285,9 @@ fn encrypt_payload(
     Ok(tag.into())
 }
 
-fn decrypt_payload(
+/// The inverse of [`encrypt_payload`]: decrypt in place and check the
+/// detached tag.
+pub(crate) fn decrypt_payload(
     dek: &[u8; 32],
     nonce: &[u8],
     aad: &[u8],

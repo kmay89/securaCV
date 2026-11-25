@@ -1,6 +1,79 @@
 # Changelog
 
 ## [Unreleased]
+### Threshold-custody core (spec §2): Pedersen VSS over ristretto255, `SHR1` share files, the `MKC1` container format and cross-implementation KATs; `break_glass custody recipient keygen|rehearse`, `share inspect|verify|protect`. No vault, policy or receipt change
+
+- **Added: the custody core** (`src/vault/custody/`, crate-private as
+  `vault::format` is): the vault KEK as a fresh scalar pair `(k, r)` over
+  ristretto255, shared n-of-m (2 ≤ n ≤ m ≤ 32, index 0 refused everywhere)
+  with Pedersen VSS, whose commitment `C_0 = k·G + r·H` is perfectly hiding;
+  deal-and-prove (every share checked and every n-subset, or 64, rebuilt in
+  memory before anything is written); the two HPKE boxes (RFC 9180
+  DHKEM(X25519)/HKDF-SHA256/ChaCha20-Poly1305, and its PSK mode keyed by an
+  ML-KEM-768 shared secret, whose hybrid property the HPKE draft states is
+  not proven); and the formats, frozen as v1: the `SHR1` share envelope,
+  `TEK1` (a holder's recipient key at rest), the `MKC1` custody container,
+  the recipient file and the split record. One signature domain:
+  `securacv:pwk:custody-recipient-binding:v1`.
+- **Added: the holder tools.** `custody recipient keygen` (a recipient key
+  bound to the holder's trustee key by a signature, wrapped under a new
+  passphrase), `custody rehearse` (a throwaway REHEARSAL split dealt to real
+  recipient keys), `share inspect`, `share verify` (the Pedersen check, the
+  split record, the container copy; reported as "checks passed") and `share
+  protect` (rewrap at rest under Argon2id). `share verify` and `share
+  protect` refuse, before any decryption, a share whose roster pins a
+  signing key for the holder other than the one their own recipient key
+  file records. Passphrases come only from the terminal or
+  `--passphrase-fd`. No line these commands add carries a path, a full hash
+  or a secret; keygen given a legacy plaintext `--signing-key` still prints
+  the unwrapped trustee-key warning, which names that file so its wrap
+  command can be run.
+- **Added: the KATs.** `spec/fixtures/gen_threshold_custody_v1.py`, a
+  standard-library-only second implementation, writes
+  `spec/fixtures/threshold_custody_v1.json` after checking itself against
+  dalek's ristretto255 table and one-way-map vectors, the HPKE draft's Base
+  and PSK vectors and RFC 8032 test 1; `--check` runs in `rust.yml`; the Rust
+  tests compare every vector byte for byte. Three fuzz targets
+  (`custody_share_decode`, `custody_container_decode`,
+  `custody_recipient_decode`) with seeds taken from the fixture.
+- **No vault, policy or receipt byte changes.** Nothing in the kernel calls
+  the custody core outside its own tests and the holder commands: no policy
+  field, no receipt field, no vault-store or `witnessd` change, and
+  `master.key`, `master.keyguard`, `kem-mlkem768.key` and every envelope are
+  byte-identical. No vault can be put under custody by this release; the
+  quorum is still an authorization gate, not the lock
+  (`docs/security/ENTERPRISE_CUSTODY.md` §1).
+- **The dependency line, and why it is safe.** `curve25519-dalek = { version
+  = "5.0.0", default-features = false, features = ["alloc",
+  "precomputed-tables", "zeroize"] }` names a crate every build already
+  compiles: `ed25519-dalek` 3.0 depends on the same 5.0.0 and already enables
+  `digest`, `precomputed-tables` (through `fast`), `zeroize` and `alloc`
+  (through `pem`). The direct line asks for a subset, so it adds no package
+  and no feature: `cargo tree -e features -i curve25519-dalek@5.0.0` shows
+  the same four features before and after, and `Cargo.lock` gains one line in
+  the root package's dependency list. Both outputs are recorded in
+  `docs/design/threshold_custody.md` §7.
+- **H.** The second Pedersen generator is
+  `from_uniform_bytes(SHA-512("securacv:custody:pedersen-generator-H:v1"))`
+  = `b293a0f3…`, agreed by the Rust and Python implementations. The design
+  prototype's `2e99ac14…` used the wrong square root for one RFC 9496
+  constant and failed the draft's one-way-map vectors.
+- **Still unverified** (`docs/design/threshold_custody.md` §12): RFC 9496 and
+  RFC 9180 as published (the code is checked against dalek's tables, the
+  draft-04 one-way-map vectors and the HPKE editor's source); RFC 7748 and
+  RFC 8439 except through the HPKE vectors; FIPS 203 and `ml-kem`'s
+  conformance to it; SP 800-57 / FIPS 140-3 "split knowledge"; the security
+  literature (Pedersen, Feldman, Desmedt–Jajodia, Herzberg et al., Okamoto,
+  eprint 2021/509), so the code is checked for correctness only and a
+  cryptographer's review is due before evidence depends on the release path;
+  HPKE PSK-mode hybrid security (not proven, by the draft's own text); the
+  constant-time behavior of dalek (documentation, not measurement);
+  `PR_SET_DUMPABLE` and zero-overwrite coverage; CTAP2 offering no ECDH over
+  a signing credential; item 3/4 shapes not yet merged; the emergency release
+  deadline; the older-build refusal strings (read, not run); and the Argon2id
+  pins (one implementation). RFC 8032 test 1's constants were recalled and
+  reproduced, not fetched.
+
 ### canary-wap reads each POST body by its own members and refuses a Chirp TTL, a Beacon pairing and a mesh hash it cannot honor, four secret compares go through a constant-time helper, the setup doors log what they refused, the Vision app keeps to its CSP, the dash sheet, the watch's boot log and the splash wordmark follow their glass, the Lab's bench keeps an erase, and the 7-inch frame's words, the build matrix's claims and the parity plan are held to what they rest on (#2013, wave 26)
 
 - **canary-wap reads a POST body by its own members (F469, F470; F459's code

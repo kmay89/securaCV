@@ -170,8 +170,9 @@ The field's two demands we do not yet meet:
    commitments recorded in the receipt chain; raw Shamir fails silently),
    self-describing share envelopes, shares encrypted to trustee keys,
    reconstruction only in memory at the unseal gate, proactive resharing as a
-   first-class ceremony. The ML-KEM-768 seed gets the identical split, so
-   both hybrid layers gain quorum custody without waiting for threshold
+   first-class ceremony. The ML-KEM-768 decapsulation key is wrapped under
+   the same KEK (spec `quorum_unseal_v2.md` §2.2; a seed split was rejected),
+   so both hybrid layers gain quorum custody without waiting for threshold
    ML-KEM (still research-grade). Threshold *signing* (FROST, RFC 9591)
    deliberately stays out of the authorization path: per-trustee attribution
    is what the receipt chain and every audit regime depend on.
