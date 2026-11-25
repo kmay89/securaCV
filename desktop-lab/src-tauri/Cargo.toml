@@ -85,7 +85,7 @@ tauri-plugin-notification = "2"
 # the same names first and skips the tray instead. The same libloading the
 # tray crate already links (0.7.4 in the lock): no new crate in the graph.
 [target.'cfg(target_os = "linux")'.dependencies]
-libloading = "0.7"
+libloading = "0.9"
 
 [profile.release]
 panic = "abort"
