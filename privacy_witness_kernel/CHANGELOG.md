@@ -1,4 +1,13 @@
 <!-- The Supervisor shows this file on the app's page after an update. Newest first. -->
+## Unreleased
+
+- **The base image moves to Alpine 3.24.** The two runtime bases and both
+  build stages move from 3.22 to 3.24 together (GStreamer 1.28, SQLite
+  3.53, Python 3.14, jq 1.8.2, bashio 0.19.0), the newest release Home
+  Assistant builds its bases for; its security support ends 2028-06-01.
+  Every tag is still pinned by digest. The panel's tests now run on Python
+  3.14, the version the image ships.
+
 ## 0.9.3
 
 - **Frigate's per-camera MQTT images are off in every config the wizard

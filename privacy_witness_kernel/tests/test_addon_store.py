@@ -553,14 +553,15 @@ def test_dockerfile_uses_the_official_pinned_base_selected_by_targetarch():
     assert "ARG TARGETARCH" in DOCKERFILE
     # Pinned by digest as well as tag: the tag says which base, the digest
     # says which bytes, so a re-tagged upstream image cannot change the
-    # add-on's runtime under a release.
+    # add-on's runtime under a release. Which release is test_base_image_pins.py's
+    # to hold (one Alpine release across every base, not older than the floor).
     assert re.search(
-        r"^FROM ghcr\.io/home-assistant/amd64-base:3\.22@sha256:[0-9a-f]{64} AS runtime-amd64$",
+        r"^FROM ghcr\.io/home-assistant/amd64-base:[0-9]+\.[0-9]+@sha256:[0-9a-f]{64} AS runtime-amd64$",
         DOCKERFILE,
         re.M,
     )
     assert re.search(
-        r"^FROM ghcr\.io/home-assistant/aarch64-base:3\.22@sha256:[0-9a-f]{64} AS runtime-arm64$",
+        r"^FROM ghcr\.io/home-assistant/aarch64-base:[0-9]+\.[0-9]+@sha256:[0-9a-f]{64} AS runtime-arm64$",
         DOCKERFILE,
         re.M,
     )

@@ -16,23 +16,23 @@ ARG TARGETARCH
 # that was reviewed. Both are written out on each FROM line (no ARG carries
 # the release or a digest), so an update is an edit to those four lines and
 # nothing else, which is the form Dependabot's docker updater rewrites.
-# Digests resolved 2026-11-15 from the registries' manifest HEAD
+# Digests resolved 2026-11-25 from the registries' manifest HEAD
 # (`docker buildx imagetools inspect <image>` prints the same ones). Move all
 # four lines to one Alpine release in one change.
 #
-# Alpine 3.22 is the oldest release Home Assistant still builds its base
-# images for. Its security support ends 2027-05-01
+# Alpine 3.24 is the newest release Home Assistant builds its base images
+# for (it builds 3.22, 3.23 and 3.24). Its security support ends 2028-06-01
 # (https://alpinelinux.org/releases/); move to a later release before then.
 
-# The runtime base, one stage per arch. Alpine 3.22 == GStreamer 1.26,
-# SQLite 3.49, Python 3.12, jq 1.8.2 (and, in the base, bashio 0.19.0 and
+# The runtime base, one stage per arch. Alpine 3.24 == GStreamer 1.28,
+# SQLite 3.53, Python 3.14, jq 1.8.2 (and, in the base, bashio 0.19.0 and
 # s6-overlay 3.2). pwk-wizard-tests.yml tests on that Python and that jq:
 # move its two pins when these tags move.
 FROM ghcr.io/home-assistant/amd64-base:3.24@sha256:6cc6bcf640d8dfd238590c0404825f831401a7754febd0f9f9c0c68c82d955b3 AS runtime-amd64
 FROM ghcr.io/home-assistant/aarch64-base:3.24@sha256:48408ed8587f35994babee9ff7ef3e6c6fd3f87ea07fb1f4b11ff1c42401e92a AS runtime-arm64
 
 # Builder: pinned to the SAME Alpine release as the runtime base.
-# Alpine 3.22's own Rust (1.87) is older than the toolchain pinned below
+# Alpine 3.24's own Rust (1.96) is older than the toolchain pinned below
 # (RUST_TOOLCHAIN), so we install that one via rustup (which targets musl on
 # Alpine).
 #
