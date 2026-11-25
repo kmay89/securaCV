@@ -210,41 +210,82 @@ async fn resolve_local(host: &str) -> Result<Vec<std::net::SocketAddr>, String> 
     addrs_all_local(&bare, addrs)
 }
 
-/// The host of `http://host[:port][/…]` (or https), brackets kept on an
-/// IPv6 literal. `None` for anything that isn't such a URL.
-fn base_host(base: &str) -> Option<&str> {
-    let rest = base
-        .strip_prefix("http://")
-        .or_else(|| base.strip_prefix("https://"))?;
-    let host_port = rest.split('/').next().unwrap_or_default();
-    if host_port.is_empty() {
+/// The host a connection to `base` would dial, as the url crate reads it
+/// (`reqwest::Url`, the parse reqwest dials with): lowercased,
+/// percent-decoded, punycoded, an IPv4 in any spelling written dotted, an
+/// IPv6 literal kept in its brackets. `None` unless `base` is an `http` or
+/// `https` URL with a host, no user or password, no query, no fragment, no
+/// space or control character (the calls append to `base` as written, so a
+/// base the parser had to clean is refused), and a name host DNS-shaped
+/// (`dns_shaped`). Lockstep twin of the Flasher's `fleet::base_host`
+/// (`desktop/src-tauri/src/fleet.rs`), whose doc says why a hand split on
+/// `/` was not the judge: it read `http://8.8.8.8?.local:8080` as a `.local`
+/// name while the connection dialed 8.8.8.8:80.
+fn base_host(base: &str) -> Option<String> {
+    if base.chars().any(|c| c == ' ' || c.is_ascii_control()) {
         return None;
     }
-    // Split a trailing :port (careful with bracketed IPv6).
-    let host = if let Some(end) = host_port.rfind(']') {
-        &host_port[..=end]
-    } else if let Some((h, port)) = host_port.rsplit_once(':') {
-        if port.chars().all(|c| c.is_ascii_digit()) && !port.is_empty() {
-            h
-        } else {
-            host_port
-        }
-    } else {
-        host_port
-    };
-    Some(host)
+    let url = reqwest::Url::parse(base).ok()?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.domain().is_some_and(|name| !dns_shaped(name))
+    {
+        return None;
+    }
+    url.host_str().map(str::to_string)
+}
+
+/// A name a request can carry on either scheme: dot-separated labels of 1
+/// to 63 ASCII letters, digits, `-` or `_`, none starting or ending with
+/// `-`, 253 bytes at most (rustls's server-name rule). The url crate accepts
+/// more in a host, which hyper's `http::Uri` or rustls then refuses, so such
+/// a base would pass the gate and build no request. Lockstep twin of the
+/// Flasher's `fleet::dns_shaped` (`desktop/src-tauri/src/fleet.rs`).
+fn dns_shaped(name: &str) -> bool {
+    name.len() <= 253
+        && name.split('.').all(|label| {
+            (1..=63).contains(&label.len())
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
 }
 
 /// `http://host[:port]` (or https) with a local host — anything else is
-/// refused before a socket opens. Lockstep twin of the Flasher's
-/// `fleet::base_ok` (`desktop/src-tauri/src/fleet.rs`).
+/// refused before a socket opens. The host is `base_host`'s, the one the
+/// connection dials. Lockstep twin of the Flasher's `fleet::base_ok`
+/// (`desktop/src-tauri/src/fleet.rs`).
 fn base_ok(base: &str) -> bool {
-    base_host(base).is_some_and(host_is_local)
+    base_host(base).is_some_and(|h| host_is_local(&h))
 }
 
-/// A client for ONE local base: proxy-free, timeout-bounded, and pinned to
-/// the addresses `resolve_local` just vetted, so hyper never resolves the
-/// name a second time. Twin of the Flasher's `fleet::pinned_client`.
+/// The redirect policy every pinned client carries: a redirect is followed
+/// only to the host the base was judged by, within reqwest's default limit
+/// of 10 hops; any other target stops the chain and the 3xx is the answer
+/// (reqwest's default follows any Location, off the judged and pinned host).
+/// Lockstep twin of the Flasher's `fleet::same_host_redirects`
+/// (`desktop/src-tauri/src/fleet.rs`), whose doc says why the scheme and
+/// port may change.
+fn same_host_redirects(judged: &str) -> reqwest::redirect::Policy {
+    let judged = judged.to_string();
+    reqwest::redirect::Policy::custom(move |attempt| {
+        if attempt.url().host_str() == Some(judged.as_str()) {
+            reqwest::redirect::Policy::default().redirect(attempt)
+        } else {
+            attempt.stop()
+        }
+    })
+}
+
+/// A client for ONE local base: proxy-free, timeout-bounded, pinned to the
+/// addresses `resolve_local` just vetted, so hyper never resolves the name a
+/// second time, and following a redirect only back to that host
+/// (`same_host_redirects`). Twin of the Flasher's `fleet::pinned_client`.
 ///
 /// `.no_proxy()`: a LAN probe must never be routed through an OS-configured
 /// proxy. reqwest defaults `auto_sys_proxy` on, and hyper-util's
@@ -260,13 +301,16 @@ async fn pinned_client(
 ) -> Result<reqwest::Client, String> {
     let host =
         base_host(base).ok_or_else(|| "device address must be a local/private host".to_string())?;
-    let addrs = resolve_local(host).await?;
+    let addrs = resolve_local(&host).await?;
     let bare = host.trim_matches(['[', ']']);
     let mut builder = reqwest::Client::builder()
         .user_agent("SecuraCV-Lab")
         .timeout(timeout)
-        .no_proxy();
+        .no_proxy()
+        .redirect(same_host_redirects(&host));
     if bare.parse::<std::net::IpAddr>().is_err() {
+        // Keyed on the URL's host as `base_host` read it, by the parser
+        // reqwest dials with, so the override is the one hyper's lookup finds.
         builder = builder.resolve_to_addrs(bare, &addrs);
     }
     builder.build().map_err(|e| e.to_string())
@@ -581,9 +625,235 @@ mod tests {
         assert!(base_ok("http://canary-3f2a.local:80"));
         assert!(base_ok("https://canary.local"));
         assert!(base_ok("http://10.0.0.7:8099/"));
+        assert!(base_ok("http://[fe80::1]:80/"));
         assert!(!base_ok("http://example.com"));
         assert!(!base_ok("ftp://192.168.1.40"));
         assert!(!base_ok("192.168.1.40"));
         assert!(!base_ok("http://"));
+        assert_eq!(
+            base_host("http://canary.local:80/x").as_deref(),
+            Some("canary.local")
+        );
+        assert_eq!(
+            base_host("http://[fe80::1]:80").as_deref(),
+            Some("[fe80::1]")
+        );
+    }
+
+    /// The Flasher's `fleet::tests::SPLIT_BASES`, row for row: bases whose
+    /// text reads as a local host while the url crate, the parser reqwest
+    /// dials with, reads another. Every one must be refused.
+    const SPLIT_BASES: [&str; 15] = [
+        "http://8.8.8.8?.local:8080",
+        "http://example.com#.local",
+        "http://example.com\\.local",
+        "http://8.8.8.8#.local",
+        "http://8.8.8.8\\.local",
+        "http://1.2.3.4:25?.local:80",
+        "http://8.8.8.8@offlan.local:8080",
+        "http://user:pw@canary.local",
+        "http://8%2E8%2E8%2E8:8080",
+        "http://134744072",
+        "http://0x08080808",
+        "http://[fe80::1%25eth0]",
+        "http://canary\t.local",
+        "http://canary.local ",
+        " http://canary.local",
+    ];
+
+    /// The Flasher's `fleet::tests::UNSENDABLE_BASES`, row for row: hosts the
+    /// url crate accepts and hyper or rustls then refuses.
+    const UNSENDABLE_BASES: [&str; 10] = [
+        "http://canary\".local",
+        "http://canary`.local",
+        "http://canary{.local",
+        "http://canary}.local",
+        "https://canary*.local",
+        "https://1.1.1.1;.local",
+        "https://canary~1.local",
+        "https://..local",
+        "https://-canary.local",
+        "https://canary-.local",
+    ];
+
+    #[test]
+    fn a_base_is_judged_by_the_host_it_dials() {
+        let passed: Vec<&str> = SPLIT_BASES.into_iter().filter(|b| base_ok(b)).collect();
+        assert!(
+            passed.is_empty(),
+            "these bases passed the gate while reqwest dials a host it never judged: {passed:?}"
+        );
+        assert_eq!(base_host("http://134744072").as_deref(), Some("8.8.8.8"));
+        assert_eq!(
+            base_host("http://8%2E8%2E8%2E8.local:8080").as_deref(),
+            Some("8.8.8.8.local"),
+            "the pin must be keyed on the name hyper looks up, not the encoded text"
+        );
+        assert_eq!(
+            base_host("http://C%41NARY.Local:80/").as_deref(),
+            Some("canary.local")
+        );
+        assert_eq!(base_host("http://[FE80::1]").as_deref(), Some("[fe80::1]"));
+        assert_eq!(
+            base_host("http://3232235777").as_deref(),
+            Some("192.168.1.1")
+        );
+    }
+
+    #[test]
+    fn a_passed_base_dials_the_host_it_was_judged_by() {
+        let client = reqwest::Client::new();
+        for base in [
+            "http://192.168.1.40",
+            "http://canary-3f2a.local:80",
+            "https://canary.local",
+            "http://10.0.0.7:8099/",
+            "http://[fe80::1]:80/",
+            "http://8%2E8%2E8%2E8.local:8080",
+            "http://C%41NARY.Local:80/",
+            "http://3232235777",
+        ]
+        .into_iter()
+        .chain(SPLIT_BASES)
+        .chain(UNSENDABLE_BASES)
+        {
+            if !base_ok(base) {
+                continue;
+            }
+            let url = format!("{}/api/fleet", base.trim_end_matches('/'));
+            let req = client
+                .get(&url)
+                .build()
+                .expect("a passed base builds a request");
+            assert_eq!(
+                req.url().host_str(),
+                base_host(base).as_deref(),
+                "{base}: judged one host, dials another"
+            );
+            assert!(
+                req.url().as_str().parse::<tauri::http::Uri>().is_ok(),
+                "{base}: passed the gate, but hyper cannot carry its URL"
+            );
+        }
+    }
+
+    #[test]
+    fn a_passed_base_is_one_a_request_can_carry() {
+        let passed: Vec<&str> = UNSENDABLE_BASES
+            .into_iter()
+            .filter(|b| base_ok(b))
+            .collect();
+        assert!(
+            passed.is_empty(),
+            "these bases passed the gate, yet hyper or rustls refuses their host: {passed:?}"
+        );
+        // Inside the rule: a name the firmware announces, an underscore, a
+        // single label, and an IDNA name judged as its punycode.
+        for base in [
+            "http://canary-sense-001-a1b2c3.local",
+            "http://my_pc.local",
+            "https://canary-3f2a",
+            "http://café.local",
+        ] {
+            assert!(base_ok(base), "{base} must pass");
+        }
+        assert_eq!(
+            base_host("http://café.local").as_deref(),
+            Some("xn--caf-dma.local")
+        );
+    }
+
+    /// A loopback HTTP stand-in for one address: every request gets
+    /// `answer` and is counted. The Flasher's `fleet::tests::stub`.
+    fn stub(answer: String) -> (u16, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = hits.clone();
+        std::thread::spawn(move || {
+            for mut conn in listener.incoming().flatten() {
+                let mut got = Vec::new();
+                let mut buf = [0u8; 1024];
+                while !got.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match conn.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => got.extend_from_slice(&buf[..n]),
+                    }
+                }
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let _ = conn.write_all(answer.as_bytes());
+            }
+        });
+        (port, hits)
+    }
+
+    fn found(location: &str) -> String {
+        format!(
+            "HTTP/1.1 302 Found\r\nLocation: {location}\r\n\
+             Content-Length: 0\r\nConnection: close\r\n\r\n"
+        )
+    }
+
+    fn fleet_json(said: &str) -> String {
+        let body = format!("{{\"fleet\":\"{said}\"}}");
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    #[test]
+    fn a_redirect_off_the_judged_host_is_not_followed() {
+        // The Flasher's test of the same name: a judged, pinned base that
+        // answers 302 to another host must not have that host dialed, and
+        // discovery must not return its answer as the fleet.
+        let (off, off_hits) = stub(fleet_json("from a host nobody judged"));
+        let (vetted, vetted_hits) = stub(found(&format!("http://localhost:{off}/api/fleet")));
+        let base = format!("http://127.0.0.1:{vetted}");
+        tauri::async_runtime::block_on(async {
+            let client = pinned_client(&base, std::time::Duration::from_secs(5))
+                .await
+                .unwrap();
+            let resp = client
+                .get(format!("{base}/api/fleet"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                (resp.status().as_u16(), resp.url().host_str()),
+                (302, Some("127.0.0.1")),
+                "the pinned client followed a redirect off the host it judged"
+            );
+            assert_eq!(
+                witness_discover(vec![base.clone()]).await.ok(),
+                None,
+                "witness_discover returned an unjudged host's answer as the fleet"
+            );
+        });
+        let off_hits = off_hits.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(off_hits, 0, "a host nobody judged was dialed");
+        assert_eq!(vetted_hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_redirect_back_to_the_judged_host_is_still_followed() {
+        let (next, next_hits) = stub(fleet_json("same host"));
+        let (vetted, _) = stub(found(&format!("http://127.0.0.1:{next}/api/fleet")));
+        let base = format!("http://127.0.0.1:{vetted}");
+        tauri::async_runtime::block_on(async {
+            let client = pinned_client(&base, std::time::Duration::from_secs(5))
+                .await
+                .unwrap();
+            let resp = client
+                .get(format!("{base}/api/fleet"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            assert_eq!(resp.url().port(), Some(next));
+        });
+        assert_eq!(next_hits.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 }

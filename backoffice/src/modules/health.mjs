@@ -75,9 +75,11 @@ export function doctor(db, cfg) {
   add('stripe_webhook', 'Stripe webhook signing secret', !!cfg.stripeWebhookSecret, cfg.stripeWebhookSecret ? 'set' : 'orders cannot arrive', 'set STRIPE_WEBHOOK_SECRET from the Stripe dashboard');
   add('stripe_api', 'Stripe API key (line items, reconciliation)', demo ? null : !!cfg.stripeApiKey, demo ? 'demo mode' : cfg.stripeApiKey ? 'set' : 'orders without inline line items stay empty; no reconciliation', 'set STRIPE_API_KEY (a restricted key: read charges/payouts, read checkout sessions)');
   add('operator_email', 'Morning digest recipient', !!cfg.operatorEmail, cfg.operatorEmail || 'nobody gets the daily summary', 'set OPERATOR_EMAIL');
-  // the door
-  const fails24 = db.get('SELECT COUNT(*) AS n FROM audit_log WHERE action = \'auth.login.failed\' AND at >= ?', new Date(Date.now() - 86400000).toISOString()).n;
-  add('logins', 'Failed logins, 24 h', fails24 <= 20, `${fails24}${fails24 ? ` · last from ${(() => { try { return JSON.parse(db.get('SELECT detail FROM audit_log WHERE action = \'auth.login.failed\' ORDER BY id DESC LIMIT 1')?.detail || '{}').ip || '?'; } catch { return '?'; } })()}` : ''} · lockout after 8 in 15 min per address`, 'read the audit log; if it is you, use `backoffice code`; if not, the lockout is already holding');
+  // the door, and the re-checks a session asks for (the password again, the current authenticator's code): they count
+  // against the same lock for one person at one address, so a guesser with a stolen cookie turns this row red as one at the door does
+  const FAILS = "action IN ('auth.login.failed', 'auth.password.failed', 'auth.totp.failed')";
+  const fails24 = db.get(`SELECT COUNT(*) AS n FROM audit_log WHERE ${FAILS} AND at >= ?`, new Date(Date.now() - 86400000).toISOString()).n;
+  add('logins', 'Failed logins and re-checks (password, code), 24 h', fails24 <= 20, `${fails24}${fails24 ? ` · last from ${(() => { try { return JSON.parse(db.get(`SELECT detail FROM audit_log WHERE ${FAILS} ORDER BY id DESC LIMIT 1`)?.detail || '{}').ip || '?'; } catch { return '?'; } })()}` : ''} · lockout after 8 in 15 min per address`, 'read the audit log; if it is you, use `backoffice code`; if not, the lockout is already holding');
   const pwAge = hoursSince(db.get("SELECT MIN(password_set_at) AS t FROM users WHERE role = 'owner' AND status = 'active'")?.t); add('password_age', 'Oldest owner password', pwAge == null ? null : pwAge < 365 * 24, pwAge == null ? 'set before this check existed' : fmtH(pwAge), 'change it on /me (Your account)');
   // a hash from before the cost rose is brought up on that person's next successful login; this row says who is still waiting (a note, never a failure)
   const hashed = db.all("SELECT email, password_hash FROM users WHERE status = 'active' AND password_hash IS NOT NULL"); const oldCost = hashed.filter(u => !passwordHashCurrent(u.password_hash));

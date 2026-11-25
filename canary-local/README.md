@@ -1154,8 +1154,9 @@ fails on byte drift.
   Policy (§9): the test pins each page's `<meta>` to the policy table, refuses
   `unsafe-*`, inline handlers and `style=` attributes, and checks the wasm /
   frame grants against what the page actually loads; the probe opens every
-  page (and the harness per flavor) in headless Chromium with a
-  `securitypolicyviolation` listener in every frame and fails on one violation.
+  page (the harness per flavor, and the `voice/` sound board, whose cards it
+  plays) in headless Chromium with a `securitypolicyviolation` listener in
+  every frame and fails on one violation.
   The test also holds every probe's `waitForFunction` to a function predicate
   (a string is re-evaluated through `eval`, which no page allows, A44) and to
   options stated third, where Playwright reads them (handed second they reach
@@ -1188,8 +1189,9 @@ fails on byte drift.
 
 ## 9. Content-Security-Policy: one table, every page
 
-Every page in this directory (and `emulator/web/harness.html`) carries a
-`Content-Security-Policy` `<meta>` on the line after `<meta charset>`. GitHub
+Every page in this directory (and `emulator/web/harness.html` and the
+`voice/index.html` sound board) carries a `Content-Security-Policy` `<meta>`
+on the line after `<meta charset>`. GitHub
 Pages cannot set response headers and the desktop Lab serves the same files
 from a Tauri webview, so the policy rides in the page — and it is **generated**:
 
@@ -1263,9 +1265,16 @@ Two gates hold it: `tests/csp.test.js` (page-logic job — one meta per page,
 frame grants match the pages, `flash.html` no weaker than the hand-written
 policy it replaced, the desktop Lab's own policy agrees) and
 `tests/csp_probe.mjs` (the wasm job — every page and the harness per flavor
-in Chromium, zero `securitypolicyviolation` events, zero page errors).
+in Chromium, zero `securitypolicyviolation` events, zero page errors, every
+document in standards mode and decoded as UTF-8 under a bare `text/html`; the
+sound board's cards are clicked and it must reach the speakers and draw its
+scope).
 
 Not covered here, deliberately: `witness/witness.html` is vendored
-byte-for-byte from the website repo and `voice/index.html` is written by
-`gen_voice_preview.mjs`; each is its own document in an iframe or a generated
-tree, and each would carry its policy from its own generator.
+byte-for-byte from the website repo, its own document in the Witness Wall
+bench's iframe, and is not edited here. The Canary Voice sound board
+(`voice/index.html`) is covered like any page: it is hand-written, its styles
+and UI are `voice/voice.css` and `voice/voice.js`, and only its data file,
+`voice/voice-data.js`, is generated (`gen_voice_preview.mjs`, from the
+firmware's `voice_score.h`). `tests/csp.test.js` walks every folder, so a new
+page in a subfolder fails until the table names it or says why not.

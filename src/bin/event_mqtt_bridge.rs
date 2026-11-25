@@ -63,8 +63,8 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use witness_kernel::fleet_peers::{
-    PeerSummaryFile, PeerTable, FLEET_PEER_CLOCK_JUMP_SECS, FLEET_PEER_FORGET_SECS, FLEET_PEER_MAX,
-    FLEET_PEER_TOPIC_FILTERS,
+    PeerSummaryFile, PeerTable, FLEET_PEER_CLOCK_JUMP_SECS, FLEET_PEER_DISPLACED_MAX,
+    FLEET_PEER_FORGET_SECS, FLEET_PEER_MAX, FLEET_PEER_TOPIC_FILTERS,
 };
 use witness_kernel::transport::{
     parse_mqtt_endpoint, validate_loopback_addr, MqttEndpoint, TlsBackend, TlsConfig, TlsMaterials,
@@ -1867,7 +1867,7 @@ struct FleetPeerTracker {
     table: PeerTable,
     dirty: bool,
     last_flush: Option<Instant>,
-    /// Evictions already reported, so each displacement is logged once.
+    /// Evictions already reported (the warning repeats as the count doubles).
     evictions_logged: u64,
     /// A clock jump has been reported (once per process).
     jump_logged: bool,
@@ -1885,8 +1885,9 @@ impl FleetPeerTracker {
                 // answer) cannot cost a single pin.
                 let table = PeerTable::from_summary(summary);
                 log::info!(
-                    "fleet roll-call: rehydrated {} peer(s) from {}",
+                    "fleet roll-call: rehydrated {} peer(s) and {} displaced pin(s) from {}",
                     table.len(),
+                    table.displaced_len(),
                     path.display()
                 );
                 table
@@ -1921,18 +1922,24 @@ impl FleetPeerTracker {
             self.dirty = true;
         }
         let evictions = self.table.evictions();
-        // Each displacement drops that id's pin; say so, because a steady
-        // stream of these is what a broker flood looks like — but a flood
-        // must not turn into one warning per inbound publish, so the line is
-        // emitted on the first displacement and then each time the count
-        // doubles (1, 2, 4, 8, …), which keeps the journal readable while the
-        // number stays honest.
+        // Say when ids are displaced, because a steady stream of these is
+        // what a broker flood looks like — and how many displaced pins the
+        // ledger has had to let go, because each of those ids is pinned
+        // afresh by whichever `health` names it first. A flood must not turn
+        // into one warning per inbound publish, so the line is emitted on the
+        // first displacement and then each time the count doubles (1, 2, 4,
+        // 8, …), which keeps the journal readable while the numbers stay
+        // honest.
         if evictions > self.evictions_logged && evictions >= self.evictions_logged * 2 {
             log::warn!(
-                "fleet roll-call: at the {}-id cap, {} id(s) displaced so far \
-                 (a displaced Canary is re-pinned on its next health publish)",
+                "fleet roll-call: at the {}-id cap, {} id(s) displaced so far; a displaced \
+                 Canary keeps its pin and verified chain length in a ledger of {} displaced \
+                 ids and gets them back when it is heard again; {} displaced pin(s) let go \
+                 from that ledger so far (each is re-pinned on its next health publish)",
                 FLEET_PEER_MAX,
-                evictions
+                evictions,
+                FLEET_PEER_DISPLACED_MAX,
+                self.table.pins_released()
             );
             self.evictions_logged = evictions;
         }
@@ -4000,6 +4007,39 @@ mod tests {
 
         let reopened = FleetPeerTracker::open(path);
         assert_eq!(reopened.table.len(), 1);
+    }
+
+    #[test]
+    fn fleet_tracker_keeps_a_displaced_pin_across_a_restart() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("fleet_peers.json");
+        let health = |b: u8| format!(r#"{{"public_key":"{}"}}"#, hex::encode([b; 32]));
+        let mut tracker = FleetPeerTracker::open(path.clone());
+        // porch is pinned; a flood of pinned ids (which sort after it, so a
+        // tie in the clock still displaces porch first) pushes it out.
+        tracker.observe("securacv/porch/health", health(0x11).as_bytes(), false);
+        for i in 0..FLEET_PEER_MAX {
+            tracker.observe(
+                &format!("securacv/zz-flood-{i:03}/health"),
+                health(0x22).as_bytes(),
+                false,
+            );
+        }
+        assert_eq!(tracker.table.evictions(), 1);
+        tracker.flush_if_due(true);
+        // The bridge restarts; the ledger comes back from the file, and the
+        // next health for porch under another key is not a first sight.
+        let mut reopened = FleetPeerTracker::open(path.clone());
+        assert_eq!(reopened.table.displaced_len(), 1);
+        reopened.observe("securacv/porch/health", health(0x33).as_bytes(), false);
+        reopened.flush_if_due(true);
+        let written = PeerSummaryFile::read(&path).expect("read").expect("exists");
+        let porch = written
+            .peers
+            .iter()
+            .find(|p| p.device_id == "porch")
+            .expect("porch is back");
+        assert_eq!(porch.pinned_key_hex, Some(hex::encode([0x11u8; 32])));
     }
 
     #[test]

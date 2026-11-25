@@ -30,6 +30,8 @@ on:
       - "canary-local/assets/**"
       # unused-css reads the pages too: a class only a page names is used.
       - "canary-local/*.html"
+      # and the sound board's own stylesheet, page and script
+      - "canary-local/voice/**"
       - "canary-local/tools/lint_css_selectors.mjs"
       - "canary-vision/package.json"
       - "canary-vision/package-lock.json"
@@ -41,6 +43,8 @@ on:
       - "canary-local/assets/**"
       # unused-css reads the pages too: a class only a page names is used.
       - "canary-local/*.html"
+      # and the sound board's own stylesheet, page and script
+      - "canary-local/voice/**"
       - "canary-local/tools/lint_css_selectors.mjs"
       - "canary-vision/package.json"
       - "canary-vision/package-lock.json"
@@ -90,12 +94,14 @@ jobs:
     # prefix plus a value the pages or scripts name counts as used. A name
     # built from data the scripts transform is listed in the tool's ALLOW
     # with where it is built, and an entry that is no longer needed fails the
-    # job. Strings and comments are read in one pass, and a sheet the pass
-    # cannot read (a string or comment that never closes, a stray brace, an
-    # escaped selector) fails the job rather than being skipped. The tool runs
+    # job. The Canary Voice board's voice/voice.css is held the same way, to
+    # its own page and script only (voice/index.html, voice/voice.js).
+    # Strings and comments are read in one pass, and a sheet the pass cannot
+    # read (a string or comment that never closes, a stray brace, an escaped
+    # selector) fails the job rather than being skipped. The tool runs
     # its own probes first and refuses to pass the stylesheets if one comes
     # out wrong. Node only, no install: plain fs reads.
-    name: Unused CSS selectors (canary-local/assets)
+    name: Unused CSS selectors (canary-local/assets, voice/)
     runs-on: ubuntu-24.04  # pinned ahead of the 26.04 image move; revisit before 24.04 retires
     timeout-minutes: 5
     steps:

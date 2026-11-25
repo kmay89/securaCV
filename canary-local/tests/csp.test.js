@@ -3,6 +3,11 @@
 //
 // What can rot, and which test catches it:
 //   · a page ships without a policy, or with two          → "exactly one CSP meta"
+//   · a page in a subfolder escapes the policy (the        → "every Lab document is in scope"
+//     sound board did: no meta, an inline script)
+//   · a page on the list is never opened in a browser      → "the browser probe opens every page"
+//   · a page renders in quirks mode or guesses its        → "standards mode, UTF-8"
+//     encoding (the sound board did both)
 //   · a page or the table changed and nobody regenerated  → "--check passes"
 //   · someone loosens script-src to make an inline work   → "never loosens"
 //   · an onclick= or style= sneaks back into the markup   → "no inline handlers / styles"
@@ -39,7 +44,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
 const { readFileSync, readdirSync, existsSync } = require("node:fs");
-const { join, dirname, resolve } = require("node:path");
+const { join, dirname, resolve, relative, sep } = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { createHash } = require("node:crypto");
 
@@ -48,7 +53,15 @@ const REPO = join(ROOT, "..");
 const read = (p) => readFileSync(p, "utf8");
 
 const HARNESS = "emulator/web/harness.html";
-const PAGES = [...readdirSync(ROOT).filter((f) => f.endsWith(".html")).sort(), HARNESS];
+const VOICE = "voice/index.html";
+const PAGES = [...readdirSync(ROOT).filter((f) => f.endsWith(".html")).sort(), HARNESS, VOICE];
+// The one committed Lab document gen_csp.py does not write a policy into, and
+// why (its docstring's "Out of scope" paragraph says the same).
+const OUT_OF_SCOPE = {
+  "witness/witness.html": "vendored byte-for-byte from the website repo (scripts/check_witness_emulator_sync.sh); its own document in witness-wall.html's iframe",
+};
+// Where the walk below does not look: test fixtures and build trees, not pages.
+const SKIP_DIRS = new Set(["tests", "node_modules", "third_party", ".build"]);
 const pageHtml = new Map(PAGES.map((p) => [p, read(join(ROOT, p))]));
 
 const META_RE = /<meta http-equiv="Content-Security-Policy" content="([^"]*)"/g;
@@ -85,7 +98,7 @@ const markupOf = (html) =>
 // ── the policies are present, generated, and strict ─────────────────────────
 
 test("every Lab page carries exactly one CSP meta, on the line after <meta charset>", () => {
-  assert.ok(PAGES.length >= 27, `expected the Lab's pages, found ${PAGES.length}`);
+  assert.ok(PAGES.length >= 28, `expected the Lab's pages, found ${PAGES.length}`);
   for (const [page, html] of pageHtml) {
     const found = policiesOf(html);
     assert.strictEqual(found.length, 1, `${page}: expected one CSP <meta>, found ${found.length}`);
@@ -94,6 +107,62 @@ test("every Lab page carries exactly one CSP meta, on the line after <meta chars
     assert.ok(i >= 0, `${page}: no <meta charset> line`);
     assert.match(lines[i + 1] || "", /<meta http-equiv="Content-Security-Policy"/,
       `${page}: the CSP meta must directly follow <meta charset> — gen_csp.py puts it there`);
+  }
+});
+
+test("every Lab document is in scope: a page in any folder is on the list, or named as out of it", () => {
+  // The page list used to be "top-level *.html plus the harness", so the sound
+  // board in voice/ shipped with no policy and an inline script, and no gate
+  // looked. Walk the tree instead: a new page in a subfolder fails here until it
+  // joins gen_csp.py's lab_pages() (and PAGES above), or OUT_OF_SCOPE with a reason.
+  const found = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (SKIP_DIRS.has(e.name)) continue;
+      const p = join(dir, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith(".html")) found.push(relative(ROOT, p).split(sep).join("/"));
+    }
+  };
+  walk(ROOT);
+  const missing = found.filter((f) => !PAGES.includes(f) && !Object.hasOwn(OUT_OF_SCOPE, f));
+  assert.deepStrictEqual(missing, [], `Lab documents no policy covers: ${missing.join(", ")}`);
+  for (const f of Object.keys(OUT_OF_SCOPE)) assert.ok(found.includes(f), `OUT_OF_SCOPE names ${f}, which is gone`);
+  // And the generator writes exactly this list (its --explain names each page).
+  const r = spawnSync("python3", [join(ROOT, "tools/gen_csp.py"), "--explain"], { encoding: "utf8" });
+  assert.strictEqual(r.status, 0, r.stderr);
+  const explained = r.stdout.split("\n").filter((l) => l && !/^\s/.test(l));
+  assert.deepStrictEqual(explained, PAGES, "gen_csp.py's lab_pages() and this test's PAGES disagree");
+});
+
+test("the browser probe opens every page the generator writes a policy into", () => {
+  // csp_probe.mjs is the only gate that loads a page in Chromium; a page that
+  // joined lab_pages() and PAGES (as the walk above demands) but not the
+  // probe's own list once shipped a runtime violation with every gate green.
+  // The probe reads gen_csp.py --explain; --list says what it would open.
+  const r = spawnSync(process.execPath, [join(ROOT, "tests/csp_probe.mjs"), "--list"], { encoding: "utf8" });
+  assert.strictEqual(r.status, 0, `csp_probe.mjs --list failed (status ${r.status}):\n${r.stdout}${r.stderr}`);
+  const opened = r.stdout.split("\n").filter(Boolean);
+  const flavors = readdirSync(join(ROOT, "emulator/dist"))
+    .map((f) => /^canary-display-([a-z0-9]+)\.js$/.exec(f)?.[1]).filter(Boolean).sort();
+  assert.ok(flavors.length, "no committed display flavor to load the harness with");
+  const expected = [
+    ...PAGES.filter((p) => p !== HARNESS),
+    ...flavors.map((f) => `${HARNESS}?flavor=${f}`),
+  ];
+  assert.deepStrictEqual([...opened].sort(), [...expected].sort(),
+    "csp_probe.mjs must open every page in gen_csp.py's lab_pages() (the harness once per display flavor)");
+});
+
+test("every Lab page is a standards-mode UTF-8 document: <!DOCTYPE html> first, <meta charset=\"utf-8\"> early", () => {
+  // No doctype is quirks mode; no charset is the browser's guess, and a server
+  // that sends a bare text/html (python3 -m http.server, the README's own
+  // route) gets windows-1252 and mojibake. The HTML spec's prescan looks for
+  // the charset in the first 1024 bytes only.
+  for (const [page, html] of pageHtml) {
+    assert.match(html, /^<!DOCTYPE html>/i, `${page}: must open with <!DOCTYPE html> (without it the page renders in quirks mode)`);
+    const at = Buffer.from(html, "utf8").indexOf('<meta charset="utf-8"');
+    assert.ok(at >= 0 && at < 1024, `${page}: <meta charset="utf-8"> must sit in the first 1024 bytes (found at ${at})`);
   }
 });
 
@@ -168,7 +237,7 @@ test("every inline <script> and <style> body is hashed into the policy — and t
 test("no first-party module writes a style= attribute", () => {
   // The probe only sees the paths a page load takes; a style= in a markup
   // string or a setAttribute("style") on a click path would slip past it.
-  const dirs = [join(ROOT, "assets"), join(ROOT, "emulator/web")];
+  const dirs = [join(ROOT, "assets"), join(ROOT, "emulator/web"), join(ROOT, "voice")];
   for (const dir of dirs) {
     for (const f of readdirSync(dir)) {
       if (!/\.m?js$/.test(f)) continue;
@@ -261,7 +330,7 @@ test("directives no page needs are trimmed, not granted: no blob:, no worker-src
   }
   // And the module scan behind the generator's Worker check: no first-party
   // module spawns one today.
-  for (const dir of [join(ROOT, "assets"), join(ROOT, "emulator/web")]) {
+  for (const dir of [join(ROOT, "assets"), join(ROOT, "emulator/web"), join(ROOT, "voice")]) {
     for (const f of readdirSync(dir)) {
       if (!/\.m?js$/.test(f)) continue;
       assert.doesNotMatch(stripJsComments(read(join(dir, f))), /\bnew\s+(?:Shared)?Worker\s*\(/,

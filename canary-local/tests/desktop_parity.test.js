@@ -2062,6 +2062,71 @@ test("self-update: each app's updater endpoint names the pointer its workflow ad
     "lab no longer builds updater artifacts");
 });
 
+test("both apps' policies let Tauri's IPC through, and the Flasher's grants nothing more", () => {
+  // Tauri 2 sends every invoke() as a fetch to its own IPC origin first
+  // (ipc://localhost on macOS and Linux, http://ipc.localhost on Windows;
+  // tauri's scripts/ipc-protocol.js) and only when that is refused falls back
+  // to window.ipc.postMessage, with a CSP error and "IPC custom protocol
+  // failed" in the console on every launch. Tauri adds nothing to
+  // connect-src (what it adds is script hashes and a style nonce), so the
+  // connect-src written here is the one the webview enforces: without the
+  // two sources, default-src 'self' refuses both shapes ('self' never
+  // matches another scheme).
+  const directives = (where, csp) => {
+    const list = csp.split(";").map((d) => d.trim().split(/\s+/)).filter((d) => d[0]);
+    // Tauri parses the csp into a map (a repeated directive's last copy
+    // wins), while a browser keeps the first: one copy each, or the policy
+    // read here may not be the one enforced.
+    const names = list.map(([name]) => name);
+    assert.strictEqual(new Set(names).size, names.length, `${where}: a csp directive is named twice`);
+    return new Map(list.map(([name, ...sources]) => [name, sources]));
+  };
+  // A platform file is merged over the base one, so a csp there would be the
+  // policy that platform runs: each is held to the same rule. Every platform
+  // file Tauri merges is read, not a list of today's (tauri-utils
+  // config/parse.rs names one per target; neither app enables the json5 or
+  // toml config formats, so .json is the only spelling).
+  const PLATFORM = /^tauri\.(?:macos|windows|linux|android|ios)\.conf\.json$/;
+  const policies = [];
+  for (const dir of ["desktop/src-tauri", "desktop-lab/src-tauri"]) {
+    const platform = readdirSync(join(ROOT, dir)).filter((n) => PLATFORM.test(n)).sort();
+    for (const f of [`${dir}/tauri.conf.json`, ...platform.map((n) => `${dir}/${n}`)]) {
+      const csp = ((JSON.parse(read(join(ROOT, f))).app || {}).security || {}).csp;
+      if (f.endsWith("/tauri.conf.json")) assert.ok(csp, `${f} lost its csp`);
+      if (csp) policies.push([f, directives(f, csp)]);
+    }
+  }
+  for (const [where, d] of policies) {
+    const connect = d.get("connect-src") || [];
+    for (const s of ["ipc:", "http://ipc.localhost"]) {
+      assert.ok(connect.includes(s),
+        `${where}: connect-src lacks ${s}, so Tauri's IPC is refused and every invoke falls back to postMessage`);
+    }
+    for (const name of ["object-src", "base-uri"]) {
+      assert.deepStrictEqual(d.get(name), ["'none'"], `${where}: ${name} must be 'none'`);
+    }
+  }
+  // The Flasher's whole policy, directive by directive. Its own pages fetch
+  // only same-origin files (the fig3d models); every device and release call
+  // goes through Rust. So its connect-src is 'self' and the IPC, nothing else,
+  // and widening any directive is a deliberate edit of this table. A LAN or
+  // internet source here would be a decision, not a fix: the Witness Wall
+  // emulator's canary.local probes are refused under this policy, as they
+  // were before it.
+  const flasher = policies.find(([where]) => where === "desktop/src-tauri/tauri.conf.json")[1];
+  assert.deepStrictEqual(Object.fromEntries(flasher), {
+    "default-src": ["'self'"],
+    "img-src": ["'self'", "data:"],
+    "style-src": ["'self'", "'unsafe-inline'"],
+    "script-src": ["'self'"],
+    "connect-src": ["'self'", "ipc:", "http://ipc.localhost"],
+    "object-src": ["'none'"],
+    "base-uri": ["'none'"],
+  }, "the Flasher's csp grants more than its own files and Tauri's IPC, or other than this table says");
+  assert.ok(!policies.some(([where]) => where.startsWith("desktop/src-tauri/tauri.") && where !== "desktop/src-tauri/tauri.conf.json"),
+    "a Flasher platform file now carries its own csp; hold it to the table above as well");
+});
+
 test("hub first-boot watch: the escalation countdown is wired on both paths", () => {
   // The 25-minute troubleshooting escalation is visible-in-advance: a
   // countdown painted from the SAME deadline the watch checks, on the live
@@ -3130,6 +3195,42 @@ test("witness wall: every wall here probes the Apple TV's well-known addresses, 
   assert.ok(known, "the vendored tv-emulator.js lost `const WELL_KNOWN` — re-point this test at it");
   assert.deepStrictEqual([...known[1].matchAll(/'([^']+)'/g)].map((x) => x[1]), tvBases,
     "the vendored emulator's WELL_KNOWN drifted from the Apple TV's — change the website's js/tv-emulator.js, then scripts/vendor_witness_emulator.sh");
+});
+
+test("device-address gate: the Lab's twins are the Flasher's, in lockstep", () => {
+  // Both apps judge every LAN base with the same functions: the Flasher's in
+  // desktop/src-tauri/src/fleet.rs and the Lab's hand-kept copies in
+  // desktop-lab/src-tauri/src/lib.rs. A fix made to one copy alone is a base
+  // one app refuses and the other dials. Compared as code: comments,
+  // whitespace, the trailing comma rustfmt adds when it wraps a list,
+  // `pub(crate) ` and the `std::net::` the Lab spells out (the Flasher
+  // imports IpAddr and SocketAddr) are not differences; anything else is.
+  const flasher = read(join(ROOT, "desktop/src-tauri/src/fleet.rs"));
+  const lab = read(join(ROOT, "desktop-lab/src-tauri/src/lib.rs"));
+  const code = (t) => t.replace(/\/\/.*$/gm, "").replace(/pub\(crate\) /g, "").replace(/std::net::/g, "")
+    .replace(/\s+/g, " ").replace(/,\s*([)\]}])/g, "$1").replace(/([(\[{])\s+/g, "$1")
+    .replace(/\s+([)\]}])/g, "$1").trim();
+  const fnText = (src, name, where) => {
+    const m = new RegExp(`\\n(?:pub\\(crate\\) )?(?:async )?fn ${name}\\b[\\s\\S]*?\\n\\}`).exec(src);
+    assert.ok(m, `couldn't find fn ${name} in ${where}`);
+    return code(m[0]);
+  };
+  for (const name of ["ip_is_local", "v4_is_local", "host_is_local", "addrs_all_local", "resolve_local",
+    "base_host", "dns_shaped", "base_ok", "same_host_redirects"]) {
+    assert.strictEqual(fnText(lab, name, "desktop-lab lib.rs"), fnText(flasher, name, "desktop fleet.rs"),
+      `desktop-lab lib.rs fn ${name} drifted from the Flasher's fleet.rs; copy it back verbatim`);
+  }
+  // pinned_client's signature differs (each Flasher caller names its user
+  // agent); its body, from the judged host to the built client, does not.
+  const body = (src, where) => {
+    const m = /\n(?:pub\(crate\) )?async fn pinned_client\([\s\S]*?\) -> [^{]*\{\n([\s\S]*?)\n\}/.exec(src);
+    assert.ok(m, `couldn't find pinned_client in ${where}`);
+    return code(m[1]).replace(/\.user_agent\([^)]*\)/, ".user_agent(_)");
+  };
+  assert.strictEqual(body(lab, "desktop-lab lib.rs"), body(flasher, "desktop fleet.rs"),
+    "desktop-lab lib.rs pinned_client's body drifted from the Flasher's (the pin, the proxy, the redirect policy)");
+  assert.match(body(flasher, "desktop fleet.rs"), /\.no_proxy\(\) ?\.redirect\(same_host_redirects\(&host\)\)/,
+    "the Flasher's pinned_client lost .no_proxy() or its same-host redirect policy");
 });
 
 test("mDNS browse: the Lab's fleet_scan is the Flasher's, in lockstep", () => {

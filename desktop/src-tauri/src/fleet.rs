@@ -232,42 +232,102 @@ pub(crate) async fn resolve_local(host: &str) -> Result<Vec<SocketAddr>, String>
     addrs_all_local(&bare, addrs)
 }
 
-/// The host of `http://host[:port][/…]` (or https), brackets kept on an
-/// IPv6 literal. `None` for anything that isn't such a URL.
-pub(crate) fn base_host(base: &str) -> Option<&str> {
-    let rest = base
-        .strip_prefix("http://")
-        .or_else(|| base.strip_prefix("https://"))?;
-    let host_port = rest.split('/').next().unwrap_or_default();
-    if host_port.is_empty() {
+/// The host a connection to `base` would dial, as the url crate reads it:
+/// reqwest parses every request URL with that crate (`reqwest::Url` is its
+/// re-export) and hands hyper that parse's host, so judging the same parse
+/// is what makes the host judged here the host dialed. It comes back
+/// lowercased, percent-decoded, punycoded, an IPv4 in any spelling written
+/// dotted (`http://134744072` is `8.8.8.8`), and an IPv6 literal kept in
+/// its brackets.
+///
+/// `None` unless `base` is an `http` or `https` URL with a host, no user or
+/// password, no query, no fragment, and no space or control character
+/// anywhere (the url crate trims those at the ends and drops tabs and
+/// newlines inside, but every call appends its route to `base` as written,
+/// so a base the parser had to clean is refused, never judged as the
+/// cleaned URL), and unless a name host is DNS-shaped (`dns_shaped`). The
+/// fleet book's bases are a scheme, a host, a port and at most a path;
+/// anything else is refused, not tolerated. A hand split that ended the host
+/// at the first `/` read `http://8.8.8.8?.local:8080` as a `.local` name
+/// while the url crate (a WHATWG parser, which also ends a host at `?`, `#`
+/// and `\`) dialed 8.8.8.8:80, and read `http://8.8.8.8@offlan.local` and
+/// `http://8%2E8%2E8%2E8.local` as names other than the ones hyper then
+/// looked up, so the address pin keyed on the judged string never applied.
+pub(crate) fn base_host(base: &str) -> Option<String> {
+    if base.chars().any(|c| c == ' ' || c.is_ascii_control()) {
         return None;
     }
-    // Split a trailing :port (careful with bracketed IPv6).
-    let host = if let Some(end) = host_port.rfind(']') {
-        &host_port[..=end]
-    } else if let Some((h, port)) = host_port.rsplit_once(':') {
-        if port.chars().all(|c| c.is_ascii_digit()) && !port.is_empty() {
-            h
-        } else {
-            host_port
-        }
-    } else {
-        host_port
-    };
-    Some(host)
+    let url = reqwest::Url::parse(base).ok()?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.domain().is_some_and(|name| !dns_shaped(name))
+    {
+        return None;
+    }
+    url.host_str().map(str::to_string)
+}
+
+/// A name a request can carry on either scheme: dot-separated labels of
+/// 1 to 63 ASCII letters, digits, `-` or `_`, none starting or ending with
+/// `-`, 253 bytes at most. The url crate accepts more in a host (`"`, `` ` ``,
+/// `{`, `;`, `*`, `~`, an empty label, ...), but hyper's `http::Uri` refuses
+/// some of those and rustls refuses the rest as a TLS server name, so such a
+/// base would pass the gate and then build no request at all. The rule is
+/// rustls's own (RFC 1123 labels, plus the `_` some LAN hostnames carry).
+/// The firmware's sanitized mDNS names (`[a-z0-9-]`, edge hyphens trimmed)
+/// are inside it, and an IDNA name is judged as the `xn--` labels the url
+/// crate punycoded it to.
+pub(crate) fn dns_shaped(name: &str) -> bool {
+    name.len() <= 253
+        && name.split('.').all(|label| {
+            (1..=63).contains(&label.len())
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
 }
 
 /// `http://host[:port]` (or https) with a local host — anything else is
-/// refused before a socket opens. `pub(crate)` because `witness_discover`
-/// (lib.rs) enforces the same policy over its candidate bases.
+/// refused before a socket opens. The host is `base_host`'s, the one the
+/// connection dials. `pub(crate)` because `witness_discover` (lib.rs)
+/// enforces the same policy over its candidate bases.
 pub(crate) fn base_ok(base: &str) -> bool {
-    base_host(base).is_some_and(host_is_local)
+    base_host(base).is_some_and(|h| host_is_local(&h))
+}
+
+/// The redirect policy every pinned client carries: a redirect is followed
+/// only to the host the base was judged by (`base_host`'s string, compared
+/// with the url crate's reading of the Location), within reqwest's default
+/// limit of 10 hops; any other target stops the chain, and the 3xx itself is
+/// the answer the caller sees. reqwest's default follows any Location, so
+/// one 3xx from a vetted LAN address sent the next request to a host
+/// `base_ok` never judged and `resolve_local` never pinned. The scheme and
+/// port may change on the way: the firmware's own redirect
+/// (`build_redirect_location` in firmware/common/network/tls_policy.h, http
+/// to https at the request's Host) keeps the host, so the policy still
+/// follows it, and the pin, keyed on that same name, still applies.
+pub(crate) fn same_host_redirects(judged: &str) -> reqwest::redirect::Policy {
+    let judged = judged.to_string();
+    reqwest::redirect::Policy::custom(move |attempt| {
+        if attempt.url().host_str() == Some(judged.as_str()) {
+            reqwest::redirect::Policy::default().redirect(attempt)
+        } else {
+            attempt.stop()
+        }
+    })
 }
 
 /// A client for ONE local base: proxy-free, timeout-bounded, and pinned to
 /// the addresses `resolve_local` just vetted, so hyper never resolves the
-/// name a second time — what was judged is what is dialed. Errors when the
-/// base isn't a local URL or its name resolves anywhere off this network.
+/// name a second time, and it follows a redirect only back to that host
+/// (`same_host_redirects`): what was judged is what is dialed, on every hop.
+/// Errors when the base isn't a local URL or its name resolves anywhere off
+/// this network.
 ///
 /// `.no_proxy()`: a LAN probe must never be routed through an OS-configured
 /// proxy. reqwest defaults `auto_sys_proxy` on, and hyper-util's
@@ -284,15 +344,18 @@ pub(crate) async fn pinned_client(
 ) -> Result<reqwest::Client, String> {
     let host =
         base_host(base).ok_or_else(|| "device address must be a local/private host".to_string())?;
-    let addrs = resolve_local(host).await?;
+    let addrs = resolve_local(&host).await?;
     let bare = host.trim_matches(['[', ']']);
     let mut builder = reqwest::Client::builder()
         .user_agent(user_agent)
         .timeout(timeout)
-        .no_proxy();
+        .no_proxy()
+        .redirect(same_host_redirects(&host));
     if bare.parse::<IpAddr>().is_err() {
         // reqwest keys the override on the URL's host and ignores the port
-        // in the pinned addresses (the URL's own port is used).
+        // in the pinned addresses (the URL's own port is used). `bare` is
+        // that host, read by the same parser, so the override is the one
+        // hyper's lookup finds.
         builder = builder.resolve_to_addrs(bare, &addrs);
     }
     builder.build().map_err(|e| e.to_string())
@@ -726,8 +789,244 @@ mod tests {
         assert!(!base_ok("ftp://192.168.1.40"));
         assert!(!base_ok("192.168.1.40"));
         assert!(!base_ok("http://"));
-        assert_eq!(base_host("http://canary.local:80/x"), Some("canary.local"));
-        assert_eq!(base_host("http://[fe80::1]:80"), Some("[fe80::1]"));
+        assert_eq!(
+            base_host("http://canary.local:80/x").as_deref(),
+            Some("canary.local")
+        );
+        assert_eq!(
+            base_host("http://[fe80::1]:80").as_deref(),
+            Some("[fe80::1]")
+        );
+    }
+
+    /// Bases whose text reads as a local host while the url crate, the
+    /// parser reqwest dials with, reads another: a host ended at `?`, `#` or
+    /// `\` (which a split on `/` alone ran on past), a user before `@`, an
+    /// encoded or numeric spelling of a public IPv4, a zone id the url crate
+    /// cannot dial at all, and whitespace the url crate would clean out of a
+    /// base the calls then append to as written. Every one must be refused.
+    const SPLIT_BASES: [&str; 15] = [
+        "http://8.8.8.8?.local:8080",
+        "http://example.com#.local",
+        "http://example.com\\.local",
+        "http://8.8.8.8#.local",
+        "http://8.8.8.8\\.local",
+        "http://1.2.3.4:25?.local:80",
+        "http://8.8.8.8@offlan.local:8080",
+        "http://user:pw@canary.local",
+        "http://8%2E8%2E8%2E8:8080",
+        "http://134744072",
+        "http://0x08080808",
+        "http://[fe80::1%25eth0]",
+        "http://canary\t.local",
+        "http://canary.local ",
+        " http://canary.local",
+    ];
+
+    /// Bases whose host the url crate accepts but no request can carry:
+    /// hyper's `http::Uri` refuses `"`, `` ` ``, `{` and `}` in a host, and
+    /// rustls refuses `;`, `*`, `~`, an empty label or an edge hyphen as a TLS
+    /// server name. Each passed the gate and then built no request.
+    const UNSENDABLE_BASES: [&str; 10] = [
+        "http://canary\".local",
+        "http://canary`.local",
+        "http://canary{.local",
+        "http://canary}.local",
+        "https://canary*.local",
+        "https://1.1.1.1;.local",
+        "https://canary~1.local",
+        "https://..local",
+        "https://-canary.local",
+        "https://canary-.local",
+    ];
+
+    #[test]
+    fn a_base_is_judged_by_the_host_it_dials() {
+        let passed: Vec<&str> = SPLIT_BASES.into_iter().filter(|b| base_ok(b)).collect();
+        assert!(
+            passed.is_empty(),
+            "these bases passed the gate while reqwest dials a host it never judged: {passed:?}"
+        );
+        // Judged as the url crate reads it: decoded, dotted, lowercased.
+        assert_eq!(base_host("http://134744072").as_deref(), Some("8.8.8.8"));
+        assert_eq!(
+            base_host("http://8%2E8%2E8%2E8.local:8080").as_deref(),
+            Some("8.8.8.8.local"),
+            "the pin must be keyed on the name hyper looks up, not the encoded text"
+        );
+        assert_eq!(
+            base_host("http://C%41NARY.Local:80/").as_deref(),
+            Some("canary.local")
+        );
+        assert_eq!(base_host("http://[FE80::1]").as_deref(), Some("[fe80::1]"));
+        assert_eq!(
+            base_host("http://3232235777").as_deref(),
+            Some("192.168.1.1")
+        );
+    }
+
+    #[test]
+    fn a_passed_base_dials_the_host_it_was_judged_by() {
+        // What reqwest itself builds for each call path (base + route), the
+        // URL whose host hyper connects to.
+        let client = reqwest::Client::new();
+        for base in [
+            "http://192.168.1.40",
+            "http://canary-3f2a.local:80",
+            "https://canary.local",
+            "http://10.0.0.7:8099/",
+            "http://[fe80::1]:80/",
+            "http://8%2E8%2E8%2E8.local:8080",
+            "http://C%41NARY.Local:80/",
+            "http://3232235777",
+        ]
+        .into_iter()
+        .chain(SPLIT_BASES)
+        .chain(UNSENDABLE_BASES)
+        {
+            if !base_ok(base) {
+                continue;
+            }
+            let url = format!("{}/api/fleet", base.trim_end_matches('/'));
+            let req = client
+                .get(&url)
+                .build()
+                .expect("a passed base builds a request");
+            assert_eq!(
+                req.url().host_str(),
+                base_host(base).as_deref(),
+                "{base}: judged one host, dials another"
+            );
+            assert!(
+                req.url().as_str().parse::<tauri::http::Uri>().is_ok(),
+                "{base}: passed the gate, but hyper cannot carry its URL"
+            );
+        }
+    }
+
+    #[test]
+    fn a_passed_base_is_one_a_request_can_carry() {
+        let passed: Vec<&str> = UNSENDABLE_BASES
+            .into_iter()
+            .filter(|b| base_ok(b))
+            .collect();
+        assert!(
+            passed.is_empty(),
+            "these bases passed the gate, yet hyper or rustls refuses their host: {passed:?}"
+        );
+        // Inside the rule: a name the firmware announces, an underscore, a
+        // single label, and an IDNA name judged as its punycode.
+        for base in [
+            "http://canary-sense-001-a1b2c3.local",
+            "http://my_pc.local",
+            "https://canary-3f2a",
+            "http://café.local",
+        ] {
+            assert!(base_ok(base), "{base} must pass");
+        }
+        assert_eq!(
+            base_host("http://café.local").as_deref(),
+            Some("xn--caf-dma.local")
+        );
+    }
+
+    /// A loopback HTTP stand-in for one address: every request gets
+    /// `answer` and is counted. One connection at a time, closed after each.
+    fn stub(answer: String) -> (u16, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = hits.clone();
+        std::thread::spawn(move || {
+            for mut conn in listener.incoming().flatten() {
+                let mut got = Vec::new();
+                let mut buf = [0u8; 1024];
+                while !got.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match conn.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => got.extend_from_slice(&buf[..n]),
+                    }
+                }
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let _ = conn.write_all(answer.as_bytes());
+            }
+        });
+        (port, hits)
+    }
+
+    fn found(location: &str) -> String {
+        format!(
+            "HTTP/1.1 302 Found\r\nLocation: {location}\r\n\
+             Content-Length: 0\r\nConnection: close\r\n\r\n"
+        )
+    }
+
+    fn fleet_json(said: &str) -> String {
+        let body = format!("{{\"fleet\":\"{said}\"}}");
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    #[test]
+    fn a_redirect_off_the_judged_host_is_not_followed() {
+        // The judged, pinned base answers 302 to another host: `localhost`
+        // here, any address at all in the field (a reviewer's run sent the
+        // default policy on to 9.9.9.9). Nothing may dial it, and discovery
+        // must not return its answer as the fleet.
+        let (off, off_hits) = stub(fleet_json("from a host nobody judged"));
+        let (vetted, vetted_hits) = stub(found(&format!("http://localhost:{off}/api/fleet")));
+        let base = format!("http://127.0.0.1:{vetted}");
+        tauri::async_runtime::block_on(async {
+            let client =
+                pinned_client(&base, "SecuraCV-Flasher", std::time::Duration::from_secs(5))
+                    .await
+                    .unwrap();
+            let resp = client
+                .get(format!("{base}/api/fleet"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                (resp.status().as_u16(), resp.url().host_str()),
+                (302, Some("127.0.0.1")),
+                "the pinned client followed a redirect off the host it judged"
+            );
+            assert_eq!(
+                crate::witness_discover(vec![base.clone()]).await.ok(),
+                None,
+                "witness_discover returned an unjudged host's answer as the fleet"
+            );
+        });
+        let off_hits = off_hits.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(off_hits, 0, "a host nobody judged was dialed");
+        assert_eq!(vetted_hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_redirect_back_to_the_judged_host_is_still_followed() {
+        // Same host, another port: the shape of the firmware's own http to
+        // https redirect (tls_policy.h), which keeps the request's Host.
+        let (next, next_hits) = stub(fleet_json("same host"));
+        let (vetted, _) = stub(found(&format!("http://127.0.0.1:{next}/api/fleet")));
+        let base = format!("http://127.0.0.1:{vetted}");
+        tauri::async_runtime::block_on(async {
+            let client =
+                pinned_client(&base, "SecuraCV-Flasher", std::time::Duration::from_secs(5))
+                    .await
+                    .unwrap();
+            let resp = client
+                .get(format!("{base}/api/fleet"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 200);
+            assert_eq!(resp.url().port(), Some(next));
+        });
+        assert_eq!(next_hits.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]

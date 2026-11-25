@@ -46,18 +46,65 @@
 //! The chain canonical binds no nonce or timestamp, so a peer with publish
 //! rights on the broker can replay a captured signed publish; the
 //! length-must-advance rule means a replay buys at most one window per chain
-//! advance this bridge did not itself see, never an indefinitely "online"
-//! powered-off Canary. The same peer can invent device ids and sign for them
-//! with its own key (the pin is TOFU, so such a row is indistinguishable from
-//! a real Canary), and can hold a real id in the sticky `degraded` verdict by
-//! announcing a second key and signing under it. [`FLEET_PEER_MAX`] bounds the
-//! table and eviction bounds a flood's effect to its duration; the clock
-//! never expires an id that holds a pin or a verified length (only ids that
-//! hold neither age out, and the pass that straddles a clock jump is
-//! skipped); none of it is a liveness proof, and
+//! advance this bridge did not itself see — for as long as the bridge
+//! remembers the length it verified, which the displaced ledger below
+//! bounds by a count of displacements, not forever. The same peer can
+//! invent device ids and sign for them with its own key (the pin is TOFU,
+//! so such a row is indistinguishable from a real Canary), and can hold a
+//! real id in the sticky `degraded` verdict by announcing a second key and
+//! signing under it (two publishes, no flood needed). [`FLEET_PEER_MAX`]
+//! bounds the table; the clock never expires an id that holds a pin or a
+//! verified length (only ids that hold neither age out, and the pass that
+//! straddles a clock jump is skipped); none of it is a liveness proof, and
 //! `tvos/discovery/DISCOVERY.md` says so in the same words. A liveness
 //! challenge would use the firmware's `whoami` canonical, which nothing here
 //! drives yet.
+//!
+//! **Displacement keeps the pin, up to a bound.** At the cap a newcomer
+//! displaces an id rather than being refused (see [`FLEET_PEER_MAX`]), so a
+//! flood can crowd the roll-call while it lasts but never keeps a new Canary
+//! off it afterwards. A displaced id that held a pin or a verified length
+//! leaves its pin, verified chain length, verified `state` mark and sticky
+//! conflict in a ledger of [`FLEET_PEER_DISPLACED_MAX`] ids, carried in the
+//! summary file and never projected; when the id is heard again they are
+//! restored before its publish is evaluated, so its next `health` under
+//! another key is an announcement (changing no verdict on its own), not a
+//! first sight, and a replayed chain at or below the remembered length
+//! still proves nothing. The ledger drops its oldest displacement first,
+//! so a displaced id's pin is let go only after
+//! [`FLEET_PEER_DISPLACED_MAX`] further ids that held a pin or a verified
+//! length were displaced after it and not heard since, whoever displaced
+//! them. Once every resident holds a pin, each of those costs a broker peer
+//! at most one fresh `health` publish — fewer where the fleet itself
+//! displaces an id meanwhile (a Canary joining at the cap, or one displaced
+//! before it coming back; one displaced after it that comes back takes its
+//! own entry with it and saves the peer nothing). Nor need the peer pay
+//! twice: publishes it made retained are delivered again by the broker to
+//! every new subscription, and the bridge subscribes with a clean start and
+//! re-subscribes on each reconnect, so a restart, a dropped link or another
+//! client on the broker login taking the bridge's session replays the same
+//! churn with no new publish. The same re-subscribe delivers the quiet
+//! Canary's own retained copies too: its will (on `availability` or
+//! `status`, both subscribed before `health`) brings it back from the
+//! ledger before the churn lands, and its retained `health` does the same
+//! or pins its real key afresh. So the replay re-opens first sight only
+//! once the peer has cleared those copies, one zero-length retained publish
+//! each (two where the Canary keeps its `health` retained, as every
+//! product under `firmware/projects/` that talks to the broker does; one
+//! for the flagship, which keeps only its will), made once and before the
+//! flood, since a clear heard while the Canary is displaced is itself a
+//! return. That is the real bound, and it is a cost, not a wall: a broker
+//! peer that displaces a quiet Canary and then pays those publishes (or
+//! has the broker replay them) gets a first sight again, so it can pin its
+//! own key for the id (and serve a row under the real id that reads `ok`,
+//! online and with words), or replay that Canary's captured `health` and
+//! chain as fresh — and by doing it again every window, hold a powered-off
+//! Canary "online" from one capture. A Canary that keeps publishing leaves
+//! the ledger each time it is heard, and re-enters it at the newest end if
+//! it is displaced again.
+//! Never displacing an id that holds a pin and a verified length would close
+//! that, at the price of letting a flood of proven ids shut new Canaries out
+//! until the file is deleted; this table does not make that trade.
 //!
 //! **The wellbeing words are signed too, or they are not words.** The
 //! `state` topic is as broker-writable as the heartbeats, so a peer with
@@ -76,7 +123,8 @@
 //! (so they age out of [`fleet_rows`] on the usual clock); it never sets
 //! them, and never clears what the real device said. The same bound as the
 //! chain applies: a captured publish buys at most one window per pair the
-//! bridge itself missed, never a standing claim.
+//! bridge itself missed, for as long as the bridge holds the pair it
+//! verified — a displaced id keeps it in the ledger, up to the bound above.
 //!
 //! The pin is TOFU, not pairing: "chain: ok" means the last chain publish
 //! verified against the first key this bridge ever saw for that device id,
@@ -85,7 +133,9 @@
 //! id (an unsigned `health`, which anyone on the broker can publish) is
 //! remembered and changes no verdict; a second key that actually SIGNS the
 //! id's chain is a sticky conflict ("degraded") that only deleting the summary
-//! file clears — never a silent re-pin.
+//! file clears — never a silent re-pin. Displacement clears neither: the pin
+//! and the conflict travel through the displaced ledger, and only the bound
+//! above lets them go.
 //!
 //! The summary file holds the per-room wellbeing words beside the pins, so it
 //! is written `0600` (unix), fsynced before and after the rename, and read
@@ -93,7 +143,7 @@
 //! every field it serves and caps the row count, so a damaged or hand-edited
 //! file cannot widen the wire.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::Path;
 
 use anyhow::{anyhow, Context, Result};
@@ -117,11 +167,42 @@ pub const FLEET_PEER_RECENT_SECS: u64 = 180;
 /// any expirable id unheard for [`FLEET_PEER_FORGET_SECS`], then the least
 /// recently heard id that never produced a verified signature
 /// ([`PeerRecord::proven`]), then the least recently heard id of all — so a
-/// broker flood can crowd the roll-call only while it lasts, never lock real
-/// Canaries out until someone deletes the file. Eviction is driven by broker
-/// activity (a new id arriving), never by the clock alone. An evicted id
-/// loses its pin and is re-pinned on its next `health`.
+/// broker flood can crowd the roll-call only while it lasts: a newcomer is
+/// never refused, so no flood keeps a new Canary off the roll-call after it
+/// ends. Eviction is driven by broker activity (a new id arriving), never by
+/// the clock alone. A displaced id that held a pin or a verified length
+/// leaves them in the displaced ledger ([`FLEET_PEER_DISPLACED_MAX`]) and
+/// gets them back when it is next heard; it is re-pinned from scratch only
+/// once that ledger has let it go.
 pub const FLEET_PEER_MAX: usize = 64;
+
+/// How many displaced ids the table remembers the trust of: four tables'
+/// worth. An id displaced at the cap while it held a pinned key or a
+/// verified chain length leaves a [`DisplacedPin`] here — its pin, its
+/// verified chain length, its verified `state` mark and its sticky pin
+/// conflict, nothing else — and gets all four back, before its publish is
+/// evaluated, the next time it is heard. The ledger keeps the most recent
+/// displacements: when it is full the OLDEST displacement is dropped (and
+/// counted, [`PeerTable::pins_released`]). The bound is therefore a count,
+/// not a time: a displaced id's pin is let go only after this many other
+/// ids that held a pin or a verified length have been displaced after it
+/// and not heard since, whoever displaced them (an id heard again leaves
+/// the ledger, and its next displacement puts it back at the newest end).
+/// Once every resident holds a pin, each displacement costs a broker peer
+/// at most one `health` publish for a fresh id, so re-opening
+/// trust-on-first-use for one quiet, displaced id costs that peer at most
+/// this many publishes after the flood that displaced it — exactly this
+/// many when nothing else on the broker moves, and one fewer for each
+/// displacement the fleet makes meanwhile that leaves an entry behind (a
+/// Canary joining at the cap, or one displaced before it coming back).
+/// Publishes the peer made retained cost it nothing the next time: the
+/// broker delivers them again whenever the bridge re-subscribes, once the
+/// peer has cleared the quiet Canary's own retained will and `health`,
+/// which the same re-subscribe also delivers and which bring it back or
+/// re-pin its real key (one or two publishes, made once). The tests pin
+/// all of these numbers. The ledger
+/// rides in the summary file and is never projected by [`fleet_rows`].
+pub const FLEET_PEER_DISPLACED_MAX: usize = 4 * FLEET_PEER_MAX;
 
 /// How long an id that holds NOTHING WORTH KEEPING — no pinned key and no
 /// verified chain length; an id heard only on `status`, `availability` or
@@ -144,8 +225,11 @@ pub const FLEET_PEER_FORGET_SECS: u64 = 30 * 24 * 60 * 60;
 pub const FLEET_PEER_CLOCK_JUMP_SECS: u64 = 24 * 60 * 60;
 
 /// The most the kernel will read of a summary file. [`FLEET_PEER_MAX`] fully
-/// populated records pretty-print to a few tens of kilobytes; anything past
-/// this is a damaged or foreign file, and is ignored rather than served.
+/// populated records beside a full displaced ledger
+/// ([`FLEET_PEER_DISPLACED_MAX`] entries), every field at its widest,
+/// pretty-print to well under this (a test builds that file and checks);
+/// anything past this is a damaged or foreign file, and is ignored rather
+/// than served.
 pub const FLEET_PEERS_MAX_FILE_BYTES: u64 = 256 * 1024;
 
 /// The topic filters the bridge subscribes to when peer tracking is on. The
@@ -157,6 +241,13 @@ pub const FLEET_PEERS_MAX_FILE_BYTES: u64 = 256 * 1024;
 /// device's public key (stored locally, never projected), and `chain`, the
 /// signed publish the display verifies too, so presence is proven the same
 /// way on both.
+///
+/// The order is the order the bridge subscribes in on every ConnAck, and it
+/// matters: `availability` and `status`, where every Canary keeps its will
+/// retained, come before `health`, so on a re-subscribe a displaced Canary's
+/// own retained will brings it back from the displaced ledger before a
+/// retained churn replayed on `health` can push it out (see
+/// [`FLEET_PEER_DISPLACED_MAX`]; a test fails if `health` moves first).
 pub const FLEET_PEER_TOPIC_FILTERS: &[&str] = &[
     "securacv/+/availability",
     "securacv/+/status",
@@ -461,6 +552,66 @@ impl PeerRecord {
     }
 }
 
+/// What the table keeps of an id it displaced at the cap: exactly the four
+/// facts that make the id's return safe — the pin (so its next `health`
+/// under another key is an announcement, not a first sight), the verified
+/// chain length and `state` mark (so a capture at or below them is still a
+/// replay) and the sticky conflict (so displacement never clears one). The
+/// name, product, clocks and words are not kept: a returning id reads
+/// `online: false` with no words until a fresh signed publish says
+/// otherwise. Bridge bookkeeping only; [`fleet_rows`] never reads it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DisplacedPin {
+    /// The displaced id.
+    pub device_id: String,
+    /// [`PeerRecord::pinned_key_hex`] when it was displaced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_key_hex: Option<String>,
+    /// [`PeerRecord::last_verified_length`] when it was displaced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_verified_length: Option<u64>,
+    /// [`PeerRecord::last_verified_state`] when it was displaced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_verified_state: Option<StateMark>,
+    /// [`PeerRecord::pin_conflict`] when it was displaced.
+    #[serde(default)]
+    pub pin_conflict: bool,
+}
+
+impl DisplacedPin {
+    /// The ledger entry for a record being displaced, or `None` when it
+    /// holds nothing worth keeping (no pin and no verified length — the same
+    /// test [`PeerTable::prune`] uses for what the clock may forget).
+    fn of(rec: &PeerRecord) -> Option<Self> {
+        (rec.pinned_key_hex.is_some() || rec.proven()).then(|| Self {
+            device_id: rec.device_id.clone(),
+            pinned_key_hex: rec.pinned_key_hex.clone(),
+            last_verified_length: rec.last_verified_length,
+            last_verified_state: rec.last_verified_state,
+            pin_conflict: rec.pin_conflict,
+        })
+    }
+
+    fn holds_trust(&self) -> bool {
+        self.pinned_key_hex.is_some() || self.last_verified_length.is_some()
+    }
+
+    /// The record a returning id is re-admitted with: new in every respect
+    /// but the four facts the ledger kept. A conflict reads `degraded` at
+    /// once, as it did before the id was displaced.
+    fn restore(self, now: u64) -> PeerRecord {
+        let mut rec = PeerRecord::new(&self.device_id, now);
+        rec.pinned_key_hex = self.pinned_key_hex;
+        rec.last_verified_length = self.last_verified_length;
+        rec.last_verified_state = self.last_verified_state;
+        rec.pin_conflict = self.pin_conflict;
+        if rec.pin_conflict {
+            rec.chain = CHAIN_DEGRADED.to_string();
+        }
+        rec
+    }
+}
+
 /// The file the bridge writes and the kernel reads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PeerSummaryFile {
@@ -470,6 +621,17 @@ pub struct PeerSummaryFile {
     pub written_at_epoch_s: u64,
     /// Sorted by `device_id`.
     pub peers: Vec<PeerRecord>,
+    /// The displaced ledger, oldest displacement first, at most
+    /// [`FLEET_PEER_DISPLACED_MAX`] entries. Absent from the file while it
+    /// is empty, so a file from a table that never displaced a pinned id is
+    /// byte-for-byte what a bridge without the ledger wrote; a file without
+    /// it (an older bridge's) loads as an empty ledger, and a reader without
+    /// the field (an older kernel or bridge) ignores it — the schema tag does
+    /// not change, so a downgraded bridge reads the file and drops the
+    /// ledger on its next write, as if nothing had been displaced. Never
+    /// projected by [`fleet_rows`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub displaced: Vec<DisplacedPin>,
 }
 
 impl PeerSummaryFile {
@@ -630,9 +792,19 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 #[derive(Debug, Default)]
 pub struct PeerTable {
     peers: BTreeMap<String, PeerRecord>,
+    /// What displaced ids held, oldest displacement first, at most
+    /// [`FLEET_PEER_DISPLACED_MAX`]; an id is never both here and in
+    /// `peers`. A queue rather than a map because the order of displacement
+    /// is the drop order; the lookup is a scan of at most a few hundred ids,
+    /// made only when an id that is not resident is heard.
+    displaced: VecDeque<DisplacedPin>,
     /// Ids displaced at the cap since this table was built (the bridge logs
-    /// each increase — an eviction drops that id's pin).
+    /// the count as it grows).
     evictions: u64,
+    /// Ledger entries dropped to keep it at [`FLEET_PEER_DISPLACED_MAX`]
+    /// since this table was built: each is an id whose pin is gone, so its
+    /// next `health` pins afresh.
+    pins_released: u64,
     /// The latest moment this table has evidence of: the summary's write
     /// stamp on rehydrate, then every observation and flush. [`Self::prune`]
     /// compares its `now` against this, not against the peers, to notice a
@@ -648,8 +820,17 @@ impl PeerTable {
     /// older than the signature requirement, from a `state` nobody signed:
     /// they are forgotten here, so an upgrade never serves what the old
     /// bridge could not vouch for, not even for one window.
+    ///
+    /// The displaced ledger comes back in its order, so a restart between
+    /// two floods neither forgets a displaced pin nor moves it toward the
+    /// drop end. A file that is damaged or hand-edited is held to what the
+    /// bridge itself writes: entries with an invalid id, entries that hold
+    /// neither a pin nor a verified length, and entries for an id that is
+    /// also resident (the resident record wins) are dropped; for an id
+    /// listed twice the later (newer) displacement is kept; and only the
+    /// newest [`FLEET_PEER_DISPLACED_MAX`] survive.
     pub fn from_summary(summary: PeerSummaryFile) -> Self {
-        let peers = summary
+        let peers: BTreeMap<String, PeerRecord> = summary
             .peers
             .into_iter()
             .filter(|p| device_id_ok(&p.device_id))
@@ -663,9 +844,25 @@ impl PeerTable {
                 (p.device_id.clone(), p)
             })
             .collect();
+        let mut seen = BTreeSet::new();
+        let mut newest_first: Vec<DisplacedPin> = summary
+            .displaced
+            .into_iter()
+            .rev()
+            .filter(|d| {
+                device_id_ok(&d.device_id)
+                    && d.holds_trust()
+                    && !peers.contains_key(&d.device_id)
+                    && seen.insert(d.device_id.clone())
+            })
+            .take(FLEET_PEER_DISPLACED_MAX)
+            .collect();
+        newest_first.reverse();
         Self {
             peers,
+            displaced: newest_first.into(),
             evictions: 0,
+            pins_released: 0,
             clock_hint: summary.written_at_epoch_s,
         }
     }
@@ -683,6 +880,41 @@ impl PeerTable {
     /// Ids displaced at the cap so far.
     pub fn evictions(&self) -> u64 {
         self.evictions
+    }
+
+    /// Displaced ids whose pin and verified length the table still holds.
+    pub fn displaced_len(&self) -> usize {
+        self.displaced.len()
+    }
+
+    /// Displaced ids whose pin the ledger has let go so far (the oldest
+    /// displacement, dropped to keep [`FLEET_PEER_DISPLACED_MAX`]): each is
+    /// re-pinned from scratch on its next `health`.
+    pub fn pins_released(&self) -> u64 {
+        self.pins_released
+    }
+
+    /// Take a returning id's ledger entry, if it has one.
+    fn take_displaced(&mut self, device_id: &str) -> Option<DisplacedPin> {
+        let at = self
+            .displaced
+            .iter()
+            .position(|d| d.device_id == device_id)?;
+        self.displaced.remove(at)
+    }
+
+    /// Keep what a displaced record held, at the newest end of the ledger,
+    /// and drop the oldest displacement past the bound.
+    fn remember_displaced(&mut self, rec: &PeerRecord) {
+        let Some(entry) = DisplacedPin::of(rec) else {
+            return;
+        };
+        self.displaced.retain(|d| d.device_id != entry.device_id);
+        self.displaced.push_back(entry);
+        while self.displaced.len() > FLEET_PEER_DISPLACED_MAX {
+            self.displaced.pop_front();
+            self.pins_released += 1;
+        }
     }
 
     /// Forget every id that holds neither a pinned key nor a verified chain
@@ -734,7 +966,11 @@ impl PeerTable {
     /// Returns `true` when the table changed and should be flushed; `false`
     /// for topics this module does not handle or malformed ids. A new id at
     /// the cap displaces one (see [`FLEET_PEER_MAX`]) rather than being
-    /// refused, so a flood cannot lock real Canaries out for good.
+    /// refused, so a flood cannot keep new Canaries out once it ends; the
+    /// displaced id's pin, verified length, `state` mark and conflict go to
+    /// the ledger ([`FLEET_PEER_DISPLACED_MAX`]), and an id the ledger holds
+    /// gets them back here, before the publish that brought it back is
+    /// evaluated.
     pub fn observe(&mut self, topic: &str, payload: &[u8], retained: bool, now: u64) -> bool {
         let Some((device_id, suffix)) = split_topic(topic) else {
             return false;
@@ -748,20 +984,30 @@ impl PeerTable {
         ) {
             return false;
         }
-        if !self.peers.contains_key(device_id)
-            && self.peers.len() >= FLEET_PEER_MAX
-            && self.prune(now) == 0
-        {
-            if let Some(victim) = self.eviction_candidate() {
-                self.peers.remove(&victim);
-                self.evictions += 1;
+        let returning = if self.peers.contains_key(device_id) {
+            None
+        } else {
+            // Taken before the displacement below is recorded, so the bound
+            // can never drop the very id that is coming back.
+            let returning = self.take_displaced(device_id);
+            if self.peers.len() >= FLEET_PEER_MAX && self.prune(now) == 0 {
+                if let Some(victim) = self.eviction_candidate() {
+                    if let Some(displaced) = self.peers.remove(&victim) {
+                        self.evictions += 1;
+                        self.remember_displaced(&displaced);
+                    }
+                }
             }
-        }
+            returning
+        };
         self.clock_hint = self.clock_hint.max(now);
         let rec = self
             .peers
             .entry(device_id.to_string())
-            .or_insert_with(|| PeerRecord::new(device_id, now));
+            .or_insert_with(|| match returning {
+                Some(kept) => kept.restore(now),
+                None => PeerRecord::new(device_id, now),
+            });
         rec.last_seen_epoch_s = rec.last_seen_epoch_s.max(now);
 
         if suffix == "availability" {
@@ -838,6 +1084,7 @@ impl PeerTable {
             schema: FLEET_PEERS_SCHEMA.to_string(),
             written_at_epoch_s: now,
             peers: self.peers.values().cloned().collect(),
+            displaced: self.displaced.iter().cloned().collect(),
         }
     }
 }
@@ -1959,6 +2206,1131 @@ mod tests {
         assert!(name.chars().count() == NAME_MAX_BYTES / 4);
     }
 
+    // ---- Displacement keeps the pin (the displaced ledger) -----------------
+    //
+    // These first tests drive only what the table had before the ledger
+    // (observe, summary, from_summary, fleet_rows, evictions) plus the bound
+    // constant, so they run unchanged against a table without it.
+
+    fn record(table: &PeerTable, id: &str, now: u64) -> Option<PeerRecord> {
+        table
+            .summary(now)
+            .peers
+            .into_iter()
+            .find(|p| p.device_id == id)
+    }
+
+    fn row_named(table: &PeerTable, name: &str, now: u64) -> Option<FleetRow> {
+        fleet_rows(&table.summary(now), now)
+            .into_iter()
+            .find(|r| r.name == name)
+    }
+
+    /// `count` ids proven under keys of their own (`health`, then a signed
+    /// `chain`), heard from `t` on, one a second. Returns the next second.
+    fn flood_proven(table: &mut PeerTable, prefix: &str, count: usize, mut t: u64) -> u64 {
+        for i in 0..count {
+            let key = other_key();
+            let id = format!("{prefix}-{i:04}");
+            table.observe(&format!("securacv/{id}/health"), &health(&key), false, t);
+            table.observe(
+                &format!("securacv/{id}/chain"),
+                &signed_chain(&key, &id, 1),
+                false,
+                t,
+            );
+            t += 1;
+        }
+        t
+    }
+
+    /// porch: pinned under `key`, proven at chain length 5, its words signed
+    /// at (5, 1) — all live, at `now`.
+    fn proven_porch(table: &mut PeerTable, key: &SigningKey, now: u64) {
+        table.observe("securacv/porch/health", &health(key), false, now);
+        table.observe(
+            "securacv/porch/chain",
+            &signed_chain(key, "porch", 5),
+            false,
+            now,
+        );
+        table.observe(
+            "securacv/porch/state",
+            &signed_state(key, "porch", (5, 1), "present", "1", Some(true)),
+            false,
+            now,
+        );
+    }
+
+    /// A flood of [`FLEET_PEER_MAX`] proven ids heard after porch: the table
+    /// fills, and the first newcomer at the cap displaces the least recently
+    /// heard proven id — porch.
+    fn displace_porch(table: &mut PeerTable, prefix: &str, t: u64) -> u64 {
+        let t = flood_proven(table, prefix, FLEET_PEER_MAX, t);
+        assert!(
+            record(table, "porch", t).is_none(),
+            "the flood displaced porch"
+        );
+        t
+    }
+
+    /// Would `attacker`'s `health` for `id` be a first sight right now? Asked
+    /// of a copy rebuilt from the summary — a bridge restart — so the probe
+    /// leaves the table alone and proves the answer survives the file.
+    fn first_sight_open(table: &PeerTable, id: &str, attacker: &SigningKey, t: u64) -> bool {
+        let mut probe = PeerTable::from_summary(table.summary(t));
+        probe.observe(
+            &format!("securacv/{id}/health"),
+            &health(attacker),
+            false,
+            t,
+        );
+        record(&probe, id, t).and_then(|r| r.pinned_key_hex) == Some(pubkey_hex(attacker))
+    }
+
+    /// Displace fresh ids at the cap until `attacker` would get a first
+    /// sight of `id`: one fresh `health` per displacement, plus a signed
+    /// `chain` for each when `proven`. Every step must displace exactly one
+    /// id. A restart (summary round trip) is taken halfway. Returns
+    /// (displacements, publishes, clock).
+    fn churn_until_open(
+        table: &mut PeerTable,
+        id: &str,
+        attacker: &SigningKey,
+        prefix: &str,
+        proven: bool,
+        mut t: u64,
+    ) -> (usize, usize, u64) {
+        let (mut displacements, mut publishes) = (0, 0);
+        while !first_sight_open(table, id, attacker, t) {
+            assert!(
+                displacements <= 2 * FLEET_PEER_DISPLACED_MAX,
+                "{id}'s pin outlived {displacements} displacements"
+            );
+            if displacements == FLEET_PEER_DISPLACED_MAX / 2 {
+                *table = PeerTable::from_summary(table.summary(t));
+            }
+            let before = table.evictions();
+            let key = other_key();
+            let churn = format!("{prefix}-{displacements:04}");
+            table.observe(&format!("securacv/{churn}/health"), &health(&key), false, t);
+            publishes += 1;
+            assert_eq!(table.evictions(), before + 1, "each step displaces one id");
+            if proven {
+                table.observe(
+                    &format!("securacv/{churn}/chain"),
+                    &signed_chain(&key, &churn, 1),
+                    false,
+                    t,
+                );
+                publishes += 1;
+            }
+            displacements += 1;
+            t += 1;
+        }
+        (displacements, publishes, t)
+    }
+
+    #[test]
+    fn a_flood_never_hands_a_displaced_pin_to_the_next_health() {
+        let real = signer();
+        let attacker = other_key();
+        let mut table = PeerTable::default();
+        proven_porch(&mut table, &real, NOW);
+        let t = displace_porch(&mut table, "fake", NOW + 10);
+        assert_eq!(table.evictions(), 1, "porch was the one displaced");
+
+        // The attacker's health for porch is an announcement, not a first
+        // sight: the pin, the verified length and the state mark came back.
+        table.observe("securacv/porch/health", &health(&attacker), false, t);
+        let rec = record(&table, "porch", t).expect("porch re-admitted");
+        assert_eq!(
+            rec.pinned_key_hex.as_deref(),
+            Some(pubkey_hex(&real).as_str()),
+            "the flood handed porch's pin to the next health"
+        );
+        assert_eq!(rec.last_verified_length, Some(5));
+        assert_eq!(
+            rec.last_verified_state,
+            Some(StateMark {
+                chain_length: 5,
+                seq: 1
+            })
+        );
+        assert!(!rec.pin_conflict, "an announcement alone sets no conflict");
+        // Its signed words and a name: nothing it signed reads under porch.
+        table.observe(
+            "securacv/porch/state",
+            &signed_state(&attacker, "porch", (1, 1), "clear", "0", Some(false)),
+            false,
+            t + 1,
+        );
+        table.observe(
+            "securacv/porch/meta",
+            br#"{"name":"Front porch"}"#,
+            false,
+            t + 2,
+        );
+        let row = row_named(&table, "Front porch", t + 2).expect("porch's row");
+        assert_eq!(
+            row,
+            FleetRow {
+                name: "Front porch".to_string(),
+                online: false,
+                chain: None,
+                // `device_type` rides unsigned beside the words, like a
+                // `meta` name: an announcement anyone can make.
+                product: Some("canary-sense".to_string()),
+                presence: None,
+                occupants: None,
+                breathing: None,
+            },
+            "the attacker's words read under the real id"
+        );
+        // A replay of porch's own captured words is still a replay: the mark
+        // came back with the pin.
+        table.observe(
+            "securacv/porch/state",
+            &signed_state(&real, "porch", (5, 1), "present", "1", Some(true)),
+            false,
+            t + 3,
+        );
+        let rec = record(&table, "porch", t + 3).expect("porch");
+        assert!(
+            rec.presence.is_none() && rec.wellbeing_epoch_s.is_none(),
+            "a replayed state set words after displacement: {rec:?}"
+        );
+        // The real Canary speaks again: its key is the pin, its chain
+        // advances, its words are new — ok, online and its own.
+        table.observe("securacv/porch/health", &health(&real), false, t + 30);
+        table.observe(
+            "securacv/porch/chain",
+            &signed_chain(&real, "porch", 6),
+            false,
+            t + 31,
+        );
+        table.observe(
+            "securacv/porch/state",
+            &signed_state(&real, "porch", (6, 1), "present", "2+", Some(true)),
+            false,
+            t + 32,
+        );
+        let row = row_named(&table, "Front porch", t + 32).expect("porch's row");
+        assert!(row.online, "{row:?}");
+        assert_eq!(row.chain.as_deref(), Some("ok"));
+        assert_eq!(row.presence.as_deref(), Some("present"));
+        assert_eq!(row.occupants.as_deref(), Some("2+"));
+        assert!(!record(&table, "porch", t + 32).expect("porch").pin_conflict);
+    }
+
+    #[test]
+    fn eviction_cycles_never_replay_one_capture_into_standing_online() {
+        // porch sealed once (length 5) and was powered off for good; a peer
+        // on the broker holds a capture of its health and that chain.
+        let real = signer();
+        let captured_health = health(&real);
+        let captured_chain = signed_chain(&real, "porch", 5);
+        let mut table = PeerTable::default();
+        table.observe("securacv/porch/health", &captured_health, false, NOW);
+        table.observe("securacv/porch/chain", &captured_chain, false, NOW);
+        let mut t = displace_porch(&mut table, "fake", NOW + 300);
+        let mut newcomer = 0u32;
+        let mut windows_online = 0;
+        for cycle in 0..20 {
+            // Every resident heard after porch, then one proven newcomer at
+            // the cap: porch is displaced again (about 67 publishes a cycle).
+            let residents: Vec<String> = table
+                .summary(t)
+                .peers
+                .iter()
+                .map(|p| p.device_id.clone())
+                .filter(|id| id != "porch")
+                .collect();
+            for id in residents {
+                table.observe(&format!("securacv/{id}/status"), b"{}", false, t);
+            }
+            if record(&table, "porch", t).is_some() {
+                t += 1;
+                let key = other_key();
+                let id = format!("new-{newcomer}");
+                newcomer += 1;
+                table.observe(&format!("securacv/{id}/health"), &health(&key), false, t);
+                table.observe(
+                    &format!("securacv/{id}/chain"),
+                    &signed_chain(&key, &id, 1),
+                    false,
+                    t,
+                );
+            }
+            assert!(
+                record(&table, "porch", t).is_none(),
+                "cycle {cycle}: porch was displaced"
+            );
+            // The SAME capture, replayed into the re-admission.
+            table.observe("securacv/porch/health", &captured_health, false, t);
+            table.observe("securacv/porch/chain", &captured_chain, false, t);
+            let row = row_named(&table, "porch", t + 170).expect("porch's row");
+            if row.online {
+                windows_online += 1;
+            }
+            t += 175;
+        }
+        assert_eq!(
+            windows_online, 0,
+            "one capture held a powered-off Canary online in {windows_online} of 20 \
+             consecutive windows by cycling it through displacement"
+        );
+        let rec = record(&table, "porch", t).expect("porch");
+        assert_eq!(rec.last_verified_length, Some(5));
+        assert_eq!(
+            rec.pinned_key_hex.as_deref(),
+            Some(pubkey_hex(&real).as_str())
+        );
+    }
+
+    #[test]
+    fn a_displaced_pin_is_let_go_only_after_the_stated_number_of_displacements() {
+        // The number FLEET_PEER_DISPLACED_MAX's doc states, measured: once
+        // the flood has displaced porch and every resident holds a pin, each
+        // fresh `health` displaces one id, and it takes exactly that many —
+        // across a restart taken halfway — before a `health` under another
+        // key pins afresh. Churn ids that are proven (and so displaced with a
+        // verified length, not just a pin) push porch out no faster.
+        for proven in [false, true] {
+            let real = signer();
+            let attacker = other_key();
+            let mut table = PeerTable::default();
+            proven_porch(&mut table, &real, NOW);
+            // The cheapest flood that displaces a proven porch from a table
+            // that holds nothing else: proven ids heard after it until the
+            // table is full of them, then one more `health`.
+            let (mut t, mut flood_publishes, mut i) = (NOW + 10, 0, 0);
+            loop {
+                let key = other_key();
+                let id = format!("fake-{i:04}");
+                table.observe(&format!("securacv/{id}/health"), &health(&key), false, t);
+                flood_publishes += 1;
+                if record(&table, "porch", t).is_none() {
+                    break;
+                }
+                table.observe(
+                    &format!("securacv/{id}/chain"),
+                    &signed_chain(&key, &id, 1),
+                    false,
+                    t,
+                );
+                flood_publishes += 1;
+                i += 1;
+                t += 1;
+            }
+            assert_eq!(flood_publishes, 2 * (FLEET_PEER_MAX - 1) + 1);
+            assert!(
+                !first_sight_open(&table, "porch", &attacker, t),
+                "proven={proven}: the flood alone re-opened porch's first sight"
+            );
+            let (displacements, publishes, t) =
+                churn_until_open(&mut table, "porch", &attacker, "churn", proven, t);
+            assert_eq!(
+                displacements, FLEET_PEER_DISPLACED_MAX,
+                "proven={proven}: porch's pin was let go after {displacements} further \
+                 displacements, not the {FLEET_PEER_DISPLACED_MAX} the docs state"
+            );
+            assert_eq!(
+                publishes,
+                FLEET_PEER_DISPLACED_MAX * if proven { 2 } else { 1 }
+            );
+            // What the bound does not stop, pinned so the docs stay honest:
+            // once the pin is let go, porch's old capture is a first sight
+            // again, and reads online for a window.
+            let mut replay = PeerTable::from_summary(table.summary(t));
+            replay.observe("securacv/porch/health", &health(&real), false, t);
+            replay.observe(
+                "securacv/porch/chain",
+                &signed_chain(&real, "porch", 5),
+                false,
+                t,
+            );
+            assert!(row_named(&replay, "porch", t + 1).expect("row").online);
+        }
+    }
+
+    #[test]
+    fn a_canary_heard_again_starts_its_count_over() {
+        let real = signer();
+        let attacker = other_key();
+        let mut table = PeerTable::default();
+        proven_porch(&mut table, &real, NOW);
+        let mut t = displace_porch(&mut table, "fake", NOW + 10);
+        // One displacement short of letting porch go...
+        for i in 0..FLEET_PEER_DISPLACED_MAX - 1 {
+            table.observe(
+                &format!("securacv/churn-{i:04}/health"),
+                &health(&other_key()),
+                false,
+                t,
+            );
+            t += 1;
+        }
+        assert!(!first_sight_open(&table, "porch", &attacker, t));
+        // ...the real Canary is heard: it is resident again, under its pin.
+        table.observe("securacv/porch/health", &health(&real), false, t);
+        let rec = record(&table, "porch", t).expect("porch is back");
+        assert_eq!(
+            rec.pinned_key_hex.as_deref(),
+            Some(pubkey_hex(&real).as_str())
+        );
+        // A second flood displaces it again; the count starts from there.
+        let t = displace_porch(&mut table, "again", t + 1);
+        let (displacements, _, _) =
+            churn_until_open(&mut table, "porch", &attacker, "more", false, t);
+        assert_eq!(
+            displacements, FLEET_PEER_DISPLACED_MAX,
+            "porch's return did not move it back to the newest end of the ledger"
+        );
+    }
+
+    #[test]
+    fn the_fleet_moving_during_the_churn_saves_the_peer_only_the_entries_it_adds() {
+        // The bound counts ids displaced after porch and not heard since,
+        // whoever displaced them, so the fleet's own traffic mixed into the
+        // churn is measured here against the docs' account of it: a Canary
+        // displaced BEFORE porch coming back displaces one more id (an
+        // entry the peer did not pay for); a new Canary joining at the cap
+        // does the same; that new Canary, displaced by the churn after
+        // porch and then coming back, takes its own entry with it as its
+        // return adds one (no change). A restart sits between the flood and
+        // the churn. The peer's own `health` publishes come to the stated
+        // number less exactly the two entries the fleet added.
+        let real = signer();
+        let attacker = other_key();
+        let early_key = other_key();
+        let newbie_key = other_key();
+        let mut table = PeerTable::default();
+        // early: a real Canary that has announced its key and sealed nothing
+        // yet (pinned, never proven), so a flood displaces it before porch.
+        table.observe("securacv/early/health", &health(&early_key), false, NOW);
+        proven_porch(&mut table, &real, NOW + 1);
+        let (mut t, mut i, mut early_gone_first) = (NOW + 10, 0, false);
+        loop {
+            let key = other_key();
+            let id = format!("fake-{i:04}");
+            table.observe(&format!("securacv/{id}/health"), &health(&key), false, t);
+            if record(&table, "porch", t).is_none() {
+                break;
+            }
+            early_gone_first |= record(&table, "early", t).is_none();
+            table.observe(
+                &format!("securacv/{id}/chain"),
+                &signed_chain(&key, &id, 1),
+                false,
+                t,
+            );
+            i += 1;
+            t += 1;
+        }
+        assert!(early_gone_first, "early was displaced before porch");
+        let mut table = PeerTable::from_summary(table.summary(t));
+        assert!(
+            !first_sight_open(&table, "porch", &attacker, t),
+            "the flood alone re-opened porch's first sight"
+        );
+        let displaced_at_porch = table.evictions();
+        let (mut step, mut peer_publishes) = (0usize, 0usize);
+        while !first_sight_open(&table, "porch", &attacker, t) {
+            assert!(
+                step <= 2 * FLEET_PEER_DISPLACED_MAX,
+                "porch's pin outlived {step} churn steps"
+            );
+            let before = table.evictions();
+            match step {
+                40 => {
+                    table.observe("securacv/early/health", &health(&early_key), false, t);
+                    assert_eq!(
+                        record(&table, "early", t).and_then(|r| r.pinned_key_hex),
+                        Some(pubkey_hex(&early_key)),
+                        "early came back under its own pin"
+                    );
+                }
+                80 | 120 => {
+                    table.observe("securacv/newbie/health", &health(&newbie_key), false, t);
+                    assert_eq!(
+                        record(&table, "newbie", t).and_then(|r| r.pinned_key_hex),
+                        Some(pubkey_hex(&newbie_key))
+                    );
+                }
+                _ => {}
+            }
+            let fleet_moved = table.evictions() - before;
+            assert_eq!(
+                fleet_moved,
+                u64::from(matches!(step, 40 | 80 | 120)),
+                "step {step}: each fleet event displaces one id"
+            );
+            table.observe(
+                &format!("securacv/churn-{step:04}/health"),
+                &health(&other_key()),
+                false,
+                t,
+            );
+            peer_publishes += 1;
+            step += 1;
+            t += 1;
+        }
+        assert_eq!(
+            peer_publishes,
+            FLEET_PEER_DISPLACED_MAX - 2,
+            "the peer paid {peer_publishes} publishes; the docs say at most \
+             {FLEET_PEER_DISPLACED_MAX}, less one per entry the fleet added (two)"
+        );
+        // Every displacement after porch is counted once, and the one id
+        // that came back from after porch (newbie, at step 120) is the only
+        // one the count does not hold.
+        assert_eq!(
+            table.evictions() - displaced_at_porch,
+            (FLEET_PEER_DISPLACED_MAX + 1) as u64
+        );
+    }
+
+    /// The broker as far as the roll-call sees it: a retained publish
+    /// replaces its topic's copy (a zero-length one clears it), every
+    /// publish reaches the bridge's standing subscription live (retain flag
+    /// clear), and a new subscription gets every retained copy again,
+    /// filter by filter in the order the bridge subscribes them
+    /// ([`FLEET_PEER_TOPIC_FILTERS`], one SUBSCRIBE each on every ConnAck).
+    #[derive(Default)]
+    struct RetainedBroker {
+        retained: BTreeMap<String, Vec<u8>>,
+    }
+
+    impl RetainedBroker {
+        fn publish(
+            &mut self,
+            table: &mut PeerTable,
+            topic: &str,
+            payload: &[u8],
+            retain: bool,
+            t: u64,
+        ) {
+            if retain && payload.is_empty() {
+                self.retained.remove(topic);
+            } else if retain {
+                self.retained.insert(topic.to_string(), payload.to_vec());
+            }
+            table.observe(topic, payload, false, t);
+        }
+
+        /// A clean-start re-subscribe. Within one filter the order is the
+        /// broker's own, so `id` is delivered either before or after every
+        /// other id there.
+        fn resubscribe(&self, table: &mut PeerTable, id: &str, id_first: bool, t: u64) {
+            for filter in FLEET_PEER_TOPIC_FILTERS {
+                let suffix = filter.rsplit('/').next().unwrap_or_default();
+                let mut phase: Vec<(&String, &Vec<u8>)> = self
+                    .retained
+                    .iter()
+                    .filter(|(topic, _)| split_topic(topic).is_some_and(|(_, s)| s == suffix))
+                    .collect();
+                phase.sort_by_key(|(topic, _)| {
+                    split_topic(topic).is_some_and(|(of, _)| of == id) != id_first
+                });
+                for (topic, payload) in phase {
+                    table.observe(topic, payload, true, t);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_retained_churn_replays_on_resubscribe_once_the_canarys_own_copies_are_cleared() {
+        // What the bound does not stop, measured so the docs stay honest. A
+        // churn published retained is handed again to every new
+        // subscription, and the bridge subscribes with a clean start and
+        // re-subscribes on every reconnect, so a restart, a dropped link or
+        // another client taking its session replays it with no new publish.
+        // The same replay carries the displaced Canary's own retained
+        // copies: its will (on `availability` or `status`, both subscribed
+        // before `health`) brings it back from the ledger before the churn
+        // lands, and its retained `health` either does the same or, after
+        // the churn, pins its real key afresh. So the replay re-opens first
+        // sight only once the peer has cleared those copies — one
+        // zero-length retained publish each, made before the flood (a clear
+        // heard while the Canary is displaced is itself a return) — and
+        // then whichever order the broker delivers one filter's copies in.
+        let sense_will =
+            br#"{"device_id":"porch","device_type":"canary-sense","status":"offline","ts_ms":0}"#;
+        // A canary-sense keeps its will on `status` and its health, chain
+        // and state retained (every product under `firmware/projects/`
+        // that talks to the broker keeps its will and health so); the
+        // flagship keeps only its will, on `availability`, retained.
+        for keeps_health in [true, false] {
+            let (will_topic, will): (&str, &[u8]) = if keeps_health {
+                ("securacv/porch/status", sense_will)
+            } else {
+                ("securacv/porch/availability", b"offline")
+            };
+            for (clear_will, clear_health) in
+                [(false, false), (true, false), (false, true), (true, true)]
+            {
+                if clear_health && !keeps_health {
+                    continue; // no retained `health` of porch's to clear
+                }
+                for porch_first in [true, false] {
+                    let case = format!(
+                        "keeps_health={keeps_health} clear_will={clear_will} \
+                         clear_health={clear_health} porch_first={porch_first}"
+                    );
+                    let real = signer();
+                    let attacker = other_key();
+                    let mut broker = RetainedBroker::default();
+                    let mut table = PeerTable::default();
+                    // porch proven as `proven_porch` does, under its own
+                    // retain flags; then it goes quiet and the broker
+                    // publishes its will.
+                    let porch = [
+                        ("securacv/porch/health", health(&real)),
+                        ("securacv/porch/chain", signed_chain(&real, "porch", 5)),
+                        (
+                            "securacv/porch/state",
+                            signed_state(&real, "porch", (5, 1), "present", "1", Some(true)),
+                        ),
+                    ];
+                    for (topic, body) in &porch {
+                        broker.publish(&mut table, topic, body, keeps_health, NOW);
+                    }
+                    broker.publish(&mut table, will_topic, will, true, NOW + 1);
+                    // The peer pays once: its clears, then one retained
+                    // `health` per fresh id, the stated number of them.
+                    // Unproven, they displace one another, never porch.
+                    let mut clears = 0;
+                    for (clear, topic) in [
+                        (clear_will, will_topic),
+                        (clear_health, "securacv/porch/health"),
+                    ] {
+                        if clear {
+                            broker.publish(&mut table, topic, b"", true, NOW + 2);
+                            clears += 1;
+                        }
+                    }
+                    let mut t = NOW + 10;
+                    for i in 0..FLEET_PEER_DISPLACED_MAX {
+                        let topic = format!("securacv/seed-{i:04}/health");
+                        broker.publish(&mut table, &topic, &health(&other_key()), true, t);
+                        t += 1;
+                    }
+                    assert!(record(&table, "porch", t).is_some(), "{case}");
+                    let t = displace_porch(&mut table, "fake", t);
+                    assert!(
+                        !first_sight_open(&table, "porch", &attacker, t),
+                        "{case}: the flood alone re-opened porch's first sight"
+                    );
+                    // The bridge restarts (or its session is taken) and
+                    // subscribes again: nothing new is published.
+                    let mut table = PeerTable::from_summary(table.summary(t));
+                    broker.resubscribe(&mut table, "porch", porch_first, t);
+                    let cleared = clear_will && (clear_health || !keeps_health);
+                    assert_eq!(
+                        first_sight_open(&table, "porch", &attacker, t),
+                        cleared,
+                        "{case}: the replay re-opened porch's first sight only if \
+                         its own retained copies were cleared"
+                    );
+                    if cleared {
+                        assert_eq!(clears, 1 + usize::from(keeps_health), "{case}");
+                    } else {
+                        let summary = table.summary(t);
+                        let held = summary
+                            .peers
+                            .iter()
+                            .find(|p| p.device_id == "porch")
+                            .and_then(|p| p.pinned_key_hex.clone())
+                            .or_else(|| {
+                                summary
+                                    .displaced
+                                    .iter()
+                                    .find(|d| d.device_id == "porch")
+                                    .and_then(|d| d.pinned_key_hex.clone())
+                            });
+                        assert_eq!(held, Some(pubkey_hex(&real)), "{case}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_returning_id_is_never_dropped_by_its_own_return() {
+        // porch is the oldest entry of a full ledger when it comes back at
+        // the cap: its return displaces one id, and that must not push porch
+        // itself out of the ledger on the way in.
+        let real = signer();
+        let attacker = other_key();
+        let mut table = PeerTable::default();
+        proven_porch(&mut table, &real, NOW);
+        let mut t = displace_porch(&mut table, "fake", NOW + 10);
+        for i in 0..FLEET_PEER_DISPLACED_MAX - 1 {
+            table.observe(
+                &format!("securacv/churn-{i:04}/health"),
+                &health(&other_key()),
+                false,
+                t,
+            );
+            t += 1;
+        }
+        let before = table.evictions();
+        table.observe("securacv/porch/health", &health(&attacker), false, t);
+        assert_eq!(
+            table.evictions(),
+            before + 1,
+            "porch's return displaced one id"
+        );
+        let rec = record(&table, "porch", t).expect("porch");
+        assert_eq!(
+            rec.pinned_key_hex.as_deref(),
+            Some(pubkey_hex(&real).as_str()),
+            "porch's own return let its pin go"
+        );
+    }
+
+    #[test]
+    fn calibration_a_signed_second_key_degrades_with_no_flood_and_displacement_keeps_it() {
+        // The documented two-publish sticky `degraded` (a second key
+        // announced, then signing) needs no flood, and is not new.
+        let real = signer();
+        let attacker = other_key();
+        let mut table = PeerTable::default();
+        table.observe("securacv/porch/health", &health(&real), false, NOW);
+        table.observe(
+            "securacv/porch/chain",
+            &signed_chain(&real, "porch", 5),
+            false,
+            NOW,
+        );
+        table.observe("securacv/porch/health", &health(&attacker), false, NOW + 1);
+        table.observe(
+            "securacv/porch/chain",
+            &signed_chain(&attacker, "porch", 1),
+            false,
+            NOW + 2,
+        );
+        assert!(
+            record(&table, "porch", NOW + 2)
+                .expect("porch")
+                .pin_conflict
+        );
+        let row = row_named(&table, "porch", NOW + 2).expect("row");
+        assert!(!row.online && row.chain.as_deref() == Some("degraded"));
+        // Displacement and a restart do not clear it: the conflict is
+        // sticky until the operator deletes the file, as documented.
+        let t = displace_porch(&mut table, "fake", NOW + 10);
+        let mut table = PeerTable::from_summary(table.summary(t));
+        table.observe("securacv/porch/health", &health(&real), false, t + 1);
+        table.observe(
+            "securacv/porch/chain",
+            &signed_chain(&real, "porch", 6),
+            false,
+            t + 2,
+        );
+        let rec = record(&table, "porch", t + 2).expect("porch");
+        assert!(rec.pin_conflict, "displacement cleared a sticky conflict");
+        let row = row_named(&table, "porch", t + 2).expect("row");
+        assert!(!row.online, "{row:?}");
+        assert_eq!(row.chain.as_deref(), Some("degraded"));
+    }
+
+    #[test]
+    fn calibration_after_a_benign_flood_the_real_canary_reads_ok_and_a_replay_does_not() {
+        let real = signer();
+        let mut table = PeerTable::default();
+        proven_porch(&mut table, &real, NOW);
+        let t = displace_porch(&mut table, "fake", NOW + 10);
+        // Nobody races the return: the real Canary's next health and chain.
+        let mut back = PeerTable::from_summary(table.summary(t));
+        back.observe("securacv/porch/health", &health(&real), false, t + 60);
+        back.observe(
+            "securacv/porch/chain",
+            &signed_chain(&real, "porch", 6),
+            false,
+            t + 61,
+        );
+        let row = row_named(&back, "porch", t + 62).expect("row");
+        assert!(row.online && row.chain.as_deref() == Some("ok"), "{row:?}");
+        // The same moment, but the publish is a replay of the length porch
+        // had already proven: verified, and no proof of presence.
+        table.observe("securacv/porch/health", &health(&real), false, t + 60);
+        table.observe(
+            "securacv/porch/chain",
+            &signed_chain(&real, "porch", 5),
+            false,
+            t + 61,
+        );
+        let row = row_named(&table, "porch", t + 62).expect("row");
+        assert!(
+            !row.online,
+            "a replay after displacement read online: {row:?}"
+        );
+        assert_eq!(row.chain.as_deref(), Some("ok"));
+    }
+
+    // These read the ledger itself.
+
+    #[test]
+    fn the_ledger_rides_in_the_file_through_a_restart_and_an_older_file_loads() -> Result<()> {
+        let real = signer();
+        let studio_key = other_key();
+        let attacker = other_key();
+        let mut table = PeerTable::default();
+        proven_porch(&mut table, &real, NOW);
+        // studio holds the documented sticky conflict when it is displaced.
+        table.observe(
+            "securacv/studio/health",
+            &health(&studio_key),
+            false,
+            NOW + 1,
+        );
+        table.observe(
+            "securacv/studio/chain",
+            &signed_chain(&studio_key, "studio", 2),
+            false,
+            NOW + 1,
+        );
+        table.observe("securacv/studio/health", &health(&attacker), false, NOW + 1);
+        table.observe(
+            "securacv/studio/chain",
+            &signed_chain(&attacker, "studio", 1),
+            false,
+            NOW + 1,
+        );
+        let t = flood_proven(&mut table, "fake", FLEET_PEER_MAX, NOW + 10);
+        assert_eq!(table.evictions(), 2);
+        let summary = table.summary(t);
+        assert_eq!(
+            summary.displaced,
+            vec![
+                DisplacedPin {
+                    device_id: "porch".to_string(),
+                    pinned_key_hex: Some(pubkey_hex(&real)),
+                    last_verified_length: Some(5),
+                    last_verified_state: Some(StateMark {
+                        chain_length: 5,
+                        seq: 1
+                    }),
+                    pin_conflict: false,
+                },
+                DisplacedPin {
+                    device_id: "studio".to_string(),
+                    pinned_key_hex: Some(pubkey_hex(&studio_key)),
+                    last_verified_length: Some(2),
+                    last_verified_state: None,
+                    pin_conflict: true,
+                },
+            ],
+            "oldest displacement first, the four facts and nothing else"
+        );
+        // Through the file and a restart, in order.
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("fleet_peers.json");
+        summary.write_atomic(&path)?;
+        let read = PeerSummaryFile::read(&path)?.expect("written");
+        assert_eq!(read.displaced, summary.displaced);
+        let mut table = PeerTable::from_summary(read);
+        assert_eq!(table.displaced_len(), 2);
+        // studio comes back on an unsigned status: its conflict reads
+        // degraded at once, as it did before, survives the next restart, and
+        // its real key signing again does not clear it.
+        table.observe("securacv/studio/status", b"{}", false, t + 1);
+        let row = row_named(&table, "studio", t + 1).expect("row");
+        assert_eq!(row.chain.as_deref(), Some("degraded"));
+        assert!(!row.online);
+        let mut table = PeerTable::from_summary(table.summary(t + 2));
+        table.observe(
+            "securacv/studio/chain",
+            &signed_chain(&studio_key, "studio", 3),
+            false,
+            t + 3,
+        );
+        assert!(
+            record(&table, "studio", t + 3)
+                .expect("studio")
+                .pin_conflict
+        );
+        let held: Vec<&str> = table
+            .displaced
+            .iter()
+            .map(|d| d.device_id.as_str())
+            .collect();
+        assert!(held.contains(&"porch"), "{held:?}");
+        assert!(
+            !held.contains(&"studio"),
+            "a returning id is never both resident and held"
+        );
+
+        // A file without the field — every file a bridge without the ledger
+        // wrote — loads as an empty ledger, its peers untouched.
+        let older = serde_json::json!({
+            "schema": FLEET_PEERS_SCHEMA,
+            "written_at_epoch_s": NOW,
+            "peers": [{
+                "device_id": "porch",
+                "last_seen_epoch_s": NOW,
+                "last_verified_length": 5,
+                "chain": "ok",
+                "pinned_key_hex": pubkey_hex(&real),
+                "pin_conflict": false
+            }]
+        });
+        let older = PeerSummaryFile::from_json(older.to_string().as_bytes())?;
+        assert!(older.displaced.is_empty());
+        let reopened = PeerTable::from_summary(older);
+        assert_eq!((reopened.len(), reopened.displaced_len()), (1, 0));
+        Ok(())
+    }
+
+    /// The bytes the bridge before the ledger wrote for one proven peer
+    /// (serde_json's pretty printer over that struct, verbatim): the ledger
+    /// is absent while empty, so the writer still produces exactly these.
+    const PRE_LEDGER_FILE: &str = r#"{
+  "schema": "securacv/fleet_peers/v1",
+  "written_at_epoch_s": 1700000010,
+  "peers": [
+    {
+      "device_id": "porch",
+      "device_type": "canary-sense",
+      "last_seen_epoch_s": 1700000005,
+      "last_signed_epoch_s": 1700000005,
+      "last_verified_length": 5,
+      "chain": "ok",
+      "pinned_key_hex": "2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12",
+      "pin_conflict": false,
+      "presence": "present",
+      "occupants": "1",
+      "breathing": true,
+      "wellbeing_epoch_s": 1700000005,
+      "last_verified_state": {
+        "chain_length": 5,
+        "seq": 1
+      }
+    }
+  ]
+}
+"#;
+
+    #[test]
+    fn a_table_that_displaced_no_pin_writes_the_pre_ledger_bytes() -> Result<()> {
+        let summary = PeerSummaryFile::from_json(PRE_LEDGER_FILE.as_bytes())?;
+        let table = PeerTable::from_summary(summary);
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("fleet_peers.json");
+        table.summary(NOW + 10).write_atomic(&path)?;
+        assert_eq!(std::fs::read_to_string(&path)?, PRE_LEDGER_FILE);
+        // Ids displaced while holding nothing (heard only on `status`) are
+        // not remembered either, so a ghost flood leaves the same shape.
+        let mut table =
+            PeerTable::from_summary(PeerSummaryFile::from_json(PRE_LEDGER_FILE.as_bytes())?);
+        for i in 0..(2 * FLEET_PEER_MAX) {
+            table.observe(
+                &format!("securacv/ghost-{i:04}/status"),
+                b"{}",
+                false,
+                NOW + 20 + i as u64,
+            );
+        }
+        assert!(table.evictions() > 0);
+        assert_eq!(table.displaced_len(), 0);
+        assert!(!serde_json::to_string(&table.summary(NOW + 500))?.contains("displaced"));
+        Ok(())
+    }
+
+    #[test]
+    fn a_reader_ignores_fields_it_does_not_know() -> Result<()> {
+        // The downgrade path: a bridge or kernel without the ledger read a
+        // file with one because none of these structs denies unknown fields.
+        // Held here for whatever field comes next, at every level the file
+        // has — and an entry this reader cannot use is dropped, not trusted.
+        let plain = PeerSummaryFile::from_json(PRE_LEDGER_FILE.as_bytes())?;
+        let mut doc: serde_json::Value = serde_json::from_str(PRE_LEDGER_FILE)?;
+        doc["a_later_field"] = serde_json::json!({ "anything": [1, 2] });
+        doc["peers"][0]["a_later_field"] = serde_json::json!(true);
+        doc["peers"][0]["last_verified_state"]["a_later_field"] = serde_json::json!(0);
+        doc["displaced"] = serde_json::json!([{
+            "device_id": "studio",
+            "pinned_key_hex": hex::encode([0x5au8; 32]),
+            "last_verified_length": 2,
+            "a_later_field": "x"
+        }]);
+        let newer = PeerSummaryFile::from_json(doc.to_string().as_bytes())?;
+        assert_eq!(newer.peers, plain.peers);
+        assert_eq!(newer.displaced.len(), 1);
+        assert_eq!(newer.displaced[0].last_verified_length, Some(2));
+        let table = PeerTable::from_summary(newer);
+        assert_eq!((table.len(), table.displaced_len()), (1, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn a_damaged_ledger_loads_bounded_and_a_resident_record_wins() {
+        let pin = |b: u8| hex::encode([b; 32]);
+        let entry = |id: &str, key: Option<String>, length: Option<u64>| DisplacedPin {
+            device_id: id.to_string(),
+            pinned_key_hex: key,
+            last_verified_length: length,
+            last_verified_state: None,
+            pin_conflict: false,
+        };
+        let mut resident = PeerRecord::new("porch", NOW);
+        resident.pinned_key_hex = Some(pin(0xa1));
+        let mut displaced: Vec<DisplacedPin> = (0..(2 * FLEET_PEER_DISPLACED_MAX))
+            .map(|i| entry(&format!("x{i:04}"), Some(pin(0x11)), Some(1)))
+            .collect();
+        // At the newest end, where the bound alone would keep them: each is
+        // dropped by its own rule, and none takes a slot from the bound.
+        displaced.push(entry("twice", Some(pin(0xd4)), Some(1)));
+        displaced.push(entry("porch", Some(pin(0xb2)), Some(9)));
+        displaced.push(entry("..", Some(pin(0xc3)), None));
+        displaced.push(entry("ghost", None, None));
+        displaced.push(entry("twice", Some(pin(0xe5)), Some(2)));
+        let table = PeerTable::from_summary(PeerSummaryFile {
+            schema: FLEET_PEERS_SCHEMA.to_string(),
+            written_at_epoch_s: NOW,
+            peers: vec![resident],
+            displaced,
+        });
+        assert_eq!(table.displaced_len(), FLEET_PEER_DISPLACED_MAX);
+        let kept: Vec<&str> = table
+            .displaced
+            .iter()
+            .map(|d| d.device_id.as_str())
+            .collect();
+        assert_eq!(kept.last(), Some(&"twice"));
+        assert_eq!(
+            table.displaced.back().and_then(|d| d.last_verified_length),
+            Some(2)
+        );
+        assert_eq!(
+            kept.first(),
+            Some(&format!("x{:04}", FLEET_PEER_DISPLACED_MAX + 1).as_str()),
+            "the newest entries are kept, oldest first"
+        );
+        assert_eq!(kept.iter().filter(|id| **id == "twice").count(), 1);
+        for gone in ["porch", "..", "ghost"] {
+            assert!(!kept.contains(&gone), "{gone} survived the load");
+        }
+        let porch = record(&table, "porch", NOW).expect("porch");
+        assert_eq!(
+            porch.pinned_key_hex,
+            Some(pin(0xa1)),
+            "the resident record wins"
+        );
+    }
+
+    #[test]
+    fn a_sustained_flood_keeps_the_table_the_ledger_and_the_file_bounded() -> Result<()> {
+        // Every flood id is as wide as the alphabet allows, proven, and
+        // carries signed words, the widest name and the widest product.
+        let widest_name = format!("{}{}", "\"".repeat(32), "\u{1F600}".repeat(16));
+        assert_eq!(
+            clean_name(&widest_name).as_deref(),
+            Some(widest_name.as_str())
+        );
+        let meta = serde_json::json!({ "name": widest_name }).to_string();
+        let status = serde_json::json!({ "device_type": "p".repeat(32) }).to_string();
+        let extra = 50;
+        let total = FLEET_PEER_MAX + FLEET_PEER_DISPLACED_MAX + extra;
+        let mut table = PeerTable::default();
+        for i in 0..total {
+            let key = other_key();
+            let id = format!("x{i:047}");
+            let t = NOW + i as u64;
+            table.observe(&format!("securacv/{id}/health"), &health(&key), false, t);
+            table.observe(
+                &format!("securacv/{id}/chain"),
+                &signed_chain(&key, &id, u64::MAX),
+                false,
+                t,
+            );
+            table.observe(
+                &format!("securacv/{id}/state"),
+                &signed_state(&key, &id, (u64::MAX, u64::MAX), "present", "2+", Some(true)),
+                false,
+                t,
+            );
+            table.observe(&format!("securacv/{id}/meta"), meta.as_bytes(), false, t);
+            table.observe(
+                &format!("securacv/{id}/status"),
+                status.as_bytes(),
+                false,
+                t,
+            );
+        }
+        assert_eq!(table.len(), FLEET_PEER_MAX);
+        assert_eq!(table.displaced_len(), FLEET_PEER_DISPLACED_MAX);
+        assert_eq!(table.evictions(), (total - FLEET_PEER_MAX) as u64);
+        assert_eq!(table.pins_released(), extra as u64);
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("fleet_peers.json");
+        let now = NOW + total as u64;
+        table.summary(now).write_atomic(&path)?;
+        let flooded = std::fs::metadata(&path)?.len();
+        // The same file with every remaining field at its widest too.
+        let mut widest = table.summary(now);
+        for peer in &mut widest.peers {
+            peer.offline_epoch_s = Some(u64::MAX);
+            peer.last_seen_epoch_s = u64::MAX;
+            peer.last_signed_epoch_s = Some(u64::MAX);
+            peer.wellbeing_epoch_s = Some(u64::MAX);
+            peer.chain = CHAIN_DEGRADED.to_string();
+            peer.pin_conflict = true;
+        }
+        for entry in &mut widest.displaced {
+            entry.last_verified_state = Some(StateMark {
+                chain_length: u64::MAX,
+                seq: u64::MAX,
+            });
+            entry.pin_conflict = true;
+        }
+        widest.written_at_epoch_s = u64::MAX;
+        let widest_path = dir.path().join("widest.json");
+        widest.write_atomic(&widest_path)?;
+        let widest_len = std::fs::metadata(&widest_path)?.len();
+        eprintln!("flooded summary {flooded} bytes, widest {widest_len} bytes");
+        assert!(
+            widest_len < FLEET_PEERS_MAX_FILE_BYTES,
+            "a full table and ledger ({widest_len} bytes) would be refused by the kernel"
+        );
+        // The kernel still serves the flooded file, capped as ever.
+        assert_eq!(load_rows(&path, now).len(), FLEET_PEER_MAX);
+        Ok(())
+    }
+
+    #[test]
+    fn the_projection_never_reads_the_ledger() {
+        let real = signer();
+        let mut table = PeerTable::default();
+        proven_porch(&mut table, &real, NOW);
+        let t = displace_porch(&mut table, "fake", NOW + 10);
+        let with = table.summary(t);
+        assert_eq!(with.displaced.len(), 1);
+        let without = PeerSummaryFile {
+            displaced: Vec::new(),
+            ..with.clone()
+        };
+        let rows = fleet_rows(&with, t);
+        assert_eq!(rows, fleet_rows(&without, t));
+        let wire = serde_json::to_string(&rows).expect("rows serialize");
+        assert!(
+            !wire.contains("porch"),
+            "a displaced id reached the wire: {wire}"
+        );
+        assert!(!wire.contains(&pubkey_hex(&real)[..16]));
+        // The kernel's own read path, from the file the bridge writes.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("fleet_peers.json");
+        with.write_atomic(&path).expect("written");
+        assert!(std::fs::read_to_string(&path)
+            .expect("read")
+            .contains("\"displaced\""));
+        assert_eq!(load_rows(&path, t), rows);
+    }
+
     #[test]
     fn at_the_cap_a_newcomer_displaces_the_least_useful_id_never_a_real_lockout() {
         let key = signer();
@@ -2244,6 +3616,7 @@ mod tests {
             schema: FLEET_PEERS_SCHEMA.to_string(),
             written_at_epoch_s: NOW,
             peers,
+            displaced: Vec::new(),
         };
         let rows = fleet_rows(&summary, NOW);
         assert_eq!(
@@ -2281,6 +3654,7 @@ mod tests {
             schema: FLEET_PEERS_SCHEMA.to_string(),
             written_at_epoch_s: NOW,
             peers: vec![old],
+            displaced: Vec::new(),
         };
         // The kernel, reading that file as it stands: online, no words.
         let rows = fleet_rows(&summary, NOW + 1);
@@ -2312,6 +3686,7 @@ mod tests {
             schema: FLEET_PEERS_SCHEMA.to_string(),
             written_at_epoch_s: NOW,
             peers,
+            displaced: Vec::new(),
         };
         big.write_atomic(&path)?;
         assert!(std::fs::metadata(&path)?.len() > FLEET_PEERS_MAX_FILE_BYTES);

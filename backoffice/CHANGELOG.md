@@ -7,6 +7,50 @@ the package version, so neither moves without the other.
 
 ## 0.9.0
 
+- **The re-checks answer to the door's lock, one at a time.** These count
+  against the door's lock for that person at that address: the password asked
+  again on *Your account* (to change it, to begin a new authenticator, to end
+  the other sessions) and the old authenticator's code. Eight wrong from one
+  address lock that person there for fifteen minutes. The count has no window:
+  it stands until a full sign-in from that address, the lock running out, or a
+  restart, as at the door. While the lock stands, every re-check from that
+  address is refused with one answer before any password work or code compare,
+  the right secret included, and the door turns that person away there. A
+  right re-check resets nothing. A password check already in its derivation
+  when the lock arms is answered and recorded as the refusal, whichever was
+  typed. A person has at most one password job in flight and an invitation
+  link one hash. A second one while the first is pending gets a 429, not a
+  place in the queue ahead of everyone's login. The slot is the person's, so a
+  stolen session guessing makes the person's own re-checks wait; SECURITY.md
+  names the exits. The Health page's *Failed logins and re-checks* row counts
+  the wrong re-checks. `confirmTotp`, `checkPassword`, `beginTotpRotation` and
+  `changePassword` take an optional `now`. `lockState` takes the database
+  first, and locks and pending jobs are keyed per database.
+- **The status probe dials what it judged.** A probe's GET goes only to the
+  addresses its check just resolved and judged, never to a second lookup's
+  answer, so a name that answers public to the check and the inside a moment
+  later (DNS rebinding) cannot point a probe at the box or its network. No
+  pooled socket, no redirect followed, over https the certificate is still
+  checked against the name in the URL, and a connect that fails (no route, no
+  IPv6 on the box) is the probe's recorded result. No new dependency.
+- **Nothing an operator opens is kept by the browser.** Every answer is
+  `Cache-Control: no-store` unless its route names its own caching (`/status`,
+  `/status.json`, the store's catalog and estimate, `robots.txt`,
+  `security.txt`). The JSON API, the CSV exports and a contact's data-access
+  export used to carry none (`/api/users` and `/api/health` also lacked
+  `nosniff` and `X-Frame-Options` until #1972 sent them through the shared
+  answer): a browser's disk cache kept customer emails, and Back after
+  logout showed `/api/users` again.
+- **A stray cookie never refuses a request.** A cookie the backoffice did not
+  write whose value does not percent-decode (`50%`, a legacy `escape()`'s
+  `%E9`) is kept as written. It used to turn every route, the login,
+  `/healthz` and a customer's order page included, into `400 URI malformed`.
+- **The dated tests carry their own clock.** `applyStripeEvent`'s optional
+  clock (since #1967; the webhook keeps the wall clock) is passed by every
+  away test, and the other tests that asserted dates carry their own, so the
+  four dates found to turn the gate red (2026-11-09, 2027-01-01, about
+  2027-04-17 and 2027-10-16) no longer do: shown under a Date shim at five
+  dates from 2026-10-21 to 2028-01-01.
 - **The door never holds the house up.** Password and API-token verification
   run off the event loop (`crypto.scrypt`, one password at a time, two
   tokens), so a burst of logins or bearer calls no longer stalls the Stripe

@@ -10,8 +10,9 @@ export const timedFetch = (url, init = {}) => fetch(url, { ...init, signal: init
 // (64:ff9b::/96), 6to4 (2002::/16) or v4-compatible (::a.b.c.d) address carries, plus loopback and unspecified,
 // ULA (fc00::/7), link- and site-local, documentation (2001:db8::/32), multicast and the local-use NAT64 block.
 // A string that is not an address is answered true: nothing proves it public. Brackets and a zone id are
-// tolerated. The probe refuses a URL whose host is one of these, and the status job checks the resolved
-// address again at connect time, so a name that resolves to the inside gets no further than a literal would.
+// tolerated. The probe refuses a URL whose host is one of these, and the status job judges every address the
+// name resolves to at each run and connects only to those addresses (status.mjs, pinnedFetch), so a name that
+// resolves to the inside, or answers the inside to a second lookup, gets no further than a literal would.
 import { isIP } from 'node:net';
 import { expand6 } from './guard.mjs';
 const v4n = (s) => { const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(s); if (!m) return null; const p = m.slice(1).map(Number); return p.every(n => n <= 255) ? ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0 : null; };

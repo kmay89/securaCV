@@ -6,7 +6,7 @@
 import { scrypt, scryptSync, randomBytes, createHmac, createHash, timingSafeEqual } from 'node:crypto';
 import { netOf, limiterKey, trimMap, sanitize } from './guard.mjs';
 import { nowIso } from './db.mjs';
-import { token, safeEqual } from './http.mjs';
+import { token, safeEqual, HttpError } from './http.mjs';
 
 // --- the KDF: scrypt, run off the event loop. `crypto.scrypt` hands the work to libuv's
 // threadpool, so a burst of logins or bearer calls never stalls the Stripe webhook, the
@@ -168,40 +168,105 @@ export function inviteUser(db, { email, name, role = 'ops', actor = 'web', hours
 }
 export const inviteFor = (db, tok) => { const u = db.get(`SELECT ${PUBLIC} FROM users WHERE invite_token = ? AND status = 'invited'`, sha(String(tok || ''))); return u && u.invite_expires_at > nowIso() ? u : null; };
 // Step one of accepting: the person's own password. Step two (confirmTotp) proves the authenticator before the account opens.
+// One hash per link at a time (oneAtATime, below): the link is public for 48 hours, and thirty posts of it at once would
+// otherwise hold every login behind thirty derivations. A re-sent link is a new key, so it is never refused for the old one.
+// The refusal's text is for a double click: the first post goes on and sets the password, and the browser shows the
+// second's answer, so it asks for a reload (which shows the authenticator step once the first has landed), not a wait.
 export async function acceptInvite(db, tok, password) {
   const u = inviteFor(db, tok); if (!u) throw new Error('this invitation is not valid any more — ask for a new one'); if (String(password).length < 12) throw new Error('use at least 12 characters');
-  const secret = base32Encode(randomBytes(20)); const hash = await hashPassword(password);
+  const secret = base32Encode(randomBytes(20)); const hash = await oneAtATime(`invite:${pendingKey(db, u)}:${sha(String(tok))}`, () => hashPassword(password), 'this invitation is already being set up — reload this page in a moment');
   if (!inviteFor(db, tok)) throw new Error('this invitation is not valid any more — ask for a new one');   // withdrawn while the hash was derived
   db.run('UPDATE users SET password_hash = ?, totp_pending = ?, password_set_at = ? WHERE id = ?', hash, secret, nowIso(), u.id);
   db.audit(u.email, 'user.accept', 'user', u.email); return { ...u, totp_pending: secret };
 }
+// --- the re-checks: what a live session alone must not do asks for a secret again (the password, or a code from
+// the current authenticator), and a stolen cookie must not make that a free oracle. Two bounds, both here:
+// - The rate. A re-check answers to the door's own lock for this person and this address (lockState, below): a
+//   wrong password or current code counts exactly as a wrong try at the door does (recordFailure: the same count of
+//   eight, kept until a full login from that address, the lock running out or a restart, not over a window; the
+//   same counter and record in the users table), and while that lock stands (fifteen minutes) every re-check from
+//   the address is refused before any derivation or code compare, the right secret included, with one answer
+//   whatever was typed. A right answer here neither lifts the lock nor resets the count; only a full login (both
+//   factors) from that address does, as before. Otherwise a session that knows the password could prove it
+//   between code guesses and guess forever.
+// - The concurrency. One password job per person, and per invitation link, at a time (oneAtATime). The lane is the
+//   door's (one derivation at a time), so a session that queued a hundred wrong guesses would hold every other
+//   person's login behind them; a second job while one is pending is refused (429), not queued. It also keeps the
+//   count honest: a person's password re-checks run one at a time, so each reads the lock the one before it left,
+//   and a burst of them cannot all pass the lock at entry before the first failure is counted. The key is the person,
+//   not the session or the address: keyed by address, a thief with many addresses would line up a derivation at
+//   each. The price, written down in SECURITY.md: while a stolen session keeps the slot busy, the person's own
+//   re-checks are told one is already running, until the thief's addresses have each spent their eight.
+const RECHECK_LOCKED = 'too many wrong tries from this address — try again in fifteen minutes';
+const PENDING = new Set();
+// The key is the database and the person's id and email, like the lock's (below), so a fresh database never meets a key left by a previous one.
+const pendingKey = (db, r) => `${dbTag(db)}:${r.id}:${r.email}`;
+// Each database object a process opens gets a number, once: the part of a lock's or a pending job's key that says which database.
+const DB_TAGS = new WeakMap(); let dbCount = 0;
+const dbTag = (db) => { let t = DB_TAGS.get(db); if (t === undefined) DB_TAGS.set(db, t = ++dbCount); return t; };
+async function oneAtATime(key, job, busy = 'a password check for you is already running — wait for its answer') {
+  if (PENDING.has(key)) throw new HttpError(429, busy);
+  PENDING.add(key); try { return await job(); } finally { PENDING.delete(key); }
+}
+// Refuses (429) while the lock for this person and address stands, written down as a locked attempt, unless this try
+// was already written down as a failure (`counted`: a wrong secret, read after it was counted). `via` names the factor
+// re-checked, "first factor" for the password, as the door's reason does (a call carrying the factor's own name reads,
+// to a static analyzer, as a credential flowing into the audit chain's mark).
+function refuseWhileLocked(db, r, ip, now, via, counted = false) {
+  if (!lockState(db, r, ip, now)?.until) return;
+  if (!counted) db.audit(r.email, 'auth.login.locked', 'user', r.email, { ip, via });
+  throw new HttpError(429, RECHECK_LOCKED);
+}
+
 // A code from the pending secret makes it the real one; for an invitee that also opens the account and burns the link.
 // A person who already has an authenticator proves it too (`current`, a code from the old one, under the same
-// one-login rule as the door): a stolen session alone does not swap the second factor for the thief's.
-export function confirmTotp(db, userId, code, { current = '', ip = null } = {}) {
+// one-login rule as the door): a stolen session alone does not swap the second factor for the thief's. That code is
+// a re-check (above): the lock is asked before it is compared, and a wrong one counts. `now` is the clock, for tests.
+export function confirmTotp(db, userId, code, { current = '', ip = null, now = Date.now() } = {}) {
   const r = secretRow(db, userId); if (!r?.totp_pending) throw new Error('nothing to confirm');
   let step = null;
-  if (r.totp_secret) { step = verifyTotp(r.totp_secret, current, { lastStep: r.totp_last_step ?? null }); if (!step) { db.audit(r.email, 'auth.totp.failed', 'user', r.email, { ip, why: 'current' }); throw new Error('the code from your current authenticator did not match (one already used to sign in does not count — wait for the next)'); } }
-  if (!verifyTotp(r.totp_pending, code)) return false;
+  if (r.totp_secret) {
+    refuseWhileLocked(db, r, ip, now, 'totp');
+    step = verifyTotp(r.totp_secret, current, { time: now, lastStep: r.totp_last_step ?? null });
+    if (!step) { recordFailure(db, r, ip, now, 'current', 'totp'); refuseWhileLocked(db, r, ip, now, 'totp', true); throw new Error('the code from your current authenticator did not match (one already used to sign in does not count — wait for the next)'); }
+  }
+  if (!verifyTotp(r.totp_pending, code, { time: now })) return false;
   db.run('UPDATE users SET totp_secret = totp_pending, totp_pending = NULL, totp_last_step = COALESCE(?, totp_last_step), status = CASE WHEN status = \'invited\' THEN \'active\' ELSE status END, invite_token = NULL, invite_expires_at = NULL WHERE id = ?', step, userId);
   db.audit(r.email, r.status === 'invited' ? 'user.activate' : 'auth.totp', 'user', r.email, { ip }); return true;
 }
 export const pendingTotp = (db, userId) => secretRow(db, userId)?.totp_pending || null;
 // The person's own password again, for what a live session alone must not do: begin a new authenticator, end
-// the other sessions. A wrong one is written down with its address. Async: the KDF runs off the event loop.
-export async function checkPassword(db, userId, password, { ip = null } = {}) {
-  const r = secretRow(db, userId); if (!r) throw new Error('no such person');
-  if (!(await verifyPassword(String(password || ''), r.password_hash))) { db.audit(r.email, 'auth.password.failed', 'user', r.email, { ip }); throw new Error('the current password is wrong'); }
-  return r;
+// the other sessions, change the password. A wrong one is written down with its address and counts against the
+// lock. Async: the KDF runs off the event loop, so the lock is read again after it, before the result is used or
+// counted, as the door reads it after its wait: a wrong try meanwhile at the door or in a code re-check may have
+// armed it, and then this try is the refusal in every way, whichever was typed: the same answer, the same one
+// locked-attempt row, and neither the count nor the lock's end touched (every role can read the audit log, so a
+// row that differed would tell a stolen cookie what the answer would not). `recheck` is the unguarded form, for a
+// caller already holding the person's key.
+async function recheck(db, r, password, ip, now) {
+  refuseWhileLocked(db, r, ip, now, 'first factor');
+  const right = await verifyPassword(String(password || ''), r.password_hash);
+  refuseWhileLocked(db, r, ip, now, 'first factor');
+  if (right) return r;
+  recordFailure(db, r, ip, now, undefined, 'recheck'); refuseWhileLocked(db, r, ip, now, 'first factor', true);   // the eighth: counted, then answered by the lock it armed
+  throw new Error('the current password is wrong');
 }
-export async function beginTotpRotation(db, userId, password, { ip = null } = {}) {
-  const r = await checkPassword(db, userId, password, { ip }); const secret = base32Encode(randomBytes(20));
+export async function checkPassword(db, userId, password, { ip = null, now = Date.now() } = {}) {
+  const r = secretRow(db, userId); if (!r) throw new Error('no such person');
+  return oneAtATime(pendingKey(db, r), () => recheck(db, r, password, ip, now));
+}
+export async function beginTotpRotation(db, userId, password, { ip = null, now = Date.now() } = {}) {
+  const r = await checkPassword(db, userId, password, { ip, now }); const secret = base32Encode(randomBytes(20));
   db.run('UPDATE users SET totp_pending = ? WHERE id = ?', secret, userId); db.audit(r.email, 'auth.totp.begin', 'user', r.email, { ip }); return secret;
 }
-export async function changePassword(db, userId, current, next, { ip = null } = {}) {
-  const r = await checkPassword(db, userId, current, { ip });
-  if (String(next).length < 12) throw new Error('use at least 12 characters'); if (next === current) throw new Error('that is the same password');
-  db.run('UPDATE users SET password_hash = ?, password_set_at = ? WHERE id = ?', await hashPassword(next), nowIso(), userId); db.audit(r.email, 'auth.password', 'user', r.email); return true;
+// The check and the new hash under one key: a change is one job, so the person never has two derivations in the lane at once.
+export async function changePassword(db, userId, current, next, { ip = null, now = Date.now() } = {}) {
+  const r0 = secretRow(db, userId); if (!r0) throw new Error('no such person');
+  return oneAtATime(pendingKey(db, r0), async () => {
+    const r = await recheck(db, r0, current, ip, now);
+    if (String(next).length < 12) throw new Error('use at least 12 characters'); if (next === current) throw new Error('that is the same password');
+    db.run('UPDATE users SET password_hash = ?, password_set_at = ? WHERE id = ?', await hashPassword(next), nowIso(), userId); db.audit(r.email, 'auth.password', 'user', r.email); return true;
+  });
 }
 export function setRole(db, userId, role, { actor = 'web' } = {}) {
   const u = userById(db, userId); if (!u) throw new Error('no such person'); if (!ROLES.includes(role)) throw new Error('unknown role');
@@ -228,30 +293,36 @@ export function removeUser(db, userId, { actor = 'web' } = {}) {
 // owner out of their own backoffice (the old database-wide lock re-armed on every wrong try, forever),
 // and the per-address limiter in the pipeline still slows the guesser down. The counter and the
 // lock time in the users table stay as a record (the people page shows them); a restart clears
-// the locks themselves, and the key carries the email so a fresh database's first person does not
-// inherit a lock armed against a previous one. A password check is run even for an unknown email, so the answer
+// the locks themselves, and the key carries the database and the person's id and email, so a fresh database (the
+// tests open dozens in one process) never inherits a lock armed in another, nor a person given a freed id one armed
+// against whoever held it. A password check is run even for an unknown email, so the answer
 // takes the same time either way and the list of emails cannot be read off the clock. The dummy is derived at
 // today's cost, once, the first time it is needed (a person whose hash is still at the old cost answers faster
 // until their next login re-hashes it; the Health page counts them).
 const LOCKS = new Map();
 let dummy = null; const dummyHash = () => (dummy ??= hashPassword('the same work for a name nobody has'));
-const lockKey = (u, ip) => `${u.id}:${u.email}|${limiterKey(ip || '-')}`;
-export function lockState(user, ip, now = Date.now()) { const k = lockKey(user, ip); const l = LOCKS.get(k); if (l && l.until && l.until <= now) { LOCKS.delete(k); return null; } return l || null; }
+const lockKey = (db, u, ip) => `${dbTag(db)}:${u.id}:${u.email}|${limiterKey(ip || '-')}`;
+export function lockState(db, user, ip, now = Date.now()) { const k = lockKey(db, user, ip); const l = LOCKS.get(k); if (l && l.until && l.until <= now) { LOCKS.delete(k); return null; } return l || null; }
 export const clearLocks = () => LOCKS.clear();
 // A wrong try, counted against the person for this address (eight lock the pair for fifteen minutes) and in the audit log.
+// `via` names where: the door (`password`, `link`: written under "web", nobody is signed in yet) or a re-check a session
+// asked for (`recheck`, the password again; `totp`, the current authenticator's code: under the person's name, as they
+// always were). The re-checks count against the same lock as the door; only the row's name and author differ.
+const FAILED = { password: 'auth.login.failed', link: 'auth.link.failed', recheck: 'auth.password.failed', totp: 'auth.totp.failed' };
 function recordFailure(db, r, ip, now, why, via = 'password') {
   if (r) {
     db.run('UPDATE users SET failed_logins = failed_logins + 1 WHERE id = ?', r.id);
-    const l = lockState(r, ip, now) || { n: 0, until: null }; l.n++; l.at = now; if (l.n >= 8) { l.until = now + 15 * 60_000; db.run('UPDATE users SET locked_until = ? WHERE id = ?', new Date(l.until).toISOString(), r.id); } LOCKS.delete(lockKey(r, ip)); LOCKS.set(lockKey(r, ip), l);
+    const l = lockState(db, r, ip, now) || { n: 0, until: null }; l.n++; l.at = now; if (l.n >= 8) { l.until = now + 15 * 60_000; db.run('UPDATE users SET locked_until = ? WHERE id = ?', new Date(l.until).toISOString(), r.id); } LOCKS.delete(lockKey(db, r, ip)); LOCKS.set(lockKey(db, r, ip), l);
     trimMap(LOCKS, { stale: v => (v.until || v.at + 15 * 60_000) <= now });
   }
-  db.audit('web', via === 'link' ? 'auth.link.failed' : 'auth.login.failed', 'user', r?.email || null, { ip, why }); return null;
+  const atDoor = via === 'password' || via === 'link';
+  db.audit(atDoor ? 'web' : r.email, FAILED[via], 'user', r?.email || null, { ip, why }); return null;
 }
 // The session itself: a new random id, the person's record brought current, the audit row with the address.
 function openSession(db, r, { sessionHours, now, ip, step, via = 'password' }) {
   const id = token(32); const csrf = token(24); const exp = new Date(now + sessionHours * 3600_000).toISOString();   // the cookie carries id; the row its SHA-256
   db.run('INSERT INTO sessions (id, created_at, expires_at, csrf, user_id, net) VALUES (?, ?, ?, ?, ?, ?)', sha(id), nowIso(), exp, csrf, r.id, netOf(ip));
-  LOCKS.delete(lockKey(r, ip));
+  LOCKS.delete(lockKey(db, r, ip));
   db.run('DELETE FROM sessions WHERE expires_at < ?', nowIso()); db.run('UPDATE users SET last_login_at = ?, failed_logins = 0, locked_until = NULL, totp_last_step = ? WHERE id = ?', nowIso(), step, r.id);
   db.audit(r.email, via === 'link' ? 'auth.link.login' : 'auth.login', 'user', r.email, { ip, via });
   return { id, csrf, expires_at: exp, user_id: r.id, email: r.email, name: r.name, role: r.role, via };
@@ -265,7 +336,7 @@ export async function login(db, { email = '', password, code }, { sessionHours =
   const r = em ? db.get('SELECT * FROM users WHERE email = ?', em) : (() => { const rows = db.all("SELECT * FROM users WHERE status = 'active' AND password_hash IS NOT NULL LIMIT 2"); return rows.length === 1 ? rows[0] : null; })();
   const fail = (why) => { if (!r) db.audit('web', 'auth.login.failed', 'user', em || null, { ip, why }); return recordFailure(db, r, ip, now, why); };
   if (!r || r.status !== 'active' || !r.password_hash || !r.totp_secret) { await verifyPassword(String(password || ''), await dummyHash()); return fail(!r ? (em ? 'unknown' : 'email required') : r.status); }
-  if (lockState(r, ip, now)?.until) { db.audit('web', 'auth.login.locked', 'user', r.email, { ip }); return null; }
+  if (lockState(db, r, ip, now)?.until) { db.audit('web', 'auth.login.locked', 'user', r.email, { ip }); return null; }
   // The reason is written to the audit row as given. It says "first factor", not the name of the factor:
   // a static analyzer reads a call with that word as a credential flowing into the chain's SHA-256 mark.
   if (!(await verifyPassword(password, r.password_hash))) return fail('first factor');
@@ -277,7 +348,7 @@ export async function login(db, { email = '', password, code }, { sessionHours =
   // the lock (eight wrong tries queued ahead of this one may have armed it), the caller's own lock, the
   // person's status (disabled meanwhile), and the step the replay rule compares against (a login that
   // finished during the wait wrote it — two requests carrying one code yield one session, as before).
-  if (lockState(r, ip, now)?.until) { db.audit('web', 'auth.login.locked', 'user', r.email, { ip }); return null; }
+  if (lockState(db, r, ip, now)?.until) { db.audit('web', 'auth.login.locked', 'user', r.email, { ip }); return null; }
   if (!admit()) { db.audit('web', 'auth.login.locked', 'user', r.email, { ip }); return null; }
   const live = db.get('SELECT status, totp_secret, totp_last_step FROM users WHERE id = ?', r.id);
   if (!live || live.status !== 'active' || !live.totp_secret) return fail(live ? live.status : 'unknown');
@@ -312,7 +383,7 @@ export function loginWithLink(db, { token: t, code, nonce }, { sessionHours = 12
   const r = db.get('SELECT * FROM users WHERE id = ?', row.user_id);
   if (!r || r.status !== 'active' || !r.totp_secret) return recordFailure(db, r, ip, now, r ? r.status : 'unknown', 'link');
   if (!nonce || !safeEqual(sha(nonce), row.nonce_hash)) return recordFailure(db, r, ip, now, 'browser', 'link');   // opened somewhere other than where it was asked for
-  if (lockState(r, ip, now)?.until) { db.audit('web', 'auth.login.locked', 'user', r.email, { ip }); return null; }
+  if (lockState(db, r, ip, now)?.until) { db.audit('web', 'auth.login.locked', 'user', r.email, { ip }); return null; }
   const step = verifyTotp(r.totp_secret, code, { time: now, lastStep: r.totp_last_step ?? null });
   if (!step) return recordFailure(db, r, ip, now, 'code', 'link');
   db.run('UPDATE login_links SET used_at = ? WHERE id = ?', new Date(now).toISOString(), row.id);

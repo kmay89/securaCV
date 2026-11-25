@@ -9,7 +9,7 @@ import { mkdtempSync, mkdirSync, rmSync, readdirSync, copyFileSync } from 'node:
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { clientIp, setTrustedProxies, Lockout, RateLimiter } from '../src/http.mjs';
+import { clientIp, setTrustedProxies, Lockout, RateLimiter, parseCookies } from '../src/http.mjs';
 import { limiterKey, trimMap, Watch } from '../src/guard.mjs';
 import { isPrivateAddress } from '../src/net.mjs';
 import { isInternalHost } from '../src/admin.mjs';
@@ -17,7 +17,9 @@ import { openDb, auditMac, auditMacV1, CHAIN_GENESIS } from '../src/db.mjs';
 import { verifyChain } from '../src/integrity.mjs';
 import { setupOperator, login, requestSignInLink, can, clearLocks, beginTotpRotation, confirmTotp, pendingTotp, totp, userByEmail } from '../src/auth.mjs';
 import { createApp } from '../src/server.mjs';
-import { testDb, testCfg } from './helpers.mjs';
+import { testDb, testCfg, catalog, sampleOrder } from './helpers.mjs';
+import { recordOrder } from '../src/modules/orders.mjs';
+import { orderStatusUrl } from '../src/modules/delivery.mjs';
 
 const form = (o) => new URLSearchParams(o).toString();
 const req = (peer, fwd) => ({ socket: { remoteAddress: peer }, headers: fwd == null ? {} : { 'x-forwarded-for': fwd } });
@@ -151,5 +153,25 @@ test('the login forms refuse a cross-site browser before the body is read, like 
       assert.notEqual((await post(path, 'same-origin')).status, 403, `${path} from the page itself`); assert.notEqual((await post(path, 'none')).status, 403, `${path} typed or from a bookmark`); assert.notEqual((await post(path)).status, 403, `${path} from a client that says nothing`);
     }
     assert.equal(db.get("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'auth.login.failed'").n, 3, 'the refused posts never reached the door: one failed try per accepted /login post');
+  } finally { await app.close(); clearLocks(); }
+});
+
+test('a cookie that is not ours and does not percent-decode is kept as written: the door, the status page, a customer\'s page and a signed-in page all still open', async () => {
+  assert.deepEqual({ ...parseCookies({ headers: { cookie: 'pref=50%; lang=%E9; bo_bench=12; x=%E2%82' } }) }, { pref: '50%', lang: '%E9', bo_bench: '12', x: '%E2%82' });
+  const db = testDb(); const cfg = testCfg({ attentionTtlMs: 0 }); const app = createApp({ db, cfg }); const addr = await app.listen(); const base = `http://127.0.0.1:${addr.port}`;
+  try {
+    const secret = setupOperator(db, 'owner password 1234', { email: 'o@errer.test', name: 'O' });
+    const s = await login(db, { email: 'o@errer.test', password: 'owner password 1234', code: totp(secret) }, { ip: '127.0.0.1' });
+    const { order } = recordOrder(db, sampleOrder(), { catalog: catalog() }); const mine = orderStatusUrl(cfg, order).slice(cfg.baseUrl.length);
+    for (const foreign of ['site_pref=50%', 'lang=%E9', 'x=%E2%82']) {
+      for (const path of ['/login', '/healthz', '/status', mine]) assert.equal((await fetch(base + path, { headers: { accept: 'text/html', cookie: foreign } })).status, 200, `${path} with ${foreign}`);
+      assert.equal((await fetch(base + '/orders', { redirect: 'manual', headers: { accept: 'text/html', cookie: `${foreign}; bo_session=${s.id}` } })).status, 200, `signed in, with ${foreign}`);
+    }
+    // a bo_session that does not decode is not one we wrote: no session (the door, a 401), never a 400 and never somebody's session
+    for (const bad of ['%E9', `${s.id}%`, `%ZZ${s.id}`]) {
+      const page = await fetch(base + '/orders', { redirect: 'manual', headers: { accept: 'text/html', cookie: `bo_session=${bad}` } }); assert.equal(page.status, 303, bad); assert.equal(page.headers.get('location'), '/login');
+      assert.equal((await fetch(base + '/api/snapshot', { headers: { cookie: `bo_session=${bad}` } })).status, 401, bad);
+    }
+    assert.equal((await fetch(base + '/api/snapshot', { headers: { cookie: `bo_session=${encodeURIComponent(s.id)}` } })).status, 200, 'ours, as cookie() writes it, still decodes');
   } finally { await app.close(); clearLocks(); }
 });

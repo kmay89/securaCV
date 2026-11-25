@@ -9,7 +9,8 @@
 // model is emitted as the table voice_peak_duty() actually produces. The
 // preview then just plays frames and reads the table; it owns no audio math,
 // so it cannot diverge. canary-local/tools/gen_voice_preview.mjs runs this and
-// a CI drift gate (canary-local.yml) fails if the committed page is stale.
+// writes canary-local/voice/voice-data.js (the page itself is hand-written);
+// a CI drift gate (canary-local.yml) fails if that committed file is stale.
 //
 // Deterministic output (no timestamps / no host paths) so the drift gate
 // compares bytes.

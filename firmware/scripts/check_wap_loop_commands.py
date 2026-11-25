@@ -334,7 +334,16 @@ CV7. What the routes put under each key (`chirp_api.h` is not host-compiled:
      `is<int32_t>()` and `as<int32_t>()`, answering a refusal as
      `invalid_ttl` from `send_refusal_error()`/`send_refusal_message()` and
      submitting nothing (F412: `input["ttl_minutes"] | 15` into a `uint8_t`
-     signed 300 as 44 and -1 as 255).
+     signed 300 as 44 and -1 as 255). It reads `template_id` and `detail`
+     the same way, as `CHIRP_SEND_TEMPLATE` and `CHIRP_SEND_DETAIL` say,
+     once each, through `template_from_request()` and
+     `detail_from_request()` (host-tested), refusing an unnamed template as
+     `invalid_template` and a detail slot no row lists as `invalid_detail`
+     from `send_refusal_error()`/`send_refusal_message()`, submitting
+     nothing, in the order template, detail, TTL, all before its submit
+     (F485: `uint8_t template_id_raw = input["template_id"]` read 256 and a
+     null as 0, "police activity in area", and `input["detail"] | 0` into a
+     `uint8_t` signed the unlisted slot 4 and 272 as 16).
 CV8. The send cooldown is a timer, not a state (F178): in
      `chirp_channel.cpp`, `CHIRP_COOLDOWN` is named only by `shown_state()`
      (what an active channel reads as while the timer runs) and
@@ -2389,6 +2398,34 @@ CHIRP_SEND_TTL = (
     'httpd_resp_set_type(req,"application/json");returnhttpd_resp_sendstr(req,buffer);}'
 )
 
+# How POST /api/chirp/send reads template_id and detail (F485): each judged
+# whole before the byte the frame carries, a template only when it names a
+# row of the template table, a detail absent or null as DETAIL_NONE and
+# otherwise only when it names a row of the detail table, each refused by
+# name with nothing submitted. The refusals come in this order, then the
+# TTL's, all before the submit.
+CHIRP_SEND_TEMPLATE = (
+    'JsonVariantConsttemplate_in=input["template_id"];'
+    "chirp_channel::ChirpTemplatetemplate_id=chirp_channel::TPL_INVALID;"
+    "if(!chirp_channel::template_from_request(!template_in.isNull(),template_in.is<int32_t>(),"
+    "template_in.as<int32_t>(),&template_id)){"
+    'JsonDocumentdoc;doc["success"]=false;doc["error"]="invalid_template";'
+    'doc["message"]="UnknowntemplateID";'
+    "charbuffer[256];serializeJson(doc,buffer);"
+    'httpd_resp_set_type(req,"application/json");returnhttpd_resp_sendstr(req,buffer);}'
+)
+CHIRP_SEND_DETAIL = (
+    'JsonVariantConstdetail_in=input["detail"];'
+    "chirp_channel::ChirpDetailSlotdetail=chirp_channel::DETAIL_NONE;"
+    "if(!chirp_channel::detail_from_request(!detail_in.isNull(),detail_in.is<int32_t>(),"
+    "detail_in.as<int32_t>(),&detail)){"
+    'JsonDocumentdoc;doc["success"]=false;'
+    'doc["error"]=chirp_channel::send_refusal_error(chirp_channel::SEND_REFUSED_DETAIL);'
+    'doc["message"]=chirp_channel::send_refusal_message(chirp_channel::SEND_REFUSED_DETAIL);'
+    "charbuffer[256];serializeJson(doc,buffer);"
+    'httpd_resp_set_type(req,"application/json");returnhttpd_resp_sendstr(req,buffer);}'
+)
+
 
 @functools.lru_cache(maxsize=1024)
 def chirp_live_read_findings(name: str, code: str) -> tuple[str, ...]:
@@ -2745,6 +2782,27 @@ def check_chirp_route_answers(api_src: str, errors: list[str]) -> None:
                           "is<int32_t>() and as<int32_t>(), a refusal answered as invalid_ttl with "
                           "nothing submitted, and no other write of `ttl` (F412: `| 15` into a "
                           "uint8_t signed 300 as 44)")
+        tpl_at = body.find(CHIRP_SEND_TEMPLATE)
+        if body.count(CHIRP_SEND_TEMPLATE) != 1 or submit_at < 0 or tpl_at > submit_at or \
+                body.count('input["template_id"]') != 2 or body.count("template_id=") != 2:
+            errors.append(f"{CHIRP_API}: handle_chirp_send() must read template_id as "
+                          "CHIRP_SEND_TEMPLATE says, once, before its submit — template_from_request() "
+                          "of isNull(), is<int32_t>() and as<int32_t>(), a refusal answered as "
+                          "invalid_template with nothing submitted, and no other write of `template_id` "
+                          "(F485: `uint8_t template_id_raw = input[\"template_id\"]` read 256 as 0, "
+                          "\"police activity in area\")")
+        detail_at = body.find(CHIRP_SEND_DETAIL)
+        if body.count(CHIRP_SEND_DETAIL) != 1 or submit_at < 0 or detail_at > submit_at or \
+                body.count('input["detail"]') != 1 or body.count("detail=") != 2:
+            errors.append(f"{CHIRP_API}: handle_chirp_send() must read detail as CHIRP_SEND_DETAIL "
+                          "says, once, before its submit — detail_from_request() of isNull(), "
+                          "is<int32_t>() and as<int32_t>(), a refusal answered as invalid_detail with "
+                          "nothing submitted, and no other write of `detail` (F485: `| 0` into a uint8_t "
+                          "signed the unlisted slot 4, and 272 as 16)")
+        if min(tpl_at, detail_at, ttl_at) >= 0 and not tpl_at < detail_at < ttl_at:
+            errors.append(f"{CHIRP_API}: handle_chirp_send() must refuse in the order the spec names, "
+                          "invalid_template, then invalid_detail, then invalid_ttl (F485, "
+                          "spec/chirp_channel_v0.md §8)")
 
 
 # ── MQTT network timeout (F112) ──────────────────────────────────────────
@@ -5446,6 +5504,61 @@ MUTATIONS: list[tuple[str, Mutation]] = [
     ("the send route writes its TTL a second time (F412)",
      on_other(CHIRP_API, api_handler("handle_chirp_send"), r"(\n[ \t]*cmd\.ttl_minutes\s*=\s*ttl;)",
               r"\n  ttl = 15;\1")),
+    # Rule CV7: the send route's template_id and detail (F485).
+    ("the send route reads template_id into its byte again (F485)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"),
+              r"JsonVariantConst\s+template_in\s*=\s*input\[\"template_id\"\];\s*"
+              r"chirp_channel::ChirpTemplate\s+template_id\s*=\s*chirp_channel::TPL_INVALID;\s*"
+              r"if\s*\(!chirp_channel::template_from_request\([^;]*\)\)\s*\{",
+              'uint8_t template_id_raw = input["template_id"]; '
+              "chirp_channel::ChirpTemplate template_id = (chirp_channel::ChirpTemplate)template_id_raw; "
+              "if (!chirp_channel::is_valid_template(template_id)) {")),
+    ("the send route takes a float or a string as an integer template (F485)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"), r"template_in\.is<int32_t>\(\)", "true")),
+    ("the send route narrows the template before it is judged (F485)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"), r"template_in\.as<int32_t>\(\)",
+              "(int32_t)template_in.as<uint8_t>()")),
+    ("the send route takes a JSON null as a template it names (F485)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"), r"!template_in\.isNull\(\)", "true")),
+    ("the send route submits a template it refused (F485)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"),
+              r"(doc\[\"message\"\]\s*=\s*\"Unknown template ID\";\s*char\s+buffer\[256\];\s*"
+              r"serializeJson\(doc,\s*buffer\);\s*httpd_resp_set_type\(req,\s*\"application/json\"\);\s*)"
+              r"return\s+httpd_resp_sendstr\(req,\s*buffer\);",
+              r"\1httpd_resp_sendstr(req, buffer);")),
+    ("the send route writes its template a second time (F485)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"), r"(\n[ \t]*cmd\.template_id\s*=\s*template_id;)",
+              r"\n  template_id = chirp_channel::TPL_AUTH_POLICE_ACTIVITY;\1")),
+    ("the send route reads detail with a default into its byte again (F485)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"),
+              r"JsonVariantConst\s+detail_in\s*=\s*input\[\"detail\"\];\s*"
+              r"chirp_channel::ChirpDetailSlot\s+detail\s*=\s*chirp_channel::DETAIL_NONE;\s*"
+              r"if\s*\(!chirp_channel::detail_from_request\([^;]*\)\)\s*\{.*?return\s+httpd_resp_sendstr\(req,\s*buffer\);\s*\}",
+              'uint8_t detail_raw = input["detail"] | 0; '
+              "chirp_channel::ChirpDetailSlot detail = (chirp_channel::ChirpDetailSlot)detail_raw;")),
+    ("the send route takes a float or a string as an integer detail (F485)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"), r"detail_in\.is<int32_t>\(\)", "true")),
+    ("the send route narrows the detail before it is judged (F485)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"), r"detail_in\.as<int32_t>\(\)",
+              "(int32_t)detail_in.as<uint8_t>()")),
+    ("the send route answers a refused detail as a TTL (F485)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"),
+              r"send_refusal_error\(chirp_channel::SEND_REFUSED_DETAIL\)",
+              "send_refusal_error(chirp_channel::SEND_REFUSED_TTL)")),
+    ("the send route submits a detail it refused (F485)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"),
+              r"(doc\[\"message\"\]\s*=\s*chirp_channel::send_refusal_message\(chirp_channel::SEND_REFUSED_DETAIL\);"
+              r"\s*char\s+buffer\[256\];\s*serializeJson\(doc,\s*buffer\);\s*"
+              r"httpd_resp_set_type\(req,\s*\"application/json\"\);\s*)return\s+httpd_resp_sendstr\(req,\s*buffer\);",
+              r"\1httpd_resp_sendstr(req, buffer);")),
+    ("the send route writes its detail a second time (F485)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"), r"(\n[ \t]*cmd\.detail\s*=\s*detail;)",
+              r"\n  detail = chirp_channel::DETAIL_NONE;\1")),
+    ("the send route judges the TTL before the detail (F485)",
+     on_other(CHIRP_API, api_handler("handle_chirp_send"),
+              r"(JsonVariantConst\s+detail_in\b.*?return\s+httpd_resp_sendstr\(req,\s*buffer\);\s*\})(.*?)"
+              r"(JsonVariantConst\s+ttl_in\b.*?return\s+httpd_resp_sendstr\(req,\s*buffer\);\s*\})",
+              r"\3\2\1")),
     ("the status route names its reason inline, without the clock (h03)",
      on_other(CHIRP_API, api_handler("handle_chirp_status"),
               r"const\s+char\s*\*\s*why\s*=\s*chirp_channel::cannot_send_reason\(v\);\s*"

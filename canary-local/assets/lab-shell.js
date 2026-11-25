@@ -510,9 +510,17 @@ function benchView(entry) {
   );
 }
 
-// The bench, live. Same-origin, so it inherits the app's theme and the
-// permissions it needs — serial for the flasher, camera for the eyes bench,
-// microphone for the acoustic ones — which a bare iframe would withhold.
+// The bench, live. Same-origin, so it inherits the app's theme, and every
+// feature the allow list below names already reaches it: each one's default
+// allowlist is 'self', so a same-origin frame gets it with no attribute at all.
+// The list is the record of what the benches use (serial for the flashers and
+// the radar bench, bluetooth for the flasher's Bluetooth door, camera for the
+// eyes bench, microphone for the acoustic ones, clipboard-write for the copy
+// buttons; usb, though no bench calls WebUSB today — the flasher's port is Web
+// Serial), and it keeps holding if a bench is ever served from another origin.
+// A Chromium without Web Bluetooth (Linux desktop, headless) does not register
+// `bluetooth`, logs "Unrecognized feature: 'bluetooth'." once per page load and
+// ignores it; where Web Bluetooth ships, it is a real directive.
 function benchFrame(src, title) {
   const frame = h("iframe", {
     class: "bench-frame", src, title, loading: "eager",

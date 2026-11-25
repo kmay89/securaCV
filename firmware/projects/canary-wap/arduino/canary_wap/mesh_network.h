@@ -1279,14 +1279,16 @@ struct Command {
   ChirpUrgency    urgency_filter;
 };
 
-// Why a CHIRP_CMD_SEND did not go out. A TTL outside the spec's range is
-// refused first, before every gate (the request's own shape, as the handler
-// refuses an unknown template before it submits; sweep F412). Then the order
-// the send handler has always named them: the channel off, the presence
-// requirement, then can_send_chirp()'s two (the cooldown, then a wall clock
-// that has not synced yet), then night mode. The clock had no refusal of its
-// own: it was answered as a cooldown with 0 seconds left, which told the
-// owner to wait for nothing (sweep F146).
+// Why a CHIRP_CMD_SEND did not go out. A detail slot the detail table does
+// not list, then a TTL outside the spec's range, are refused first, before
+// every gate (the request's own shape, in the order the handler refuses
+// them, which refuses an unknown template before both and before it
+// submits; sweeps F485, F412). Then the order the send handler has always
+// named them: the channel off, the presence requirement, then
+// can_send_chirp()'s two (the cooldown, then a wall clock that has not
+// synced yet), then night mode. The clock had no refusal of its own: it was
+// answered as a cooldown with 0 seconds left, which told the owner to wait
+// for nothing (sweep F146).
 enum SendRefusal : uint8_t {
   SEND_REFUSED_NONE = 0,  // it went out, or failed for a reason none of these names
   SEND_REFUSED_DISABLED,
@@ -1295,7 +1297,8 @@ enum SendRefusal : uint8_t {
   SEND_REFUSED_CLOCK_UNSYNCED,  // time() still below MIN_UNIX_TIME: the sketch's one clock
                                 // source, GPS (canary_wap.ino has no SNTP), has not set it
   SEND_REFUSED_NIGHT,
-  SEND_REFUSED_TTL,             // ttl_minutes outside WITNESS_TTL_MIN..MAX_MINUTES (checked first)
+  SEND_REFUSED_TTL,             // ttl_minutes outside WITNESS_TTL_MIN..MAX_MINUTES (after the detail)
+  SEND_REFUSED_DETAIL,          // a detail slot is_valid_detail() does not name (checked first)
 };
 
 // A witness's ttl_minutes, as spec §3.3's CDDL bounds it: "how long to
@@ -1333,6 +1336,57 @@ inline bool ttl_from_request(bool present, bool is_integer, int32_t value, uint8
   return true;
 }
 
+// Whether a template id names a row of the template table, and a detail
+// slot a row of the detail table (chirp_channel.cpp's TEMPLATE_TABLE and
+// DETAIL_TABLE; is_valid_detail() since sweep F485).
+bool is_valid_template(ChirpTemplate template_id);
+bool is_valid_detail(ChirpDetailSlot detail);
+
+// POST /api/chirp/send's template_id and detail, read as ttl_from_request()
+// reads its ttl_minutes (sweep F485): `present` is ArduinoJson's !isNull(),
+// `is_integer` its is<int32_t>() (false for a float, a string, a bool, an
+// array, an object or an integer past int32_t) and `value` its
+// as<int32_t>(), read only for an integer and judged before it is narrowed
+// to the byte the frame carries. *out is written only on true.
+//
+// The template is sent only when it is an integer 0 to 255 that names a
+// template; anything else is false, which the handler answers as
+// invalid_template. The handler answers a body with no template_id at all
+// "template_id is required" first, so `present` is false here only for a
+// JSON null, refused as naming no template. Its old `uint8_t
+// template_id_raw = input["template_id"]` read every integer past a byte
+// (256, 272, -1, 300, 4294967296) and a null, an array, an object, a
+// false and a "0" as 0, TPL_AUTH_POLICE_ACTIVITY, so each went out signed
+// as "police activity in area"; a true as 1, "heavy law enforcement
+// response"; and a 16.9 and a "16" as 16, "power outage" (ArduinoJson
+// 7.4.1's as<uint8_t>(), read by a scratch harness through the real
+// handler).
+inline bool template_from_request(bool present, bool is_integer, int32_t value, ChirpTemplate* out) {
+  if (!present || !is_integer || value < 0 || value > 0xFF) return false;
+  if (!is_valid_template((ChirpTemplate)value)) return false;
+  *out = (ChirpTemplate)value;
+  return true;
+}
+
+// The detail: absent (or JSON null) is DETAIL_NONE; a present value is sent
+// only when it is an integer 0 to 255 that names a detail slot, and anything
+// else is false, which the handler answers as SEND_REFUSED_DETAIL. Spec
+// §3.3's CDDL calls the slot a constrained enum, but the old `uint8_t
+// detail_raw = input["detail"] | 0` went out unchecked: 4, a slot no row
+// names, was signed as 4, 272 as 16 and -1 as 255, and a 16.9, a "16" or a
+// true as 0. Which slots suit which template is not decided anywhere, so
+// any listed slot goes with any template, as before.
+inline bool detail_from_request(bool present, bool is_integer, int32_t value, ChirpDetailSlot* out) {
+  if (!present) {
+    *out = DETAIL_NONE;
+    return true;
+  }
+  if (!is_integer || value < 0 || value > 0xFF) return false;
+  if (!is_valid_detail((ChirpDetailSlot)value)) return false;
+  *out = (ChirpDetailSlot)value;
+  return true;
+}
+
 // POST /api/chirp/send's answer to a refusal: its "error" and "message"
 // (nullptr for SEND_REFUSED_NONE, which names no reason).
 inline const char* send_refusal_error(SendRefusal why) {
@@ -1343,6 +1397,7 @@ inline const char* send_refusal_error(SendRefusal why) {
     case SEND_REFUSED_CLOCK_UNSYNCED: return "clock_unsynced";
     case SEND_REFUSED_NIGHT:          return "night_restricted";
     case SEND_REFUSED_TTL:            return "invalid_ttl";
+    case SEND_REFUSED_DETAIL:         return "invalid_detail";
     case SEND_REFUSED_NONE:           break;
   }
   return nullptr;
@@ -1355,6 +1410,7 @@ inline const char* send_refusal_message(SendRefusal why) {
     case SEND_REFUSED_CLOCK_UNSYNCED: return "Waiting for the clock to be set from GPS time before sending";
     case SEND_REFUSED_NIGHT:          return "This template is not available during night hours (10pm-6am)";
     case SEND_REFUSED_TTL:            return "ttl_minutes must be an integer from 5 to 60";
+    case SEND_REFUSED_DETAIL:         return "Unknown detail slot";
     case SEND_REFUSED_NONE:           break;
   }
   return nullptr;
@@ -1687,8 +1743,8 @@ const char* get_template_text(ChirpTemplate template_id);
 // Get detail display text (for UI)
 const char* get_detail_text(ChirpDetailSlot detail);
 
-// Validate template ID
-bool is_valid_template(ChirpTemplate template_id);
+// Validate a template ID or a detail slot: is_valid_template() and
+// is_valid_detail(), declared with the send's request readers above.
 
 // Check if currently in night mode (restricted)
 bool is_night_mode();

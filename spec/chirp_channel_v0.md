@@ -673,6 +673,27 @@ On relay (hop_count > 0):
   whatever the TTL says, and a relay carries a TTL outside the range as
   its origin signed it. Whether a receiver honors the TTL, or refuses one
   outside the range, is not decided yet.
+  The send holds `template_id` and `detail_slot` to their tables the same
+  way (sweep F485): `POST /api/chirp/send` reads each whole, before it
+  narrows it to the frame's byte, and sends a template only when the value
+  is an integer naming a template, and a detail only when it is absent or
+  null (slot 0) or an integer naming a slot the firmware's detail table
+  lists (`DETAIL_TABLE` in the canary-wap's `chirp_channel.cpp`: 0 none,
+  1 to 3 scale, 10 to 12 status, 20 to 23 direction; the Detail Slots
+  bullets under §2.5.3 Defense: Structured Messages name only scale and
+  status indicators, and the table adds the rest). An integer here, as for
+  the TTL, is one written without a fraction or an exponent: a `16.0` or a
+  `1e2` is refused. It refuses anything else as `invalid_template` or
+  `invalid_detail`, and the loop task's send refuses a slot no row lists
+  before any gate. Before F485 the route read 256, -1, a null and a
+  `false` as template 0, "police activity in area", and signed it; signed
+  an unlisted slot such as 4 as it was, and 272 as slot 16; and sent a
+  value it did not read as an `int` (a 16.9, a `"16"`) as slot 0. Which
+  slot suits which template is not decided, so any listed slot goes with
+  any template. A receiver refuses a witness whose template it does not
+  know, but stores one whose detail slot it does not list, and a relay
+  carries that slot as its origin signed it; whether a receiver refuses
+  one is not decided yet either.
 - Receivers verify both signatures and that `origin_pubkey != session_pubkey`.
 
 **Categories**:
@@ -1059,10 +1080,14 @@ others are waiting answers `409 {"success":false,"error":"chirp_busy"}`.
 Neither changed anything. Every other answer keeps its shape.
 
 A send that does not go out says why, in this order: `invalid_template`
-(a `template_id` with no template, which the handler refuses before it
-submits), `invalid_ttl` (a `ttl_minutes` outside §3.3's 5 to 60, refused by
-the handler before it submits and by the loop task's send before every
-gate, so it spends no cooldown; sweep F412), `chirp_disabled`,
+(a `template_id` that is not an integer naming a template, which the
+handler refuses before it submits), `invalid_detail` (a `detail` that is
+neither absent nor null and is not an integer naming a listed slot, §3.3,
+refused by the handler before it submits and by the loop task's send
+before the TTL and every gate, so it spends no cooldown; sweep F485),
+`invalid_ttl` (a `ttl_minutes` outside §3.3's 5 to 60, refused by the
+handler before it submits and by the loop task's send before every gate,
+so it spends no cooldown; sweep F412), `chirp_disabled`,
 `presence_required` (ten minutes on), `cooldown` (with
 `cooldown_remaining_sec` and `cooldown_tier`), `clock_unsynced` (the wall
 clock is not set yet: the canary-wap sets it from GPS and has no SNTP, and
@@ -1183,10 +1208,11 @@ field and a free-text send, none of which exists).
 
 A chirp is a template id (the table `GET /api/chirp/templates` lists), an
 urgency and a detail slot, never free text. `detail` is the slot's text in
-the recent list and its number in a send. `last_chirp_sent_ms` is the
-uptime of the device's last send, the cooldown's timer (§2.5.4), 0 if it
-never sent or after 24 hours with no send (the tiers' reset), and
-`cannot_send_reason` is present only while `can_send` is false.
+the recent list and its number in a send, 0 when the send names none.
+`last_chirp_sent_ms` is the uptime of the device's last send, the
+cooldown's timer (§2.5.4), 0 if it never sent or after 24 hours with no
+send (the tiers' reset), and `cannot_send_reason` is present only while
+`can_send` is false.
 
 ## 9. UI Requirements
 

@@ -1,6 +1,123 @@
 # Changelog
 
 ## [Unreleased]
+### adapter_host refuses a replayable webhook, export_verify says when its verdict is only self-consistent, the hub roll-call keeps a displaced Canary's pin, the Flasher keeps its secrets inside your account, both desktop apps judge the host they dial, the backoffice's re-checks answer to the sign-in's lock and its edges hold, the Improv glue drops a link once, the firmware host tests gain sanitized lanes, canary-wap refuses a Chirp send and a Tuning Lab body it cannot read, and the Lab's voice board plays (#2016, wave 27)
+
+- **adapter_host refuses a replayable webhook off loopback (found by this
+  wave's audit; no backlog id).** Off loopback with no TLS and no
+  `ADAPTER_WEBHOOK_ALLOW_INSECURE=1`, a bare `hmac_secret` (no
+  `hmac_replay_window_secs`) is refused at start, as a plain-HTTP bearer token
+  already was: it signs the body only, so a captured request could be
+  replayed at any time and onto any route sharing the secret. A blank
+  `auth_token` or `hmac_secret` is refused there too unless mutual TLS
+  authenticates the client. **This refuses configs that started before**; the
+  refusal names the client change (`X-Timestamp`, `X-Nonce` and a signature
+  over `<timestamp>.<nonce>.<path>.<body>`). In windowed mode the listener
+  remembers each accepted MAC beside its nonce for 2 × window + 1 s, so a
+  request repeated, or its signed bytes re-split onto another route, inside
+  that time is refused, a window of 0 included. The wire calls left open are
+  A139.
+- **export_verify says when its verdict is only self-consistent (audit; no
+  id).** With no `--public-key`, `--public-key-file`, `--device-key-seed` or
+  `DEVICE_KEY_SEED`, the key came from the database under audit, and a
+  database and bundle rewritten under another key printed the pinned run's
+  `OK: export bundle hash verified.` The last line now follows `log_verify`'s
+  rule, anchored when a flag carried the key and `SELF-CONSISTENT, IDENTITY
+  UNVERIFIED` when none did, and exit codes are unchanged.
+  `tests/export_verify_cli.rs` is the binary's first CLI test. What the audit
+  found beside it is A140-A142.
+- **The hub roll-call keeps a displaced Canary's pin (audit; in part,
+  A143).** At the 64-id cap a displaced Canary lost its whole record, so a
+  broker peer could flood it out and pin its own key under the real id. A
+  displaced id now keeps its pinned key, verified length, state mark and
+  sticky conflict in a ledger of 256 (`FLEET_PEER_DISPLACED_MAX`), restored
+  before its next publish is judged; a newcomer is still never refused. The
+  ledger rides in the bridge's summary file as `displaced` (an older kernel
+  ignores it), and `/api/fleet` serves the same bytes. What remains is a
+  cost, measured by tests and stated in `tvos/discovery/DISCOVERY.md`,
+  FLEET_SEMANTICS, THREAT_MODEL and TRUST_MODEL.
+- **The desktop apps (audit; no ids).** The Flasher stages the unpacked hub
+  card image, which holds the Wi-Fi passphrase and the owner's bcrypt hash,
+  in the app's own cache at 0600 (since 0.12.6) and now under a random name
+  created exclusively and, on Linux and macOS (Windows writes no card yet),
+  held under an exclusive file lock until it is deleted, so a second launch's
+  sweep leaves a running write's image alone; it was
+  `securacv-hub-<pid>.img`. Safety copies are created 0600 before espflash
+  writes them, `backups/` is 0700, and every launch closes a folder an older
+  build left open. Both apps parse a device base with reqwest's url crate, so
+  `http://8.8.8.8?.local:8080` no longer passes as a `.local` name while
+  8.8.8.8 is dialed: a user, password, query, fragment, whitespace or a host
+  no request can carry is refused, and a pinned client follows a redirect
+  only back to the host it judged. The Flasher's policy names Tauri's IPC, so
+  its commands no longer fall back to `postMessage` at every launch. What
+  remains is A145-A149.
+- **The backoffice (audit; the re-checks and the clock in part, A150, A151,
+  CI34).** The password and authenticator re-checks on *Your account* count
+  against the sign-in's lock for that person at that address: eight wrong
+  lock it for fifteen minutes, and every re-check is then refused before any
+  password work, the right secret included (in the audit, one stolen session
+  ran 500 wrong codes, then a right one, with no lock). A person and an
+  invitation link each hold one password job at a time, and a second gets
+  429. Every answer is `Cache-Control: no-store` unless a public route names
+  its own caching; the JSON API and the CSV exports carried none. The status
+  probe connects only to the addresses its check judged, so a rebinding name
+  cannot point it at the box. A foreign cookie that does not percent-decode
+  no longer turns every route into `400 URI malformed`, and the dated tests
+  carry their own clock (passed under a Date shim at five dates from
+  2026-10-21 to 2028-01-01). `backoffice/CHANGELOG.md` 0.9.0 has the details.
+- **Firmware host lanes and the Improv glue (CI33, F489, F490).**
+  firmware.yml's new `common-host-test-lanes` job runs `firmware/tests_host`
+  under g++ and clang++-18 with ASan and UBSan, and under plain clang++-18; a
+  test's leaked `Heartbeat` is fixed. The Sense and Vision glue's RTC
+  first-boot window record is `volatile`, so clang no longer splits it (shown
+  at -O2, -Os and -O3; the plain clang leg holds -O2). When the stack took a
+  link drop and its event is late, the glue asks and logs once, and a drop the
+  stack refused is asked again when due (F497 holds the open calls).
+- **canary-wap POST refusals (F485, F488).** `POST /api/chirp/send` read
+  `template_id` into a byte, so 256, -1, a null or `false` went out signed as
+  template 0, "police activity in area", and any `detail` byte was signed.
+  Both are now read whole before they are narrowed: a bad template answers
+  `invalid_template`, a detail no `DETAIL_TABLE` slot names the new
+  `invalid_detail`, and the loop task's send refuses an unlisted slot before
+  any cooldown, nonce or signature. `POST /api/tune/coefficients` and
+  `/api/tune/preset` refuse a body holding a NUL (400 "body is not JSON"), and
+  both handlers run, cut verbatim, in `test_wap_tune_lab`. What was found
+  beside them is F494-F496 and the receiver's half in F412.
+- **The Lab (audit; no ids).** The Canary Voice board called
+  `createAnalyzer`, which Web Audio does not have, so its first click threw;
+  it calls `createAnalyser`. Its page is hand-written in standards mode under
+  the Lab's generated policy, split into `voice.css`, `voice.js` and the
+  generated `voice-data.js`, and `csp_probe.mjs` opens every page `gen_csp.py`
+  writes a policy into and plays the board. A deep-linked display sheet no
+  longer asks for sound the browser would refuse (59-84 autoplay warnings a
+  load before); it wakes on the first press, still chirps in a tab a Lab link
+  opened, and its sound toggle mutes the open sheet after a reopen.
+- **Backlog:** F485, F488, F489, F490 and CI33 are closed, and the
+  audit findings closed whole get no item. F364, F412, F447, A5 and CI17 now
+  say what remains. New from the wave: F494-F497, A139-A152, W43, W44 and
+  CI34-CI36, among them the templates route that still lists the removed
+  federal template (F494), witnessd's API serving one connection at a time
+  (A144) and the desktop Witness Wall that cannot reach a kernel (A149, after
+  the website's W44).
+- Host-tested here: the kernel's library and the changed binaries' tests with
+  default features (the adapter features too for the webhook change), clippy
+  with `-D warnings`, and the real `adapter_host` binary; the three desktop
+  crates' tests and clippy on Linux, with a second account run against
+  hub-io's real decompress, seed and rehash (before the replay onto main put
+  the staging in the app's cache and the decompress in `decompress_into`,
+  which only the replay's own unit tests cover); the merged backoffice suite
+  (216 of 216 after the replay, Playwright included) at today's clock and
+  under a Date shim at 2028-01-01; the four `firmware/tests_host` lanes and
+  the canary-wap host suite; the Lab's node suites and headless Chromium 153
+  probes. Left to CI, not run here: the PlatformIO builds of the glue against
+  the real NimBLE (Sense on core 3, Vision on core 2), the canary-wap sketch,
+  the new host-lane job itself, the PQC cargo lanes, the Tauri builds on
+  Windows and macOS (hub-io and the Flasher as replayed were type-checked for
+  both, clippy with `-D warnings` included, and nothing was built or linked
+  for either), the backoffice image and the tvOS build. Nothing was tried in
+  WKWebView, WebKitGTK, Safari or Firefox, against a reCamera, on a deployed
+  backoffice, or on a device.
+
 ### canary-wap reads each POST body by its own members and refuses a Chirp TTL, a Beacon pairing and a mesh hash it cannot honor, four secret compares go through a constant-time helper, the setup doors log what they refused, the Vision app keeps to its CSP, the dash sheet, the watch's boot log and the splash wordmark follow their glass, the Lab's bench keeps an erase, and the 7-inch frame's words, the build matrix's claims and the parity plan are held to what they rest on (#2013, wave 26)
 
 - **canary-wap reads a POST body by its own members (F469, F470; F459's code

@@ -3149,6 +3149,30 @@
   `magic_pairing.md` §9 row, which is unrun.
 - **Date learned:** 2026-11
 
+### Waiting on a stack's event is right only when the stack took the ask
+- **What happened:** the Sense/Vision Improv glue asked the stack to drop a
+  link and, until the disconnect event landed, re-upped the session and
+  asked again every loop pass (sweep F489). The first fix remembered the
+  link it had asked to drop and waited for its event, whatever the ask
+  answered, so a terminate the stack refused would have left a client
+  parked on the single link until it chose to leave (found in review, not
+  on a device).
+- **Root cause:** `NimBLEServer::disconnect()` only starts a terminate;
+  the event follows only when one started (or one was already going, or
+  the link was already gone). Its answer says which, and the glue threw it
+  away.
+- **Fix:** `ask_drop()` in `firmware/common/network/improv_ble.cpp` reads
+  the answer (2.x's bool; 1.4.x's code, read as 2.5.0 reads it), and the
+  link is held as down only when the ask was taken. A refused drop is asked
+  again when next due and logged once a link.
+- **Rule:** before a loop waits on an asynchronous event, read the call's
+  answer that says whether the event is coming; an ask the callee refused
+  is still yours to retry.
+- **Regression check:** `firmware/tests_host/test_improv_glue.cpp`
+  (`latedrop`, `refuseddrop`, both NimBLE majors, over stand-ins whose
+  `disconnect()` answers what the test sets). Not bench-tested.
+- **Date learned:** 2026-11
+
 ---
 
 ## Sensing & Signal Processing
@@ -3413,6 +3437,34 @@
   `usb-onboard` compile-only step and the `examples/csi_minimal` compile in
   `firmware.yml`, and `firmware/tests_host`'s `run-syntax-checks`.
 - **Date learned:** 2026-10
+
+### Bytes an earlier boot left are a store the compiler never saw, and a sanitized build keeps what the optimizer would cut (Improv glue RTC record, F490, CI33)
+- **What happened:** `improv_ble.cpp` declared its first-boot window record
+  `RTC_NOINIT_ATTR WindowRecord s_window_rtc;` (sweep F490). On the host,
+  clang++-18 at -O2, -Os and -O3 split the struct and shrank `magic` to a
+  one-byte bool, since the file only ever stores 0 or `WINDOW_MAGIC`, so any
+  nonzero byte a previous boot left would read as the magic, and the glue
+  suite's `reset` failed; g++ 13 kept the 8 bytes. The brief for the new CI
+  lanes expected the sanitized clang leg to catch it, and it could not: under
+  `-fsanitize=address` clang instruments globals and keeps the record whole,
+  so that leg passed `reset` with or without the fix (sweep CI33).
+- **Root cause:** memory a previous boot wrote is outside the C++ abstract
+  machine, so without `volatile` the compiler reasons only from this
+  program's own stores. And a sanitized build is a different program to the
+  optimizer: a bug that lives in an optimization can vanish under it.
+- **Fix:** the record is `volatile` (`firmware/common/network/improv_ble.cpp`;
+  the host stand-in `tests_host/stubs/improv_glue/esp_attr.h` places the
+  section only), and firmware.yml's `common-host-test-lanes` runs a plain
+  clang++-18 leg at the Makefile's own flags beside the g++ and clang++-18
+  ASan + UBSan legs.
+- **Rule:** declare `volatile` any memory another boot, another image or the
+  hardware writes. Keep one unsanitized second-compiler leg: a sanitizer
+  catches memory errors and can hide an optimizer's.
+- **Regression check:** firmware.yml's plain clang++-18 leg fails
+  `test_improv_glue_core3`'s `reset` without the `volatile`. The device
+  toolchains' (xtensa and riscv GCC) output was not checked, so no device
+  build is known to have shrunk the record, and nothing was bench-tested.
+- **Date learned:** 2026-11
 
 ---
 
@@ -4711,7 +4763,11 @@
   reader of a request the same bytes. The same class still read
   `/api/events/dismiss`, `/api/mqtt/config` and the Tuning Lab's POSTs
   until F469 moved them, and the reader, to `json_member.h` (the entry
-  below).
+  below). The NUL refusal stayed in the settings handler and did not travel
+  with the reader, so the Tuning Lab's import stored a preset from the bytes
+  before a NUL until F488 refused one there too (#2016): a guard that lives
+  in one handler, not in the shared reader, has to be carried to every
+  handler that reads the same way.
 - **Regression check:** canary-wap `tests_host/test_wap_tune_lab.cpp`
   (`test_the_settings_post_reads_keys_not_values`,
   `test_the_settings_reader_reads_json`, and the pins in
@@ -4754,14 +4810,25 @@
   it is narrowed. The loop task's `send_chirp()` refuses a byte outside the
   range first, before any tier expires or any cooldown, nonce, signature or
   frame, so a refused send spends nothing. The same handler's `template_id`
-  and `detail` still narrow (backlog F485).
+  and `detail` narrowed too, and were read the same way in F485
+  (`template_from_request()`, `detail_from_request()`, a loop-task refusal of
+  an unlisted slot): the template's `uint8_t template_id_raw =
+  input["template_id"]` read every integer past a byte, and a null, as 0
+  (ArduinoJson's `as<uint8_t>()` answers 0 out of range, it does not wrap),
+  and 0 is a real template, "police activity in area"; the brief had assumed
+  272 became 16. The detail's `uint8_t detail_raw = input["detail"] | 0` was
+  this entry's own mistake again, a default taken for a range check: it
+  signed the unlisted slot 4 as 4 and 272 as 16. A zero a conversion falls
+  back to is a value, not a refusal, whenever the enum names 0.
 - **Rule:** read a wire integer as `is<int32_t>()`, range-check it, then
   narrow; `| default` is for an absent key only. Check a claim about a
   library's coercion by running the library, not by reading the call.
 - **Regression check:** canary-wap `tests_host/test_chirp_commands_wap.cpp`
   (`a_send_outside_5_to_60_minutes_is_refused`,
-  `the_send_handler_reads_ttl_minutes`, `a_ttl_refusal_expires_no_tier`) and
-  `check_wap_loop_commands.py`'s CV7 pin on the handler's read.
+  `the_send_handler_reads_ttl_minutes`, `a_ttl_refusal_expires_no_tier`;
+  for F485 `a_send_naming_no_detail_slot_is_refused`,
+  `the_send_handler_reads_template_id`, `the_send_handler_reads_detail`) and
+  `check_wap_loop_commands.py`'s CV7 pins on the handler's reads.
 - **Date learned:** 2026-11
 
 ### A stub that answers "started" claims work nobody built, and a cancel of nothing must not reset the state (canary-wap Beacon pairing, F30)

@@ -189,22 +189,38 @@ listen_addr = "127.0.0.1:8800"   # loopback by default
 # sandbox = true                 # parse request bodies inside the seccomp sandbox
 #
 # Authentication — REQUIRED on anything but loopback (the webhook is the one untrusted, network-
-# facing ingress). Pick ONE; hmac_secret wins if both are set.
+# facing ingress), and on plain HTTP it must be one a captured request cannot replay. Pick ONE;
+# hmac_secret wins if both are set. An empty or all-whitespace secret counts as none.
 # auth_token = "change-me"       # require: Authorization: Bearer change-me
+#                                #   travels in the clear: off loopback it needs tls_cert/tls_key
 # hmac_secret = "change-me"      # require: X-Signature: sha256=<HMAC-SHA256(secret, body)>
 #                                #   sig=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex | sed 's/^.* //')
 #                                #   curl -H "X-Signature: sha256=$sig" -d "$BODY" http://host:8800/path
 #
+# A bare hmac_secret signs the BODY ONLY: no time, no nonce, no route. Anyone who sees one request
+# can replay it later, and to any other route that shares the secret (the route, not the body,
+# picks the claim kind and zone). So off loopback it needs hmac_replay_window_secs below, or
+# tls_cert/tls_key; adapter_host refuses to start a bare hmac_secret on plain HTTP off loopback.
+#
 # HMAC replay protection (only with hmac_secret). When set, the client must also send X-Timestamp
 # (unix seconds, within the window) and a unique X-Nonce, and sign "<timestamp>.<nonce>.<path>.<body>"
-# (the path is bound in so a signature can't be replayed against a different route):
+# (a client that keeps signing the body only gets 401, and adapter_host logs nothing about it):
 #   ts=$(date +%s); nonce=$(openssl rand -hex 8); path=/sensors/garage/acoustic
 #   sig=$(printf '%s.%s.%s.%s' "$ts" "$nonce" "$path" "$BODY" | openssl dgst -sha256 -hmac "$SECRET" -hex | sed 's/^.* //')
 #   curl -H "X-Timestamp: $ts" -H "X-Nonce: $nonce" -H "X-Signature: sha256=$sig" -d "$BODY" "http://host:8800$path"
+# adapter_host remembers the nonce and the signature of every request it accepts until its timestamp
+# expires, and refuses either one used again: a captured request is refused as sent, on another
+# route, and split differently (the signed string has no length fields, so the same bytes can be
+# read as another nonce, path and body). What that leaves: the memory is per webhook adapter and in
+# memory only, so after a restart a request whose timestamp still passes can be used once more;
+# and someone on the network path who stops a signed request from arriving can deliver it re-split
+# onto another route whose path the signed bytes carry between two dots (".<route>."). So keep the
+# window short, give each webhook adapter its own secret, and use TLS where that path is not yours.
 # hmac_replay_window_secs = 300
 #
-# TLS — strongly recommended for any non-loopback listener, so bearer tokens aren't sent in the
-# clear. Set both; generate a cert with e.g.
+# TLS — strongly recommended for any non-loopback listener, and what lets auth_token or a bare
+# hmac_secret bind off loopback (the network then sees no request it could copy). Set both;
+# generate a cert with e.g.
 #   openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj "/CN=host"
 # tls_cert = "/etc/securacv/webhook_cert.pem"
 # tls_key  = "/etc/securacv/webhook_key.pem"

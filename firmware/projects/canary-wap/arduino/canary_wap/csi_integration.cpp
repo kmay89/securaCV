@@ -1620,6 +1620,18 @@ esp_err_t handle_tune_post_coefficients(httpd_req_t* req) {
     httpd_resp_set_status(req, "400 Bad Request");
     return httpd_resp_send(req, "{\"ok\":false,\"reason\":\"body read failed\"}", -1);
   }
+  /* A NUL inside the body is no JSON byte, and tune_post() reads the body
+   * to its first one (strlen()): {"core.presence.preset":2} followed by a
+   * NUL and junk stored the preset and answered ok, where the same body
+   * with the junk and no NUL is refused, since nothing but whitespace may
+   * follow the object (json_member.h). Refused here, before any key is
+   * read, as handle_settings_post() refuses one (sweep F488; F462 there).
+   * /api/tune/preset is this handler too. */
+  if (memchr(body, '\0', got) != nullptr) {
+    free(body);
+    httpd_resp_set_status(req, "400 Bad Request");
+    return httpd_resp_send(req, "{\"ok\":false,\"reason\":\"body is not JSON\"}", -1);
+  }
 
   const TunePost post = tune_post(body, reinit_module);
   free(body);

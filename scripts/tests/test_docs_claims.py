@@ -8937,6 +8937,81 @@ class TheClaimsHoldToTheCode(unittest.TestCase):
             self.assertTrue("# add the ids your install shows (see below)." in recipe,
                             "the HomeKit recipe's filter put HA15's lines back while HA16's row is open")
 
+    def test_the_roll_call_docs_state_the_displaced_pin_bound_the_kernel_keeps(self):
+        # src/fleet_peers.rs's tests measure the displaced-pin bound from two
+        # constants, and the Wall's contract (DISCOVERY.md) and
+        # FLEET_SEMANTICS.md spell the numbers out. The pin lives here, in
+        # lint.yml's unfiltered run, rather than as a Rust test: rust.yml's
+        # path filter does not see those two docs, so a docs-only PR that
+        # reworded a number would merge green and the red would land on the
+        # next unrelated Rust PR (the bench-rows lesson in lint.yml). A
+        # change to either constant fails here until the prose follows.
+        consts = fleet_peer_consts((REPO / "src/fleet_peers.rs").read_text(encoding="utf-8"))
+        cap, ledger = consts["FLEET_PEER_MAX"], consts["FLEET_PEER_DISPLACED_MAX"]
+        discovery = normalized((REPO / "tvos/discovery/DISCOVERY.md").read_text(encoding="utf-8"))
+        semantics = normalized((REPO / "docs/FLEET_SEMANTICS.md").read_text(encoding="utf-8"))
+        for doc, text, phrase in [
+            ("DISCOVERY.md", discovery, f"holds at most {cap} ids (`FLEET_PEER_MAX`)"),
+            ("DISCOVERY.md", discovery, f"in a ledger of {ledger} displaced ids (`FLEET_PEER_DISPLACED_MAX`)"),
+            ("DISCOVERY.md", discovery,
+             f"let go only after {ledger} more ids that held a pin or a verified length were "
+             "displaced after it and not heard since"),
+            ("DISCOVERY.md", discovery, f"then at most {ledger} `health` publishes"),
+            ("DISCOVERY.md", discovery, f"about {cap} proven ids"),
+            ("DISCOVERY.md", discovery,
+             "one newcomer is enough when every resident is proven and that Canary is the least "
+             "recently heard"),
+            ("FLEET_SEMANTICS.md", semantics, f"at the cap ({cap})"),
+            ("FLEET_SEMANTICS.md", semantics, f"in a ledger of {ledger} displaced ids"),
+            ("FLEET_SEMANTICS.md", semantics,
+             f"let go only after {ledger} later displacements of pinned ids not heard since"),
+            ("FLEET_SEMANTICS.md", semantics,
+             f"until {ledger} later displacements of pinned ids not heard since"),
+            ("FLEET_SEMANTICS.md", semantics, f"keeps in the {ledger}-entry ledger"),
+            ("FLEET_SEMANTICS.md", semantics, f"out of the {ledger}-entry ledger"),
+        ]:
+            with self.subTest(doc=doc, phrase=phrase):
+                self.assertIn(phrase, text, f"{doc} no longer says {phrase!r}")
+
+    def test_the_roll_call_constants_are_read_or_refused(self):
+        # The reader the pin above leans on: a literal, a product of literals
+        # and earlier constants, and nothing else — an expression it cannot
+        # evaluate fails rather than pins the prose to a guess.
+        self.assertEqual(
+            fleet_peer_consts("pub const FLEET_PEER_MAX: usize = 64;\n"
+                              "pub const FLEET_PEER_DISPLACED_MAX: usize = 4 * FLEET_PEER_MAX;\n"),
+            {"FLEET_PEER_MAX": 64, "FLEET_PEER_DISPLACED_MAX": 256})
+        for bad in ("pub const FLEET_PEER_MAX: usize = 64;\n",
+                    "pub const FLEET_PEER_MAX: usize = 64;\n"
+                    "pub const FLEET_PEER_DISPLACED_MAX: usize = FLEET_PEER_MAX << 2;\n",
+                    "pub const FLEET_PEER_MAX: usize = 64;\n"
+                    "pub const FLEET_PEER_DISPLACED_MAX: usize = 4 * OTHER_MAX;\n"):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                fleet_peer_consts(bad)
+
+
+def fleet_peer_consts(src: str) -> dict[str, int]:
+    """FLEET_PEER_MAX and FLEET_PEER_DISPLACED_MAX as src/fleet_peers.rs sets them.
+
+    Each is a literal or a product of literals and constants read before it;
+    anything else raises ValueError.
+    """
+    out: dict[str, int] = {}
+    for name in ("FLEET_PEER_MAX", "FLEET_PEER_DISPLACED_MAX"):
+        m = re.search(rf"^pub const {name}: usize = ([^;]+);$", src, re.M)
+        if m is None:
+            raise ValueError(f"no `pub const {name}: usize = ...;` in src/fleet_peers.rs")
+        value = 1
+        for factor in (f.strip() for f in m.group(1).split("*")):
+            if re.fullmatch(r"[0-9][0-9_]*", factor):
+                value *= int(factor.replace("_", ""))
+            elif factor in out:
+                value *= out[factor]
+            else:
+                raise ValueError(f"cannot read {name} = {m.group(1)!r}: {factor!r}")
+        out[name] = value
+    return out
+
 
 
 # ── The parity ledgers' health rows, held to the code (sweep F20, slice b) ──

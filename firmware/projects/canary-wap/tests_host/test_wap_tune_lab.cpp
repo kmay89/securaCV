@@ -27,9 +27,11 @@
 // the Quiet Hours reader, store and apply (csi_settings_nvs.cpp), the staged CSI
 // library (chokepoint, bundler, module registry) and the staged modules, over
 // a fake NVS (stubs/module_boot). What is modeled: csi_integration.cpp, which
-// no host suite compiles. Its handlers are thin around these functions, and
-// the source pins at the end hold them to that (each pin is checked against
-// in-memory mutations of the source, so it is known to bite): GET
+// no host suite compiles whole (the Tuning Lab's two POST handlers are cut
+// out of it and run, below, F488). Its handlers are thin around these
+// functions, and the source pins at the end hold them to that (each pin is
+// checked against in-memory mutations of the source, so it is known to
+// bite): GET
 // /api/settings reads Quiet Hours through read_quiet_hours(), and its POST
 // stores them through store_quiet_hours_from_settings() and applies them
 // once after closing NVS; the Tuning Lab POST hands
@@ -72,12 +74,25 @@
 // file outside a read_all() call, each route's read and refusals) fail on
 // the code before it.
 //
+// F488: the Tuning Lab's import (POST /api/tune/coefficients, and
+// /api/tune/preset, the same handler) handed tune_post() a body that held a
+// NUL, and tune_post() reads to the first one, so
+// {"core.presence.preset":2}, a NUL and junk stored the preset and answered
+// ok. The handler refuses such a body now, 400 "body is not JSON", as the
+// settings POST does. Both handlers are cut verbatim out of
+// csi_integration.cpp (the Makefile's TUNELAB_INC) and run over the real
+// tune_post() and body reader: every NUL body, through both routes, is
+// refused with nothing stored and its buffer freed, and fails on the code
+// before F488 (answered 200 and stored the preset); the source pin holds
+// the refusal's place among the read refusals.
+//
 // Build/run: make -C firmware/projects/canary-wap/tests_host
 
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
@@ -1460,6 +1475,170 @@ static int test_the_post_stores_only_known_knobs() {
   return 0;
 }
 
+// A body that holds a NUL (sweep F488). tune_post() reads its body to the
+// first NUL (strlen()), so the import's bytes {"core.presence.preset":2},
+// a NUL and junk reach it as the object alone, which it stores; the same
+// bytes with the NUL left out are refused, since nothing but whitespace may
+// follow the object (json_member.h). The handler, the one caller, refuses a
+// body that holds a NUL before tune_post() is called, 400 "body is not
+// JSON", as the settings POST does (body_read_problems() pins it, with
+// mutations, and the_import_handlers_refuse_a_body_with_a_nul runs the two
+// handlers cut verbatim); this case is why the refusal is the handler's to
+// make.
+static int test_a_body_with_a_nul_is_the_handlers_to_refuse() {
+  host_prefs().clear();
+  reboot_and_boot();
+  CHECK(lab_value("core.presence.preset") != 2);
+  const char bytes[] = "{\"core.presence.preset\":2}\0junk";
+  const std::string body(bytes, sizeof(bytes) - 1);
+  CHECK(std::memchr(body.data(), '\0', body.size()) != nullptr);   // what the handler now refuses
+
+  std::string joined = body;                                       // the NUL left out
+  joined.erase(joined.find('\0'), 1);
+  TunePost post = tune_post(joined.c_str(), reinit_module_model);
+  CHECK(post.nvs_ok && post.changed == 0);
+  CHECK(lab_value("core.presence.preset") != 2 && g_reinits.empty());
+
+  post = tune_post(body.c_str(), reinit_module_model);             // what it was handed before F488
+  CHECK(post.nvs_ok && post.changed == 1 && post.reinit_presence);
+  CHECK(lab_value("core.presence.preset") == 2);
+  host_prefs().clear();
+  return 0;
+}
+
+// ── The import's two handlers, cut verbatim (sweep F488) ────────────────
+// handle_tune_post_coefficients() and handle_tune_post_preset() cut out of
+// csi_integration.cpp (firmware/tests_host/cut_functions.awk) into a
+// namespace that gives them a counting malloc() and free(), the model's
+// reinit_module() and an authorization that only counts its asks, over the
+// real http_body_reader.h and tune_post(), with stubs/mqtt's request (a body
+// the handler reads, a socket plan, and the answer it wrote). So the answer
+// each body gets, what it stored and whether the buffer was freed are run,
+// not read from the source: before F488 the NUL bodies were answered
+// 200 {"ok":true,"changed":1} and stored the preset, through both routes.
+#include "esp_err.h"                      // stubs/module_boot, before the request's ESP_OK
+#include "stubs/mqtt/esp_http_server.h"
+#include "http_body_reader.h"
+#ifndef TUNE_POST_INC
+#error "build with -DTUNE_POST_INC=\"<the handlers cut out of csi_integration.cpp>\""
+#endif
+namespace import_route {
+static int g_mallocs = 0;
+static int g_frees = 0;
+static int g_auth_asks = 0;
+static void* malloc(size_t n) { ++g_mallocs; return std::malloc(n); }
+static void free(void* p) { if (p != nullptr) ++g_frees; std::free(p); }
+static void reinit_module(const char* module_id) { reinit_module_model(module_id); }
+#define CSI_AUTH_OR_RETURN(req) do { (void)(req); ++g_auth_asks; } while (0)
+#include TUNE_POST_INC
+#undef CSI_AUTH_OR_RETURN
+}  // namespace import_route
+
+// One POST of `body` to a route: content_len is the body's length unless
+// `content_len` names another (a body that stops early), and `plan` is the
+// socket's answers (stubs/mqtt). Clears the counters first.
+struct ImportAnswer {
+  std::string status;
+  std::string resp;
+  int mallocs;
+  int frees;
+  int auth_asks;
+};
+static ImportAnswer post_import(esp_err_t (*route)(httpd_req_t*), const std::string& body,
+                                size_t content_len = SIZE_MAX, std::vector<int> plan = {}) {
+  import_route::g_mallocs = import_route::g_frees = import_route::g_auth_asks = 0;
+  g_reinits.clear();
+  httpd_req_t req;
+  req.body = body;
+  req.content_len = content_len == SIZE_MAX ? body.size() : content_len;
+  req.recv_plan = std::move(plan);
+  route(&req);
+  return {req.status, req.resp, import_route::g_mallocs, import_route::g_frees, import_route::g_auth_asks};
+}
+
+// Each body through both routes: the answer, what was stored, and every
+// buffer the handler allocated freed (sweep F488 for the NUL rows; the
+// read refusals are F300's, run here for the first time).
+static int test_the_import_handlers_refuse_a_body_with_a_nul() {
+  const char* const kRefused = "{\"ok\":false,\"reason\":\"body is not JSON\"}";
+  const char nul_after[] = "{\"core.presence.preset\":2}\0junk";
+  const char nul_first[] = "\0{\"core.presence.preset\":2}";
+  const char nul_in_string[] = "{\"core.presence.preset\":2,\"x\":\"a\0b\"}";
+  const char nul_at_end[] = "{\"core.presence.preset\":2}\0";
+  const std::string nul_bodies[] = {
+      std::string(nul_after, sizeof nul_after - 1),
+      std::string(nul_first, sizeof nul_first - 1),
+      std::string(nul_in_string, sizeof nul_in_string - 1),
+      std::string(nul_at_end, sizeof nul_at_end - 1),
+  };
+  struct Route { const char* name; esp_err_t (*fn)(httpd_req_t*); int asks; };
+  const Route routes[] = {
+      {"/api/tune/coefficients", import_route::handle_tune_post_coefficients, 1},
+      {"/api/tune/preset", import_route::handle_tune_post_preset, 2},   // its own ask, then the handler's
+  };
+  for (const Route& r : routes) {
+    std::fprintf(stderr, "  %s\n", r.name);
+    host_prefs().clear();
+    reboot_and_boot();
+    const int32_t before = lab_value("core.presence.preset");
+    CHECK(before != 2);
+
+    for (const std::string& body : nul_bodies) {
+      const ImportAnswer a = post_import(r.fn, body);
+      if (a.resp != kRefused) std::fprintf(stderr, "  answered %s %s\n", a.status.c_str(), a.resp.c_str());
+      CHECK(a.status == "400 Bad Request" && a.resp == kRefused);
+      CHECK(lab_value("core.presence.preset") == before && g_reinits.empty());
+      CHECK(a.mallocs == 1 && a.frees == 1 && a.auth_asks == r.asks);
+    }
+
+    // The same bytes with the NUL left out: tune_post() refuses the junk
+    // after the object, so the NUL was all that let it through.
+    ImportAnswer a = post_import(r.fn, "{\"core.presence.preset\":2}junk");
+    CHECK(a.status == "400 Bad Request" && a.resp == "{\"ok\":false,\"reason\":\"no recognized keys\"}");
+    CHECK(lab_value("core.presence.preset") == before && a.mallocs == 1 && a.frees == 1);
+
+    // The read refusals: empty and over 4 KB (nothing allocated), a body
+    // that stops before its Content-Length, a socket error, a fourth
+    // timeout. Each frees what it allocated and stores nothing.
+    a = post_import(r.fn, "");
+    CHECK(a.status == "400 Bad Request" && a.resp == "{\"ok\":false,\"reason\":\"empty or too large\"}");
+    CHECK(a.mallocs == 0 && a.frees == 0);
+    a = post_import(r.fn, std::string(4097, ' '));
+    CHECK(a.status == "400 Bad Request" && a.resp == "{\"ok\":false,\"reason\":\"empty or too large\"}");
+    CHECK(a.mallocs == 0 && a.frees == 0);
+    const std::string whole = "{\"core.presence.preset\":2}";
+    const std::vector<std::vector<int>> failed_reads = {
+        {},                                                                      // the peer closes early
+        {HTTPD_SOCK_ERR_FAIL},
+        {HTTPD_SOCK_ERR_TIMEOUT, HTTPD_SOCK_ERR_TIMEOUT, HTTPD_SOCK_ERR_TIMEOUT, HTTPD_SOCK_ERR_TIMEOUT},
+    };
+    for (size_t i = 0; i < failed_reads.size(); ++i) {
+      a = post_import(r.fn, whole, i == 0 ? whole.size() + 10 : whole.size(), failed_reads[i]);
+      CHECK(a.status == "400 Bad Request" && a.resp == "{\"ok\":false,\"reason\":\"body read failed\"}");
+      CHECK(lab_value("core.presence.preset") == before && g_reinits.empty());
+      CHECK(a.mallocs == 1 && a.frees == 1);
+    }
+
+    // NVS refusing every open: 503, the buffer freed.
+    host_prefs().fail_begin = true;
+    a = post_import(r.fn, whole);
+    host_prefs().fail_begin = false;
+    CHECK(a.status == "503 Service Unavailable" && a.resp == "{\"ok\":false,\"reason\":\"nvs unavailable\"}");
+    CHECK(lab_value("core.presence.preset") == before && a.mallocs == 1 && a.frees == 1);
+
+    // Three timeouts are sat out, and the object alone is stored: the
+    // answer the import has always given, its buffer freed.
+    a = post_import(r.fn, whole, SIZE_MAX,
+                    {HTTPD_SOCK_ERR_TIMEOUT, HTTPD_SOCK_ERR_TIMEOUT, HTTPD_SOCK_ERR_TIMEOUT});
+    CHECK(a.status == "200 OK" && a.resp == "{\"ok\":true,\"changed\":1}");
+    CHECK(lab_value("core.presence.preset") == 2);
+    CHECK((g_reinits == std::vector<std::string>{"core.presence"}));
+    CHECK(a.mallocs == 1 && a.frees == 1 && a.auth_asks == r.asks);
+  }
+  host_prefs().clear();
+  return 0;
+}
+
 // ── Source pins: csi_integration.cpp is thin around the above ───────────
 static std::string read_source(const char* name) {
   std::ifstream in(std::string(WAP_SKETCH_DIR) + "/" + name);
@@ -1913,7 +2092,10 @@ static std::vector<std::string> body_read_problems(const std::string& integ) {
   }
   // The Tuning Lab's import: its size check (the empty-body answer, and
   // the 4 KB one) kept, the read into the body it allocated, each refusal
-  // answered and the buffer freed, then tune_post().
+  // answered and the buffer freed, then a body that holds a NUL refused and
+  // freed as the settings POST refuses one (sweep F488: tune_post() reads
+  // to the first NUL, so {"core.presence.preset":2}, a NUL and junk stored
+  // the preset), then tune_post(). /api/tune/preset is this handler.
   const std::string tune = code_body(integ, kTunePost);
   if (count_of(tune,
                R"PIN(size_ttotal=req->content_len;if(total==0||total>4096){)PIN"
@@ -1928,9 +2110,13 @@ static std::vector<std::string> body_read_problems(const std::string& integ) {
                R"PIN(returnhttpd_resp_send(req,"{\"ok\":false,\"reason\":\"emptyortoolarge\"}",-1);})PIN"
                R"PIN(if(read!=http_body::OK){free(body);httpd_resp_set_status(req,"400BadRequest");)PIN"
                R"PIN(returnhttpd_resp_send(req,"{\"ok\":false,\"reason\":\"bodyreadfailed\"}",-1);})PIN"
+               R"PIN(if(memchr(body,'\0',got)!=nullptr){free(body);httpd_resp_set_status(req,"400BadRequest");)PIN"
+               R"PIN(returnhttpd_resp_send(req,"{\"ok\":false,\"reason\":\"bodyisnotJSON\"}",-1);})PIN"
                R"PIN(constTunePostpost=tune_post(body,reinit_module);)PIN") != 1 ||
-      count_of(tune, "read_all(") != 1 || tune.find("ESP_FAIL") != std::string::npos) {
-    out.push_back("the Tuning Lab's import does not read its body whole and answer a refusal by name");
+      count_of(tune, "read_all(") != 1 || count_of(tune, "memchr(") != 1 ||
+      tune.find("ESP_FAIL") != std::string::npos) {
+    out.push_back("the Tuning Lab's import does not read its body whole, answer a refusal by name and refuse "
+                  "a body that holds a NUL before tune_post() reads it");
   }
   return out;
 }
@@ -2027,6 +2213,24 @@ static int test_csi_integration_reads_every_body_whole() {
      "HTTPD_SOCK_ERR_TIMEOUT, 0, &got);"},
     {"the import reads past the body it was sent", kImport, "      total, body, total + 1,",
      "      total + 64, body, total + 65,"},
+    // A body that holds a NUL (sweep F488): the code before it, then each
+    // piece of the refusal.
+    {"the import hands tune_post() a body that holds a NUL", kImport,
+     "  if (memchr(body, '\\0', got) != nullptr) {\n"
+     "    free(body);\n"
+     "    httpd_resp_set_status(req, \"400 Bad Request\");\n"
+     "    return httpd_resp_send(req, \"{\\\"ok\\\":false,\\\"reason\\\":\\\"body is not JSON\\\"}\", -1);\n"
+     "  }\n", ""},
+    {"the import looks for a NUL only up to the first NUL", kImport,
+     "  if (memchr(body, '\\0', got) != nullptr) {", "  if (memchr(body, '\\0', strlen(body)) != nullptr) {"},
+    {"the import keeps its buffer on a NUL refusal", kImport,
+     "  if (memchr(body, '\\0', got) != nullptr) {\n    free(body);\n",
+     "  if (memchr(body, '\\0', got) != nullptr) {\n"},
+    {"the import answers a NUL body but goes on", kImport,
+     "    return httpd_resp_send(req, \"{\\\"ok\\\":false,\\\"reason\\\":\\\"body is not JSON\\\"}\", -1);\n",
+     "    httpd_resp_send(req, \"{\\\"ok\\\":false,\\\"reason\\\":\\\"body is not JSON\\\"}\", -1);\n"},
+    {"the import answers a NUL body as a failed read", kImport,
+     "\\\"reason\\\":\\\"body is not JSON\\\"", "\\\"reason\\\":\\\"body read failed\\\""},
   };
   for (const Mutation& mu : kMutations) {
     std::string src = integ;
@@ -2038,6 +2242,21 @@ static int test_csi_integration_reads_every_body_whole() {
       std::fprintf(stderr, "mutation '%s' was not caught\n", mu.name);
       CHECK(false);
     }
+  }
+  // The NUL refusal moved below tune_post(): the keys before the NUL would
+  // be stored, and the body refused after.
+  {
+    const std::string refusal =
+        "  if (memchr(body, '\\0', got) != nullptr) {\n"
+        "    free(body);\n"
+        "    httpd_resp_set_status(req, \"400 Bad Request\");\n"
+        "    return httpd_resp_send(req, \"{\\\"ok\\\":false,\\\"reason\\\":\\\"body is not JSON\\\"}\", -1);\n"
+        "  }\n";
+    const std::string call = "  const TunePost post = tune_post(body, reinit_module);\n";
+    std::string moved = integ;
+    CHECK(mutate_after(moved, kImport, refusal, ""));
+    CHECK(mutate_after(moved, kImport, call, call + refusal));
+    CHECK(!body_read_problems(moved).empty());
   }
   return 0;
 }
@@ -3428,6 +3647,8 @@ int main(int argc, char** argv) {
     {"the_quiet_hours_rows_keep_their_stored_names", test_the_quiet_hours_rows_keep_their_stored_names},
     {"every_knob_applies_at_once_to_its_group", test_every_knob_applies_at_once_to_its_group},
     {"the_post_stores_only_known_knobs", test_the_post_stores_only_known_knobs},
+    {"a_body_with_a_nul_is_the_handlers_to_refuse", test_a_body_with_a_nul_is_the_handlers_to_refuse},
+    {"the_import_handlers_refuse_a_body_with_a_nul", test_the_import_handlers_refuse_a_body_with_a_nul},
     {"the_dashboard_writes_the_presence_rows_the_module_reads",
      test_the_dashboard_writes_the_presence_rows_the_module_reads},
     {"the_calibration_writes_the_thresholds_the_module_reads",

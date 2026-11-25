@@ -885,27 +885,39 @@ clean: clean-wap-module-boot
 # once; every knob applies to its own group; the dashboard and the Lab write
 # the rows the reader reads, under their stored names. It reads
 # csi_integration.cpp to hold its handlers thin around that code
-# (mutation-checked).
+# (mutation-checked), and runs the Lab's import itself (sweep F488):
+# handle_tune_post_coefficients() and handle_tune_post_preset() cut verbatim
+# out of csi_integration.cpp (firmware/tests_host/cut_functions.awk) into a
+# namespace with a counting malloc()/free(), over the real
+# http_body_reader.h and stubs/mqtt's request, so each body's answer, what
+# it stored and the freed buffer are run on both routes.
 TUNELAB_BIN = test_wap_tune_lab
 TUNELAB_SRC = test_wap_tune_lab.cpp
+TUNELAB_INC = test_wap_tune_lab_post.inc
+TUNELAB_CUT = ../../../tests_host/cut_functions.awk
+CUT_INCS   += $(TUNELAB_INC)
 TUNELAB_LIB = $(SRC_DIR)/csi_tune_lab.cpp $(SRC_DIR)/csi_settings_nvs.cpp \
               $(SRC_DIR)/csi_event.cpp $(SRC_DIR)/csi_bundler.cpp $(SRC_DIR)/csi_module.cpp \
               $(SRC_DIR)/core_presence.cpp $(SRC_DIR)/core_breathing.cpp \
               $(SRC_DIR)/anomaly_baseline.cpp $(SRC_DIR)/meta_quiet_hours.cpp
 
-$(TUNELAB_BIN): $(TUNELAB_SRC) $(TUNELAB_LIB) $(SRC_DIR)/csi_tune_lab.h $(SRC_DIR)/csi_settings_nvs.h \
+$(TUNELAB_INC): $(SRC_DIR)/csi_integration.cpp $(TUNELAB_CUT) Makefile
+	awk -v 'sigs=esp_err_t handle_tune_post_coefficients(httpd_req_t* req) {|esp_err_t handle_tune_post_preset(httpd_req_t* req) {' \
+	  -f $(TUNELAB_CUT) $(SRC_DIR)/csi_integration.cpp > $@.tmp && mv $@.tmp $@
+
+$(TUNELAB_BIN): $(TUNELAB_SRC) $(TUNELAB_INC) $(TUNELAB_LIB) $(SRC_DIR)/csi_tune_lab.h $(SRC_DIR)/csi_settings_nvs.h \
                 $(SRC_DIR)/csi_module_settings_nvs.h $(SRC_DIR)/csi_module.h $(SRC_DIR)/csi_event.h \
-                $(SRC_DIR)/csi_integration.cpp $(SRC_DIR)/csi_dashboard_html.h \
-                $(wildcard stubs/module_boot/*.h)
+                $(SRC_DIR)/csi_integration.cpp $(SRC_DIR)/csi_dashboard_html.h $(SRC_DIR)/http_body_reader.h \
+                stubs/mqtt/esp_http_server.h $(wildcard stubs/module_boot/*.h)
 	$(call with_deps,$(CXX) $(CXXFLAGS) -Werror $(NO_STRINGOP_TRUNC) $(NO_UNUSED_CONST) -DCSI_TEST_HOST_BUILD \
-	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' \
+	  -DWAP_SKETCH_DIR='"$(abspath $(SRC_DIR))"' -DTUNE_POST_INC='"$(TUNELAB_INC)"' \
 	  -I stubs/module_boot -I $(SRC_DIR) -o $@ $(TUNELAB_SRC) $(TUNELAB_LIB))
 
 .PHONY: run-wap-tune-lab clean-wap-tune-lab
 run-wap-tune-lab: $(TUNELAB_BIN)
 	$(call run_marked,$(TUNELAB_BIN))
 clean-wap-tune-lab:
-	rm -f $(TUNELAB_BIN)
+	rm -f $(TUNELAB_BIN) $(TUNELAB_INC)
 run: run-wap-tune-lab
 clean: clean-wap-tune-lab
 

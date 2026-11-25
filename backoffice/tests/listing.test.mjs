@@ -63,7 +63,9 @@ test('the storefront serves the edit and names the state; the checkout refuses a
 });
 
 test('where sales tax is owed: the home state always, any state over its threshold, a warning within 20%; the doctor says it in one sentence', () => {
-  const db = testDb(); const cfg = testCfg({ secret: 's', shipFromState: 'MA' }); const now = Date.parse('2026-10-26T12:00:00Z');
+  // the orders are dated back from the wall clock, the doctor's own (doctor() takes none): a fixed date would leave
+  // every order out of the doctor's trailing year a year after it, and its sales-tax row would have nothing to say
+  const db = testDb(); const cfg = testCfg({ secret: 's', shipFromState: 'MA' }); const now = Date.now();
   assert.equal(thresholdFor('CA').sales_cents, 500_00 * 1000); assert.equal(thresholdFor('ZZ').sales_cents, 100_00 * 1000); assert.ok(NO_SALES_TAX.has('OR'));
   let v = taxVerdict(db, cfg, { now }); assert.equal(v.ok, null, 'no sales: nothing to say');
   const order = (state, cents, n = 1, ago = 10) => { for (let i = 0; i < n; i++) recordOrder(db, sampleOrder({ external_id: `cs_${state}_${cents}_${i}_${Math.random()}`, paid_at: iso(now - ago * D), total_cents: cents, subtotal_cents: cents - 800, ship: { line1: '1 St', city: 'X', state, zip: '02139', country: 'US' } }), { catalog: catalog(), actor: 'test' }); };

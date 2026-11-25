@@ -23,10 +23,12 @@
 // NimBLEService::start() answers true; getAdvertising(), createServer(),
 // createService() and createCharacteristic() allocate and never answer null
 // on either). disconnect() asks the stack to drop a link and returns at once,
-// as ble_gap_terminate() does; the event that says the link is gone comes
-// later on the host task, so the test delivers it (test_improv_glue.cpp's
-// host_turn()). What a characteristic was given (its value, each
-// notification) and what went on air are kept for the test to read.
+// as ble_gap_terminate() does, with the code the test set
+// (NimBLEServer::g_terminate_rc), answered as each release answers it; the
+// event that says the link is gone comes later on the host task, so the test
+// delivers it (test_improv_glue.cpp's host_turn()). What a characteristic
+// was given (its value, each notification) and what went on air are kept
+// for the test to read.
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -47,6 +49,13 @@
 #define BLE_HS_ADV_F_BREDR_UNSUP 0x04
 #define BLE_HS_IO_NO_INPUT_OUTPUT 3
 #define BLE_HS_CONN_HANDLE_NONE 0xffff
+#define BLE_HS_EALREADY 2
+#define BLE_HS_ENOTCONN 7
+#define BLE_HS_ETIMEOUT_HCI 19
+#define BLE_HS_ERR_HCI_BASE 0x200
+#define BLE_HS_HCI_ERR(x) ((x) ? BLE_HS_ERR_HCI_BASE + (x) : 0)
+#define BLE_ERR_UNK_CONN_ID 0x02
+#define BLE_ERR_CMD_DISALLOWED 0x0c
 #define BLE_ERR_REM_USER_CONN_TERM 0x13
 #define BLE_ATT_ATTR_MAX_LEN 512
 
@@ -198,9 +207,17 @@ class NimBLEServer {
  public:
   NimBLEServerCallbacks* cb = nullptr;
   std::vector<NimBLEService*> svcs;
-  // Every handle disconnect() was asked to drop, in order; the test's
-  // host_turn() delivers the stack's disconnect event for each live one.
+  // Every handle disconnect() was asked to drop, in order, and the code
+  // ble_gap_terminate() answered each ask; the test's host_turn() delivers
+  // the stack's disconnect event for each ask answered 0 (a terminate
+  // started) whose link is still live.
   mutable std::vector<uint16_t> disconnects;
+  mutable std::vector<int> terminate_rcs;
+  // What ble_gap_terminate() answers the next ask: 0 (started), EALREADY (one
+  // already going), ENOTCONN or BLE_HS_HCI_ERR(BLE_ERR_UNK_CONN_ID) (the
+  // host or the controller no longer holds the link), or a refusal such as
+  // BLE_HS_ETIMEOUT_HCI (no terminate started, so no event comes of it).
+  static inline int g_terminate_rc = 0;
   bool started = false;
 
   void setCallbacks(NimBLEServerCallbacks* c, bool /*deleteCallbacks*/ = true) { cb = c; }
@@ -217,15 +234,27 @@ class NimBLEServer {
 #if ESP_ARDUINO_VERSION_MAJOR >= 3
   static inline bool g_start_ok = true;   // 2.5.0: false when ble_gatts_start refuses
   bool start() { started = g_start_ok; return g_start_ok; }
+  // 2.5.0 NimBLEServer.cpp: true on 0, ENOTCONN, EALREADY and the
+  // controller's unknown connection; false on any other code.
   bool disconnect(uint16_t h, uint8_t /*reason*/ = BLE_ERR_REM_USER_CONN_TERM) const {
     disconnects.push_back(h);
-    return true;
+    terminate_rcs.push_back(g_terminate_rc);
+    switch (g_terminate_rc) {
+      case 0:
+      case BLE_HS_ENOTCONN:
+      case BLE_HS_EALREADY:
+      case BLE_HS_HCI_ERR(BLE_ERR_UNK_CONN_ID):
+        return true;
+    }
+    return false;
   }
 #else
   void start() { started = true; }      // 1.4.3: void
+  // 1.4.3 NimBLEServer.cpp: ble_gap_terminate()'s code, as it came.
   int disconnect(uint16_t h, uint8_t /*reason*/ = BLE_ERR_REM_USER_CONN_TERM) {
     disconnects.push_back(h);
-    return 0;
+    terminate_rcs.push_back(g_terminate_rc);
+    return g_terminate_rc;
   }
 #endif
 };

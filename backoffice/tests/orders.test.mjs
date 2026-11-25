@@ -33,9 +33,9 @@ test('paid → packed consumes the recipe; shipped queues the tracking mail; ref
   const mail = db.get('SELECT * FROM mail_outbox WHERE ref = ?', 'order:EL-000001');
   assert.ok(mail && mail.to_addr === 'ada@example.test' && mail.body_text.includes('Tracking: 94001'), 'the tracking number is mailed as the carrier prints it (no spaces)');
   assert.equal(orderByNumber(db, 'EL-000001').status, 'shipped');
-  refund(db, order.id, 800, { reason: 'shipping overcharge' });
+  refund(db, order.id, 800, { reason: 'shipping overcharge', at: '2026-10-20T12:00:00.000Z' });
   assert.equal(orderByNumber(db, 'EL-000001').refunded_cents, 800);
-  refund(db, order.id, 99999);
+  refund(db, order.id, 99999, { at: '2026-10-20T12:00:00.000Z' });
   assert.equal(orderByNumber(db, 'EL-000001').status, 'refunded');
   assert.throws(() => refund(db, order.id, 1), /nothing to refund/);
   const tb = trialBalance(db); assert.ok(tb.balanced);

@@ -18,11 +18,15 @@ export class HttpError extends Error {
   constructor(status, message, extra = {}) { super(message); this.status = status; Object.assign(this, extra); }
 }
 
+// The browser sends every cookie it holds for the host, ours or not: a parent domain's (Domain=), another
+// dev server's on another port (cookies ignore ports), an extension's. One that does not percent-decode is
+// kept as written, never a refusal of the request: ours are written by cookie() below and always decode.
 export function parseCookies(req) {
   const out = {};
   for (const part of (req.headers.cookie || '').split(';')) {
     const i = part.indexOf('='); if (i < 0) continue;
-    out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    const raw = part.slice(i + 1).trim(); let v = raw; try { v = decodeURIComponent(raw); } catch { /* not ours: kept as written */ }
+    out[part.slice(0, i).trim()] = v;
   }
   return out;
 }
@@ -134,15 +138,19 @@ export class Router {
 }
 
 // --- responses
+// Every answer send() writes carries these headers (a redirect and a CORS preflight's 204 have no body to keep and
+// carry none of them); a route may add its own (a CORS header), and its value for any of these wins (a public
+// page's Cache-Control). The default is no-store: an admin page, an API answer and a CSV export are never kept in a
+// browser's disk cache or by a proxy, so Back after logout asks the server again: a page gets the door, an API call a 401.
 export function send(res, status, body, headers = {}) {
   const buf = typeof body === 'string' ? Buffer.from(body) : body;
   const { 'Content-Type': contentType = 'text/plain; charset=utf-8', ...rest } = headers;
   res.setHeader('Content-Type', contentType);
-  res.writeHead(status, { 'Content-Length': buf.length, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', 'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()', 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Resource-Policy': 'same-origin', 'X-Robots-Tag': 'noindex, nofollow, noarchive, noai, noimageai', ...rest });
+  res.writeHead(status, { 'Content-Length': buf.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', 'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()', 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Resource-Policy': 'same-origin', 'X-Robots-Tag': 'noindex, nofollow, noarchive, noai, noimageai', ...rest });
   res.end(buf);
 }
-// Admin pages are never cached by a browser or a proxy; a public page passes its own Cache-Control.
-export const html = (res, body, status = 200, headers = {}) => send(res, status, body, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': `default-src 'none'; script-src ${NAV_SCRIPT_HASH}; style-src 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`, ...headers });
+// An HTML page adds its CSP; it is not cached (send's default), and a public page passes its own Cache-Control.
+export const html = (res, body, status = 200, headers = {}) => send(res, status, body, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': `default-src 'none'; script-src ${NAV_SCRIPT_HASH}; style-src 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`, ...headers });
 export const json = (res, obj, status = 200, headers = {}) => send(res, status, JSON.stringify(obj, null, 2), { 'Content-Type': 'application/json; charset=utf-8', ...headers });
 export const text = (res, body, status = 200, headers = {}) => send(res, status, body, { 'Content-Type': 'text/plain; charset=utf-8', ...headers });
 export const redirect = (res, to, headers = {}) => { res.writeHead(303, { Location: to, ...headers }); res.end(); };

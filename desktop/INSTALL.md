@@ -209,6 +209,15 @@ Whichever way you grant it, the rest stays as it is: the picker never offers
 your system disk or an internal fixed disk, the write still asks you to type
 ERASE, and every byte is read back afterwards.
 
+While it writes, the Flasher keeps the unpacked card image in its own cache
+folder (`~/.cache/com.securacv.flasher/hub-images` on most Linux systems;
+your temp folder only if it has no cache folder). Once your Wi-Fi password
+and hub account are added, that file holds both, so it is created under a
+random name that only your account can read (mode 0600). It is deleted when
+the write ends, fails or is canceled; if the app is killed mid-write, the
+next launch deletes it. Opening the Flasher a second time during a write
+leaves the running write's file alone.
+
 ---
 
 ## Updating
@@ -242,7 +251,14 @@ sensitive, so here is the complete list:
   - `backups/` — the automatic pre-flash **full-chip safety copies**. Each is
     everything that was on a board, including its settings partition — which
     can carry the board's saved Wi-Fi credentials and its device identity
-    key. Treat these files like the board itself.
+    key. Treat these files like the board itself. On macOS and Linux the
+    folder opens for your account only (mode 0700) and each copy is
+    readable by your account only (0600), set before the first byte is
+    written. A folder an older version left open to other accounts is
+    closed, and the copies in it set to 0600, the next time the app starts.
+    A backup you save from the Rescue bench gets the same 0600, except on a
+    drive that keeps no per-file permissions (a FAT or exFAT stick), where
+    the app says so in its log.
   - `hub-ssh/` — the **maintenance SSH keypair** minted for hub self-setup.
     The private key grants root console access (port 22222) to any hub whose
     card was seeded with its public half. Deleting the folder removes the key

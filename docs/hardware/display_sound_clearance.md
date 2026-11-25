@@ -62,12 +62,15 @@ all-clear falls) is a separate, also-tested property — see
 
 ## 3. The preview can't rot either
 
-The browser sound preview (`canary-local/voice/`) is **generated from this
-firmware header by the real compiler** — never hand-transcribed — and a CI
-drift gate (`canary-local.yml`) fails if the committed page falls out of step
-with `voice_score.h`. So what a reviewer *hears* in the preview is always
-exactly what the device *plays*, and this clearance analysis stays true to
-both. See `canary-local/tools/gen_voice_preview.mjs`.
+The browser sound preview (`canary-local/voice/`) plays data that is
+**generated from this firmware header by the real compiler** — never
+hand-transcribed: `canary-local/voice/voice-data.js` holds every signature's
+frames and the volume model, and a CI drift gate (`canary-local.yml`) fails if
+that committed file falls out of step with `voice_score.h`. The page around it
+(`index.html`, `voice.css`, `voice.js`) is hand-written and plays those frames
+verbatim, owning no audio math. So what a reviewer *hears* in the preview is
+always exactly what the device *plays*, and this clearance analysis stays true
+to both. See `canary-local/tools/gen_voice_preview.mjs`.
 
 ## 4. If you add or change a signature
 
@@ -77,5 +80,6 @@ both. See `canary-local/tools/gen_voice_preview.mjs`.
    single-tone ~0.1 s beeps (T4); the test will fail if you do.
 3. Don't imitate a recognizable branded/trademarked sound — there is no
    automated check for that, so it's on the author and the reviewer.
-4. Regenerate the preview (`node canary-local/tools/gen_voice_preview.mjs`) and
-   commit it, or CI's drift gate will fail.
+4. Regenerate the preview's data (`node canary-local/tools/gen_voice_preview.mjs`,
+   which writes `canary-local/voice/voice-data.js`) and commit it, or CI's
+   drift gate will fail.
