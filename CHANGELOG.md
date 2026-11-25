@@ -1,7 +1,7 @@
 # Changelog
 
 ## [Unreleased]
-### adapter_host refuses a replayable webhook, export_verify says when its verdict is only self-consistent, the hub roll-call keeps a displaced Canary's pin, the Flasher keeps its secrets inside your account, both desktop apps judge the host they dial, the backoffice's re-checks answer to the sign-in's lock and its edges hold, the Improv glue drops a link once, the firmware host tests gain sanitized lanes, canary-wap refuses a Chirp send and a Tuning Lab body it cannot read, and the Lab's voice board plays (#W27PR, wave 27)
+### adapter_host refuses a replayable webhook, export_verify says when its verdict is only self-consistent, the hub roll-call keeps a displaced Canary's pin, the Flasher keeps its secrets inside your account, both desktop apps judge the host they dial, the backoffice's re-checks answer to the sign-in's lock and its edges hold, the Improv glue drops a link once, the firmware host tests gain sanitized lanes, canary-wap refuses a Chirp send and a Tuning Lab body it cannot read, and the Lab's voice board plays (#2016, wave 27)
 
 - **adapter_host refuses a replayable webhook off loopback (found by this
   wave's audit; no backlog id).** Off loopback with no TLS and no

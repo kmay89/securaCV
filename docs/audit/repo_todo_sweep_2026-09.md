@@ -215,7 +215,7 @@ so — see D2 below.)
 - [ ] **F412 [decision] canary-wap Chirp: no receiver reads a chirp's
   `ttl_minutes` or checks its detail slot.** The send refuses a TTL outside
   spec §3.3's 5-60 (`invalid_ttl`, since #2013) and a detail slot no
-  `DETAIL_TABLE` row lists (`invalid_detail`, since #W27PR). No receiver reads
+  `DETAIL_TABLE` row lists (`invalid_detail`, since #2016). No receiver reads
   the TTL: every row lives `DEFAULT_DISPLAY_MS` (30 minutes), and a relay
   carries a TTL outside the range as its origin signed it (F306). Decide
   whether a receiver honors the TTL as the row's display time, refuses a frame
@@ -227,7 +227,7 @@ so — see D2 below.)
   re-signs its relay attestation over that byte; spec §3.3 says whether a
   receiver refuses one is not decided. Refusing drops frames from a later
   firmware with new slots. From code. Found by F306 (#1916) and F485
-  (#W27PR).
+  (#2016).
 
 - [ ] **F435 [code+decision] canary-wap Chirp: the replay filter and the
   recent table key on the nonce alone, so a signed frame can pre-empt a heard
@@ -406,7 +406,7 @@ so — see D2 below.)
   and `DETAIL_TABLE` (or drop id 4 and add 0 and 20-23), with a host pin that
   every id it lists is one `template_from_request()` and
   `detail_from_request()` accept, and drop the flagship's option 4. From code.
-  Found by F485 (#W27PR).
+  Found by F485 (#2016).
 
 - [ ] **F495 [code] canary-wap Chirp send: the fields F485 left loose, and a
   handler no suite runs.** `handle_chirp_send()` (`chirp_api.h`) reads
@@ -422,8 +422,8 @@ so — see D2 below.)
   read a value differently would pass every host row. Refuse an unknown
   urgency by name as F485 refuses a template, route the template refusal
   through `SendRefusal`, and cut the handler into a host target over a pinned
-  ArduinoJson (the emulator's 7.4.1), as #W27PR did for the Tuning Lab's
-  import. From code. Found by F485 (#W27PR).
+  ArduinoJson (the emulator's 7.4.1), as #2016 did for the Tuning Lab's
+  import. From code. Found by F485 (#2016).
 
 - [ ] **F496 [code] canary-wap Beacon: the originate routes narrow
   `template_id` and `detail` unchecked.** `handle_originate()` and
@@ -435,7 +435,7 @@ so — see D2 below.)
   do, and refuse by name, under Beacon's own invariants (two-pubkey
   co-signing, no automatic origination;
   `firmware/projects/canary-wap/AGENTS.md`). Beacon is off in every stock
-  build. From code, not yet run. Found by F485's triage (#W27PR).
+  build. From code, not yet run. Found by F485's triage (#2016).
 
 ### Network surface & provisioning
 
@@ -1247,7 +1247,7 @@ so — see D2 below.)
   Chromium probes. Found by F474 (#2013).
 
 - [ ] **F497 [code+decision] What the Improv glue's link drop leaves.**
-  Since #W27PR `follow_link()` (`firmware/common/network/improv_ble.cpp`)
+  Since #2016 `follow_link()` (`firmware/common/network/improv_ble.cpp`)
   holds a link as down only when the stack took the drop (`ask_drop()` reads
   `disconnect()`'s answer), asks and logs once while the event is late, and
   asks a refused drop again when next due. Two calls remain. A refused
@@ -1266,7 +1266,7 @@ so — see D2 below.)
   `firmware/tests_host/test_improv_glue.cpp` drives the late event and the
   refused ask (`latedrop`, `refuseddrop`), not an event that never comes or
   the race, and NimBLE's answers were read from the tagged sources, not seen
-  on a device. Found by F489's review (#W27PR).
+  on a device. Found by F489's review (#2016).
 
 - [ ] **F375 [code+human] Every Bluetooth advertiser sends the chip's public
   address, which the factory MAC fixes, and two security docs call it the
@@ -4007,7 +4007,7 @@ so — see D2 below.)
   balloon positions. Found by C25 (#2013).
 
 - [ ] **A139 [decision] adapter_host's webhook HMAC: four calls left open.**
-  Since #W27PR `adapter_host` refuses at start, off loopback with no TLS, a
+  Since #2016 `adapter_host` refuses at start, off loopback with no TLS, a
   bare `hmac_secret` (body-only: no time, no nonce, no route) and, without
   mutual TLS, a blank `auth_token` or `hmac_secret` (`webhook_bind_refusal()`,
   `src/bin/adapter_host.rs`), and a windowed listener remembers each accepted
@@ -4027,10 +4027,10 @@ so — see D2 below.)
   its 401 with no log line; a rate-limited warn helps an operator whose signer
   is wrong, but is a line anyone who reaches the listener can trigger. From
   code and the real binary on a host; not tried against a reCamera. Found by
-  #W27PR's kernel audit.
+  #2016's kernel audit.
 
 - [ ] **A140 [code+decision] The anchored label follows the flag, and two docs
-  pass the seed file under audit as one.** Since #W27PR `export_verify`'s last
+  pass the seed file under audit as one.** Since #2016 `export_verify`'s last
   line follows `log_verify`'s rule: "verified (identity anchored
   out-of-band)" when `--public-key`, `--public-key-file`, `--device-key-seed`
   or `DEVICE_KEY_SEED` carried the key, "SELF-CONSISTENT, IDENTITY
@@ -4046,7 +4046,7 @@ so — see D2 below.)
   out-of-band record>` for an evidentiary verdict. Decide whether the binaries
   should also downgrade a `DEVICE_KEY_SEED` equal to the seed file beside the
   database; the rotated seed stays open in `docs/db_key_rotation.md`
-  ("Verifier CLIs"). From code and the built binaries. Found by #W27PR's
+  ("Verifier CLIs"). From code and the built binaries. Found by #2016's
   kernel audit.
 
 - [ ] **A141 [decision] `export_verify` checks a full bundle by re-serializing
@@ -4058,11 +4058,11 @@ so — see D2 below.)
   with a pinned key reads anchored. Only a bare artifact is hashed byte for
   byte, which is why `docs/operator_guide.md`'s newline tamper demo is
   refused. `viewer/verify_core.js`'s `verifyExportBundle()` re-serializes the
-  same way. Since #W27PR the module doc says so; no behavior changed. Decide
+  same way. Since #2016 the module doc says so; no behavior changed. Decide
   whether to refuse a non-canonical bundle (`deny_unknown_fields`, or a byte
   compare against `serde_json::to_vec` of the parsed bundle) in the kernel and
   the viewer together, which changes what verifies. From code and a probe of
-  the built binary. Found by #W27PR's kernel audit.
+  the built binary. Found by #2016's kernel audit.
 
 - [ ] **A142 [code] The demo's own verify and the documented verify commands
   fail on its database.** `cargo run --bin demo` keys `demo_witness.db` with
@@ -4076,10 +4076,10 @@ so — see D2 below.)
   newline tamper is refused. Write `demo_witness.ed25519.seed` at 0600 beside
   the database (or open its own verify with the key), then check the three
   docs' commands against it. From running the demo and both verifiers. Found
-  by the `export_verify` label fix (#W27PR).
+  by the `export_verify` label fix (#2016).
 
 - [ ] **A143 [decision] The hub roll-call's displaced-pin bound is a cost a
-  broker peer can pay.** Since #W27PR the roll-call (`src/fleet_peers.rs`)
+  broker peer can pay.** Since #2016 the roll-call (`src/fleet_peers.rs`)
   keeps a displaced Canary's pin, verified length, state mark and sticky
   conflict in a ledger of 256 (`FLEET_PEER_DISPLACED_MAX`) and restores them
   when the Canary is heard again, so one flood no longer pins a broker peer's
@@ -4106,7 +4106,7 @@ so — see D2 below.)
   table); per-device broker credentials and ACLs (`docs/TRUST_MODEL.md`'s
   largest gap). Three tests in `src/fleet_peers.rs` measure each number, and
   `scripts/tests/test_docs_claims.py` pins the doc numbers to the constants.
-  From code and host tests; no broker or device involved. Found by #W27PR's
+  From code and host tests; no broker or device involved. Found by #2016's
   kernel audit.
 
 - [ ] **A144 [code+decision] witnessd's API serves one connection at a time.**
@@ -4127,11 +4127,11 @@ so — see D2 below.)
   `read_request`. The honest comment and `API_CONNECTION_BUDGET`'s doc can
   ride any kernel change first. From code: the audit's scratch test saw a
   concurrent `GET /health` go unanswered for 10 s, and the verifier confirmed
-  it from the source, not by a run. Availability only. Found by #W27PR's
+  it from the source, not by a run. Availability only. Found by #2016's
   kernel audit.
 
 - [ ] **A145 [decision] The Flasher's safety copies and its data folder.**
-  Since #W27PR safety copies are made 0600 before espflash opens them and
+  Since #2016 safety copies are made 0600 before espflash opens them and
   `backups/` is 0700, closed again at every launch (`owner_only_dir`,
   `owner_only_file` in `desktop/src-tauri/src/lib.rs`). Three calls remain.
   (1) If the app's own `backups/` cannot be made 0700 (say, a symlink to a FAT
@@ -4148,11 +4148,11 @@ so — see D2 below.)
   guard create with a plain `create_dir_all` (0755 under umask 022), and their
   own modes were not checked; `owner_only_dir` on `app_data_dir` at launch
   would cover them (XDG asks for 0700). From code; host-tested on Linux.
-  Found by #W27PR's desktop audit.
+  Found by #2016's desktop audit.
 
 - [ ] **A146 [code] A second Flasher launch still sweeps a live run's files.**
   `cleanup_orphans()` (`desktop/src-tauri/src/hub.rs`) runs at every launch.
-  Since #W27PR a live run's raw staging image is held under an exclusive
+  Since #2016 a live run's raw staging image is held under an exclusive
   `flock(2)` and the sweep skips it, but the sweep still removes a live run's
   `<image>.partial` download on Linux and macOS, the platforms that write a
   hub card today, so that run's final rename fails. On Windows the staging
@@ -4163,21 +4163,21 @@ so — see D2 below.)
   exposes a secret. `launch_guard` already detects a live instance
   ("standing down"); gating `cleanup_orphans()` on it would cover both. From
   code; the Windows half is not testable from a Linux container. Found by
-  the Flasher's owner-only fix (#W27PR).
+  the Flasher's owner-only fix (#2016).
 
 - [ ] **A147 [code] hub-io's onboarding agents follow redirects with no host
   check.** In `desktop/hub-io/src/onboarding.rs`, `agent()` (the Home
   Assistant onboarding calls) and `probe_hub()`'s own agent are built with
   ureq's default redirect following and no host check. They talk to the
-  owner-typed hub, not through `fleet::pinned_client`, which since #W27PR
+  owner-typed hub, not through `fleet::pinned_client`, which since #2016
   follows a redirect only back to the host it judged. Whether a 3xx from a
   hub address can carry the owner's login elsewhere was not examined: read
   each call, then refuse an off-host redirect as the pinned client does, or
   say why none is needed. From code. Found by the device-base host fix's
-  review (#W27PR).
+  review (#2016).
 
 - [ ] **A148 [decision] One device-base host rule for both schemes.** Since
-  #W27PR both desktop apps' `base_host()` (`desktop/src-tauri/src/fleet.rs`
+  #2016 both desktop apps' `base_host()` (`desktop/src-tauri/src/fleet.rs`
   and its Lab twin in `desktop-lab/src-tauri/src/lib.rs`) parse a device base
   with reqwest's url crate, and `dns_shaped()` refuses, before any socket, a
   host with a character outside `[A-Za-z0-9_-]`, an empty label, an edge
@@ -4187,7 +4187,7 @@ so — see D2 below.)
   (the edge hyphen, the label length) could be dropped for http bases, at the
   cost of a gate that differs by scheme: keep one rule or split it.
   `canary-local/tests/desktop_parity.test.js` holds the twins equal, so change
-  both. From code. Found by the device-base host fix's review (#W27PR).
+  both. From code. Found by the device-base host fix's review (#2016).
 
 - [ ] **A149 [code, gated by W44] The desktop apps' Witness Wall cannot
   reach a kernel, and blames the network.** Both apps run the vendored Wall
@@ -4212,11 +4212,11 @@ so — see D2 below.)
   `tvos/EMBED_IN_APPS.md` and fix its `connect-src` sentence, and hold both
   hosts to it in `desktop_parity.test.js` and the host-mode fetches to
   same-origin in `csp.test.js`. From code and Chromium probes under each
-  app's policy. Found by #W27PR's desktop audit.
+  app's policy. Found by #2016's desktop audit.
 
 - [ ] **A150 [code+decision] Backoffice: a lock armed by the re-checks stays
   quiet, and the sign-in counts a wrong password already deriving.** Since
-  #W27PR the password and authenticator re-checks on *Your account*
+  #2016 the password and authenticator re-checks on *Your account*
   (`backoffice/src/auth.mjs`) count against the sign-in's lock for that
   person at that address and are refused while it stands. Left: (1) a lock
   armed through a re-check shows on the People page, in the audit log and in
@@ -4233,10 +4233,10 @@ so — see D2 below.)
   re-checks, so typos add up until a full sign-in from that address, the lock
   ending or a restart (`backoffice/SECURITY.md` says so); a fifteen-minute
   window at both is the other way. From code and the backoffice suite. Found
-  by #W27PR's backoffice audit.
+  by #2016's backoffice audit.
 
 - [ ] **A151 [code+decision] Backoffice: the sign-in's password work in
-  flight, and one slot per person.** Since #W27PR a person and an invitation
+  flight, and one slot per person.** Since #2016 a person and an invitation
   link each hold at most one password derivation (`oneAtATime` in
   `backoffice/src/auth.mjs`), and a second gets 429. Left: (1) `POST /login`
   asks the per-address lockout at entry, before any failure counts, so one
@@ -4252,7 +4252,7 @@ so — see D2 below.)
   `SESSION_BIND_IP=1` (`backoffice/SECURITY.md`). A per-session slot avoids
   both the queue and the starvation but needs the session id passed from
   `admin_users.mjs`'s `/me` handlers; decide which. From code and
-  single-machine timings. Found by #W27PR's backoffice audit.
+  single-machine timings. Found by #2016's backoffice audit.
 
 - [ ] **A152 [decision] Backoffice: every role reads which factor a sign-in
   failed.** `can(role, 'GET', '/api/audit')` is true for viewer, support and
@@ -4261,10 +4261,10 @@ so — see D2 below.)
   right password with a wrong code `why: 'code'` (`backoffice/src/auth.mjs`),
   so anyone with a session can guess another person's password at the
   sign-in, eight tries per address before that person's lock arms there, and
-  read whether each guess was right without the second factor. #W27PR closed
+  read whether each guess was right without the second factor. #2016 closed
   the same leak for a re-check in flight when the lock arms. Decide: drop or
   coarsen the `why`, or make `/api/audit` owner-only. From code. Found by
-  #W27PR's backoffice review.
+  #2016's backoffice review.
 
 ---
 
@@ -4767,13 +4767,13 @@ so — see D2 below.)
   `adapter_host` refuses.** `pro-camera.html` says to "set an `auth_token` or
   `hmac_secret`, and add TLS if the camera isn't on a trusted LAN". Off
   loopback on plain HTTP, `adapter_host` already refused an `auth_token` at
-  start, and since securaCV #W27PR it refuses a bare `hmac_secret` too. Say
+  start, and since securaCV #2016 it refuses a bare `hmac_secret` too. Say
   what `docs/hardware/canary_vision_pro_recamera.md` step 5 says now: on
   plain HTTP, `hmac_secret` with `hmac_replay_window_secs` (the flow then
   sends `X-Timestamp`, `X-Nonce` and the windowed signature); an
   `auth_token` or a bare `hmac_secret` only behind `tls_cert`/`tls_key`; or
   mutual TLS. From the page and the monorepo's gate. Found by securaCV's
-  webhook gate fix (#W27PR).
+  webhook gate fix (#2016).
 
 - [ ] **W44 [code] The Witness Wall emulator blames the network for a refused
   origin, and has no host mode.** `js/tv-emulator.js` answers every failed
@@ -4794,7 +4794,7 @@ so — see D2 below.)
   Wall loses them; move them to classes, as canary-vision did (F474). Test
   refused against network-failed and host-mode Connect (`tests/tv-wall.test.mjs`
   or an emulator test); the monorepo then re-vendors. From code and Chromium
-  probes. Found by securaCV #W27PR's desktop audit.
+  probes. Found by securaCV #2016's desktop audit.
 
 ---
 
@@ -5278,7 +5278,7 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   `WASM32_CLANGXX=clang++-18` for `cores_wasm32.test.js`: the input, the pin
   and the job's `runs-on` move together, and that file's CI test fails by name
   on a `runs-on` change until they do. The trial includes firmware.yml's
-  `common-host-test-lanes` (#W27PR), not yet run on GitHub: its clang++-18
+  `common-host-test-lanes` (#2016), not yet run on GitHub: its clang++-18
   sanitized leg relies on the image's `libclang-rt-18-dev` and both
   sanitized legs on `vm.mmap_rnd_bits` at 28 or below (from the
   runner-images build scripts), and its 15-minute timeout is a starting
@@ -5390,7 +5390,7 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   both comments to what the script runs. From code. Found by CI28 (#2013).
 
 - [ ] **CI34 [code] `backoffice.yml` never runs the suite under a shifted
-  clock.** Since #W27PR the dated tests carry their own clock
+  clock.** Since #2016 the dated tests carry their own clock
   (`applyStripeEvent` has taken an optional one since #1967). Under a Date
   shim the dated tests passed at 2026-10-21, 2027-01-01, 2027-03-15,
   2027-06-01 and 2028-01-01, and the whole suite at 2028-01-01; no other
@@ -5401,25 +5401,25 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   Date()` and `Date.now()` move; `backoffice/src` has no SQL-side clock),
   `FAKE_NOW=<today + 120 days> node --import ./shim.mjs --test
   tests/*.test.mjs`, and the same at the next Jan 1. No new dependency. From
-  the suite under the shim. Found by #W27PR's backoffice audit.
+  the suite under the shim. Found by #2016's backoffice audit.
 
 - [ ] **CI35 [code+decision] The library's rustdoc under the adapter features
   keeps seven warnings no gate sees.** `RUSTDOCFLAGS='-D warnings' cargo doc
   --no-deps --document-private-items` with the adapter features fails on
-  seven lints older than #W27PR: two in `src/adapter/webhook.rs` (a public
+  seven lints older than #2016: two in `src/adapter/webhook.rs` (a public
   doc links the private `DEFAULT_WORKERS`; a redundant explicit link), two in
   `src/adapter/can_bus.rs` (an unresolved `poll`; a link to the private
   `CAN_BUS_DESCRIPTOR`) and three unclosed HTML tags in
   `src/adapter/meshtastic.rs`. `rust.yml`'s doc step builds default features
   only. Fix the seven, then decide whether the doc gate covers the adapter
-  features. From a local rustdoc run. Found by the webhook gate fix (#W27PR).
+  features. From a local rustdoc run. Found by the webhook gate fix (#2016).
 
 - [ ] **CI36 [code] Three tests flake under load.** (1)
   `tests/device_key_rotation_cli.rs`'s
   `a_write_side_daemon_generates_then_reuses_the_seed_file_and_refuses_a_loose_one`
   panics with "write event line: Broken pipe" when `grove_vision2_ingest`
   refuses the loose seed file and exits before the test writes its stdin (2
-  of 5 runs under load before #W27PR; 3 of 3 pass unloaded): ignore
+  of 5 runs under load before #2016; 3 of 3 pass unloaded): ignore
   `BrokenPipe` on that write and judge the exit status and stderr. (2)
   `backoffice/tests/auth.test.mjs` computes `totp(secret)` once for a login
   and again for its "the code just used is spent" check, and a slow scrypt
@@ -5427,9 +5427,9 @@ host-test list. The rules these items apply are `.github/CI.md`'s.
   logs in: compute it once. (3) `backoffice/tests/browser.test.mjs` reads the
   ticket attachment's `naturalWidth` after `page.goto`'s load event, which
   does not wait for an `<img loading="lazy">` (`backoffice/src/admin.mjs`), so
-  under load it reads 0: wait for `img.complete`. Each predates #W27PR and
+  under load it reads 0: wait for `img.complete`. Each predates #2016 and
   passes alone. From runs at a load average near 25 on four cores. Found by
-  #W27PR's kernel and backoffice packages.
+  #2016's kernel and backoffice packages.
 
 ---
 

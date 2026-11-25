@@ -4765,7 +4765,7 @@
   until F469 moved them, and the reader, to `json_member.h` (the entry
   below). The NUL refusal stayed in the settings handler and did not travel
   with the reader, so the Tuning Lab's import stored a preset from the bytes
-  before a NUL until F488 refused one there too (#W27PR): a guard that lives
+  before a NUL until F488 refused one there too (#2016): a guard that lives
   in one handler, not in the shared reader, has to be carried to every
   handler that reads the same way.
 - **Regression check:** canary-wap `tests_host/test_wap_tune_lab.cpp`
