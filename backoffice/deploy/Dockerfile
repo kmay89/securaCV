@@ -2,7 +2,7 @@
 # Pinned by digest (the index for node:22-slim as resolved from Docker Hub on
 # 2026-11-06): a tag moves, the digest is the image that was reviewed. Bump
 # both together.
-FROM node:26-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc
+FROM node:26-slim@sha256:abe7e5a82b61a8ef67b315b85497c9e65173387ccf2f4a029248184b8e020be5
 WORKDIR /app
 COPY package.json ./
 COPY bin ./bin
